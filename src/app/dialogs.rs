@@ -40,7 +40,7 @@ impl MnemoApp {
         let mut close = false;
         let focus = std::mem::take(&mut self.focus_dialog);
         let prompt = matches!(dialog, Dialog::Switcher { .. } | Dialog::Palette { .. });
-        let p = self.pal();
+        let p = self.palette();
         let mid = egui::Id::unique("mnemo-dialog");
         let mut modal = egui::Modal::new(mid)
             .backdrop_color(Color32::from_black_alpha(if self.cfg.dark_mode { 110 } else { 50 }))
@@ -224,11 +224,13 @@ impl MnemoApp {
                     });
                 }
                 Dialog::Switcher { query, sel } => {
-                    let q = fold(query);
+                    let q = fold_accents(query);
                     let words: Vec<&str> = q.split_whitespace().collect();
                     let mut items: Vec<&NoteMeta> =
-                        self.notes.iter().filter(|n| words.iter().all(|w| fold(&n.path).contains(w))).collect();
-                    items.sort_by_key(|n| (!fold(basename(&n.path)).starts_with(&q), std::cmp::Reverse(n.updated_at)));
+                        self.notes.iter().filter(|n| words.iter().all(|w| fold_accents(&n.path).contains(w))).collect();
+                    items.sort_by_key(|n| {
+                        (!fold_accents(basename(&n.path)).starts_with(&q), std::cmp::Reverse(n.updated_at))
+                    });
                     items.truncate(12);
                     let create =
                         !query.trim().is_empty() && !items.iter().any(|n| n.path.eq_ignore_ascii_case(query.trim()));
@@ -283,7 +285,7 @@ impl MnemoApp {
                     }
                 }
                 Dialog::Palette { query, sel } => {
-                    let q = fold(query);
+                    let q = fold_accents(query);
                     let words: Vec<&str> = q.split_whitespace().collect();
                     let mut items: Vec<(String, String, UiAction)> = CORE_COMMANDS
                         .iter()
@@ -293,7 +295,7 @@ impl MnemoApp {
                                 .iter()
                                 .map(|(i, id, name)| (name.clone(), String::new(), UiAction::Plugin(*i, id.clone()))),
                         )
-                        .filter(|(name, _, _)| words.iter().all(|w| fold(name).contains(w)))
+                        .filter(|(name, _, _)| words.iter().all(|w| fold_accents(name).contains(w)))
                         .collect();
                     items.truncate(14);
                     nav_keys(ui, sel, items.len());

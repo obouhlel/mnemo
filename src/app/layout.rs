@@ -59,7 +59,7 @@ impl MnemoApp {
     }
 
     pub(super) fn tab_bar(&mut self, ui: &mut egui::Ui) {
-        let p = self.pal();
+        let p = self.palette();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, 0.0, p.bg2);
         let mut child =
@@ -117,7 +117,7 @@ impl MnemoApp {
     }
 
     pub(super) fn view_header(&mut self, ui: &mut egui::Ui) {
-        let p = self.pal();
+        let p = self.palette();
         let Some(n) = &self.open else { return };
         let (id, path) = (n.id, n.path.clone());
         let tab = &self.tabs[self.active_tab];
@@ -196,7 +196,7 @@ impl MnemoApp {
     }
 
     pub(super) fn empty_tab(&mut self, ui: &mut egui::Ui) {
-        let p = self.pal();
+        let p = self.palette();
         ui.vertical_centered(|ui| {
             ui.add_space((ui.available_height() * 0.32).max(20.0));
             ui.label(RichText::new("Aucun fichier n'est ouvert").size(22.0).color(p.muted));
@@ -220,7 +220,7 @@ impl MnemoApp {
 
     /// Small floating status bar in the bottom-right corner.
     pub(super) fn status_bar(&mut self, ctx: &egui::Context) {
-        let p = self.pal();
+        let p = self.palette();
         egui::Area::new(egui::Id::unique("status-bar"))
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(0.0, 0.0))
             .order(egui::Order::Middle)

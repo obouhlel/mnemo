@@ -5,7 +5,7 @@ use super::*;
 
 impl MnemoApp {
     pub(super) fn settings_window(&mut self, ctx: &egui::Context, now: f64) {
-        let p = self.pal();
+        let p = self.palette();
         let mut open = self.show_settings;
         let screen = ctx.content_rect();
         let size =
@@ -280,7 +280,7 @@ impl MnemoApp {
     }
 
     pub(super) fn github_settings(&mut self, ui: &mut egui::Ui) {
-        let p = self.pal();
+        let p = self.palette();
         ui.add(egui::Label::new(RichText::new(
             "Reliez vos projets du tableau de bord à des dépôts GitHub : import des issues, publication des tickets, \
              synchronisation du titre, de la description, des labels (tags) et de l'état ouvert / fermé.",

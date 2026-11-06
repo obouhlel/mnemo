@@ -136,7 +136,7 @@ impl MnemoApp {
     }
 
     fn scoped_tickets(&self, project: Uuid) -> Vec<&Ticket> {
-        let f = fold(self.dash.filter.trim());
+        let f = fold_accents(self.dash.filter.trim());
         self.board
             .tickets
             .iter()
@@ -144,16 +144,16 @@ impl MnemoApp {
             .filter(|t| self.dash.show_done || t.status != Status::Done)
             .filter(|t| {
                 f.is_empty()
-                    || fold(&t.title).contains(&f)
-                    || fold(&t.body).contains(&f)
+                    || fold_accents(&t.title).contains(&f)
+                    || fold_accents(&t.body).contains(&f)
                     || format!("t-{}", t.number).contains(&f)
-                    || t.tags.iter().any(|g| fold(g).contains(&f))
+                    || t.tags.iter().any(|g| fold_accents(g).contains(&f))
             })
             .collect()
     }
 
     pub(super) fn dashboard_ui(&mut self, ui: &mut egui::Ui, now: f64) {
-        let p = self.pal();
+        let p = self.palette();
         let mut acts: Vec<DashAction> = vec![];
         // auto-sync with GitHub every 5 minutes
         if self.cfg.github_auto_sync && self.cfg.github_token.is_some() && now - self.dash.last_auto_sync > 300.0 {

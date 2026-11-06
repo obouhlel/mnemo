@@ -145,7 +145,7 @@ impl MnemoApp {
     }
 
     pub(super) fn left_sidebar(&mut self, ui: &mut egui::Ui, now: f64) {
-        let p = self.pal();
+        let p = self.palette();
         // header: view tabs
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), 40.0),
@@ -323,7 +323,7 @@ impl MnemoApp {
     }
 
     pub(super) fn right_sidebar(&mut self, ui: &mut egui::Ui) {
-        let p = self.pal();
+        let p = self.palette();
         let tabs: Vec<(&str, String)> = std::iter::once((icon::LINK, "Rétroliens".to_string()))
             .chain(std::iter::once((icon::TICKET, "Tickets liés".to_string())))
             .chain(

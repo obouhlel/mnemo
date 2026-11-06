@@ -4,7 +4,7 @@ use super::*;
 
 impl MnemoApp {
     pub(super) fn columns_view(&mut self, ui: &mut egui::Ui, acts: &mut Vec<DashAction>) {
-        let p = self.pal();
+        let p = self.palette();
         let statuses: Vec<Status> =
             Status::ALL.into_iter().filter(|s| self.dash.show_done || *s != Status::Done).collect();
         let projects: Vec<Uuid> = match self.dash.project {

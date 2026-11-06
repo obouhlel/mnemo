@@ -8,8 +8,10 @@ impl Worker {
     pub(super) async fn note_cmd(&mut self, cmd: Cmd, em: &Emitter) -> Res<()> {
         match cmd {
             Cmd::ListNotes => {
-                let rows =
-                    self.c().query("SELECT id, path, version, updated_at FROM notes ORDER BY lower(path)", &[]).await?;
+                let rows = self
+                    .conn()
+                    .query("SELECT id, path, version, updated_at FROM notes ORDER BY lower(path)", &[])
+                    .await?;
                 let notes = rows
                     .iter()
                     .map(|r| NoteMeta { id: r.get(0), path: r.get(1), version: r.get(2), updated_at: r.get(3) })
@@ -17,11 +19,11 @@ impl Worker {
                 em.emit(Msg::Notes(notes));
             }
             Cmd::ListFolders => {
-                let rows = self.c().query("SELECT path FROM folders ORDER BY lower(path)", &[]).await?;
+                let rows = self.conn().query("SELECT path FROM folders ORDER BY lower(path)", &[]).await?;
                 em.emit(Msg::Folders(rows.iter().map(|r| r.get(0)).collect()));
             }
             Cmd::Load { id, purpose } => {
-                match self.c().query_opt(&format!("SELECT {NOTE_COLS} FROM notes WHERE id = $1"), &[&id]).await? {
+                match self.conn().query_opt(&format!("SELECT {NOTE_COLS} FROM notes WHERE id = $1"), &[&id]).await? {
                     Some(r) => em.emit(Msg::Loaded { note: note_from(&r), purpose }),
                     None if purpose == LoadPurpose::Open => em.emit(Msg::Error("Note introuvable".into())),
                     None => {}
@@ -29,7 +31,7 @@ impl Worker {
             }
             Cmd::OpenLink(link) => {
                 let link = link.trim().trim_end_matches(".md").to_string();
-                if let Some(r) = self.c().query_opt(RESOLVE_SQL, &[&link]).await? {
+                if let Some(r) = self.conn().query_opt(RESOLVE_SQL, &[&link]).await? {
                     em.emit(Msg::Loaded { note: note_from(&r), purpose: LoadPurpose::Open });
                 } else {
                     match normalize_path(&link) {
@@ -44,7 +46,7 @@ impl Worker {
             Cmd::Create { path, content, open, if_missing } => {
                 if if_missing
                     && let Some(r) = self
-                        .c()
+                        .conn()
                         .query_opt(&format!("SELECT {NOTE_COLS} FROM notes WHERE lower(path) = lower($1)"), &[&path])
                         .await?
                 {
@@ -175,7 +177,7 @@ impl Worker {
                 let tsq = words.iter().map(|w| format!("{w}:*")).collect::<Vec<_>>().join(" & ");
                 let like = format!("%{}%", q.trim().replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
                 let rows = self
-                    .c()
+                    .conn()
                     .query(
                         "SELECT id, path,
                            CASE WHEN $1 <> '' THEN ts_headline('simple', content, to_tsquery('simple', $1),
@@ -193,13 +195,13 @@ impl Worker {
                 em.emit(Msg::SearchResults { query: q, hits });
             }
             Cmd::Backlinks(id) => {
-                let Some(row) = self.c().query_opt("SELECT path FROM notes WHERE id = $1", &[&id]).await? else {
+                let Some(row) = self.conn().query_opt("SELECT path FROM notes WHERE id = $1", &[&id]).await? else {
                     return Ok(());
                 };
                 let path: String = row.get(0);
                 let base = basename(&path).to_string();
                 let rows = self
-                    .c()
+                    .conn()
                     .query(
                         "SELECT DISTINCT n.id, n.path, n.content FROM links l JOIN notes n ON n.id = l.source_id
                          WHERE (lower(l.target) = lower($1) OR lower(l.target) = lower($2)) AND n.id <> $3
@@ -230,7 +232,7 @@ impl Worker {
             }
             Cmd::Tags => {
                 let rows = self
-                    .c()
+                    .conn()
                     .query(
                         r"SELECT lower(m[1]), count(DISTINCT id)
                           FROM notes, regexp_matches(content, '(?:^|\s)#([[:alpha:]_][[:alnum:]_/-]*)', 'g') AS m
@@ -241,9 +243,9 @@ impl Worker {
                 em.emit(Msg::Tags(rows.iter().map(|r| (r.get(0), r.get(1))).collect()));
             }
             Cmd::Graph => {
-                let nodes = self.c().query("SELECT id::text, path FROM notes", &[]).await?;
+                let nodes = self.conn().query("SELECT id::text, path FROM notes", &[]).await?;
                 let edges = self
-                    .c()
+                    .conn()
                     .query(
                         "SELECT l.source_id::text, t.id::text, l.target FROM links l
                          LEFT JOIN LATERAL (
@@ -276,7 +278,7 @@ impl Worker {
                 em.emit(Msg::Graph(g));
             }
             Cmd::LoadPlugins => {
-                let rows = self.c().query("SELECT id, enabled, settings FROM plugin_state", &[]).await?;
+                let rows = self.conn().query("SELECT id, enabled, settings FROM plugin_state", &[]).await?;
                 let map = rows
                     .iter()
                     .map(|r| {

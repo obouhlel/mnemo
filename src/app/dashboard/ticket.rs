@@ -4,7 +4,7 @@ use super::*;
 
 impl MnemoApp {
     pub(super) fn ticket_detail(&mut self, ui: &mut egui::Ui, t: &Ticket, acts: &mut Vec<DashAction>) {
-        let p = self.pal();
+        let p = self.palette();
         let fresh = !matches!(&self.dash.edit, Some(e) if e.id == t.id);
         let stale =
             matches!(&self.dash.edit, Some(e) if e.id == t.id && (e.base_title != t.title || e.base_body != t.body));
@@ -167,10 +167,10 @@ impl MnemoApp {
                 egui::Popup::menu(&link_btn).show(|ui| {
                     ui.set_min_width(260.0);
                     ui.add(egui::TextEdit::singleline(&mut self.dash.link_query).hint_text("Rechercher une note…").desired_width(f32::INFINITY));
-                    let q = fold(&self.dash.link_query);
+                    let q = fold_accents(&self.dash.link_query);
                     let mut shown = 0;
                     for n in &self.notes {
-                        if shown >= 10 || links.iter().any(|l| l.note_id == n.id) || !fold(&n.path).contains(&q) {
+                        if shown >= 10 || links.iter().any(|l| l.note_id == n.id) || !fold_accents(&n.path).contains(&q) {
                             continue;
                         }
                         shown += 1;
@@ -253,7 +253,7 @@ impl MnemoApp {
 
     /// Right sidebar tab of a note: tickets for which this note is a report.
     pub(in crate::app) fn note_tickets_panel(&mut self, ui: &mut egui::Ui) {
-        let p = self.pal();
+        let p = self.palette();
         let Some(note) = self.open.as_ref().map(|n| n.id) else { return };
         let linked: Vec<Ticket> = self
             .board
@@ -305,12 +305,12 @@ impl MnemoApp {
                     .hint_text("Rechercher un ticket…")
                     .desired_width(f32::INFINITY),
             );
-            let q = fold(&self.dash.link_query);
+            let q = fold_accents(&self.dash.link_query);
             let mut shown = 0;
             for t in &self.board.tickets {
                 if shown >= 10
                     || linked.iter().any(|l| l.id == t.id)
-                    || !(fold(&t.title).contains(&q) || format!("t-{}", t.number).contains(&q))
+                    || !(fold_accents(&t.title).contains(&q) || format!("t-{}", t.number).contains(&q))
                 {
                     continue;
                 }

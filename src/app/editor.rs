@@ -50,7 +50,7 @@ fn task_positions(src: &str) -> Vec<(usize, bool)> {
 
 impl MnemoApp {
     pub(super) fn inline_title(&mut self, ui: &mut egui::Ui, editable: bool) {
-        let p = self.pal();
+        let p = self.palette();
         let Some(n) = &self.open else { return };
         let (id, path) = (n.id, n.path.clone());
         let base = basename(&path).to_string();
@@ -232,7 +232,7 @@ impl MnemoApp {
             self.accept_autocomplete(ui.ctx(), &name, now);
         }
 
-        let pal = self.pal();
+        let pal = self.palette();
         let fs = self.text_size();
         // live preview: reveal markdown syntax only on the lines holding the cursor
         let active = if ui.memory(|m| m.has_focus(id)) {

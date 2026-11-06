@@ -99,7 +99,7 @@ pub struct MnemoApp {
 }
 
 /// Lowercase and strip French accents, for fuzzy matching ("theme" finds "Thème").
-fn fold(s: &str) -> String {
+fn fold_accents(s: &str) -> String {
     s.to_lowercase()
         .chars()
         .map(|c| match c {
@@ -209,7 +209,7 @@ impl MnemoApp {
         theme::apply(ctx, self.cfg.dark_mode, 14.0);
     }
 
-    fn pal(&self) -> theme::Palette {
+    fn palette(&self) -> theme::Palette {
         theme::palette(self.cfg.dark_mode)
     }
 
@@ -283,7 +283,7 @@ impl eframe::App for MnemoApp {
         self.shortcuts(&ctx);
         self.update_plugin_outputs(&ctx, now);
 
-        let p = self.pal();
+        let p = self.palette();
         egui::Panel::left("ribbon")
             .exact_size(44.0)
             .resizable(false)

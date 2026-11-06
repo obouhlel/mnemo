@@ -80,7 +80,7 @@ fn group_row(
 
 impl MnemoApp {
     pub(super) fn rows_view(&mut self, ui: &mut egui::Ui, acts: &mut Vec<DashAction>) {
-        let p = self.pal();
+        let p = self.palette();
         let projects: Vec<Project> = match self.dash.project {
             Some(pid) => self.board.projects.iter().filter(|pr| pr.id == pid).cloned().collect(),
             None => self.board.projects.clone(),

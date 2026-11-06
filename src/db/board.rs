@@ -7,7 +7,7 @@ impl Worker {
     pub(super) async fn board_cmd(&mut self, cmd: Cmd, em: &Emitter) -> Res<()> {
         match cmd {
             Cmd::LoadBoard => {
-                let board = load_board(self.c()).await?;
+                let board = load_board(self.conn()).await?;
                 em.emit(Msg::Board(board));
             }
             Cmd::CreateProject { name, description, repo } => {
@@ -76,7 +76,7 @@ impl Worker {
                     patch.title.is_some() || patch.body.is_some() || patch.status.is_some() || patch.tags.is_some();
                 if touches_github && self.github.is_some() {
                     let linked = self
-                        .c()
+                        .conn()
                         .query_opt(
                             "SELECT t.github_number FROM tickets t JOIN projects p ON p.id = t.project_id
                          WHERE t.id = $1 AND t.github_number IS NOT NULL AND p.github_repo IS NOT NULL",

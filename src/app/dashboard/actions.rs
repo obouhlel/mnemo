@@ -119,7 +119,7 @@ impl MnemoApp {
 
     pub(super) fn project_dialog(&mut self, ctx: &egui::Context) {
         let Some(mut form) = self.dash.project_form.take() else { return };
-        let p = self.pal();
+        let p = self.palette();
         let mut close = false;
         let modal = egui::Modal::new(egui::Id::unique("project-form"))
             .frame(

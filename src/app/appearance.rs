@@ -151,7 +151,7 @@ impl MnemoApp {
     }
 
     pub(super) fn appearance_settings(&mut self, ui: &mut egui::Ui, now: f64) {
-        let p = self.pal();
+        let p = self.palette();
         let following = self.cfg.follow_appearance && self.cfg.obsidian_dir.is_some();
         let row = |ui: &mut egui::Ui, title: &str, desc: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
             ui.horizontal(|ui| {

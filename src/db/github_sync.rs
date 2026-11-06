@@ -33,7 +33,7 @@ impl Worker {
 
     pub(super) async fn ticket_with_repo(&self, id: Uuid) -> Res<Option<(Ticket, String)>> {
         let row = self
-            .c()
+            .conn()
             .query_opt(&format!("SELECT {TICKET_COLS}, p.github_repo FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = $1"), &[&id])
             .await?;
         Ok(row.and_then(|r| r.get::<_, Option<String>>(TICKET_COLS_N).map(|repo| (ticket_from(&r), repo))))
@@ -100,7 +100,8 @@ impl Worker {
     }
 
     pub(super) async fn sync_project(&mut self, project: Uuid) -> Res<Result<String, String>> {
-        let Some(row) = self.c().query_opt("SELECT name, github_repo FROM projects WHERE id = $1", &[&project]).await?
+        let Some(row) =
+            self.conn().query_opt("SELECT name, github_repo FROM projects WHERE id = $1", &[&project]).await?
         else {
             return Ok(Err("Projet introuvable".into()));
         };
@@ -116,7 +117,7 @@ impl Worker {
             Err(e) => return Ok(Err(e)),
         };
         let rows = self
-            .c()
+            .conn()
             .query(&format!("SELECT {TICKET_COLS} FROM tickets t WHERE t.project_id = $1"), &[&project])
             .await?;
         let tickets: Vec<Ticket> = rows.iter().map(ticket_from).collect();

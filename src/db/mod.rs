@@ -262,7 +262,8 @@ impl Worker {
         }
     }
 
-    fn c(&self) -> &Client {
+    /// Connexion de requêtes (garantie ouverte par `run` avant chaque commande).
+    fn conn(&self) -> &Client {
         self.client.as_ref().expect("connected")
     }
 
