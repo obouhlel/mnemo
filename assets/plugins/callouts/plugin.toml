@@ -1,0 +1,5 @@
+id = "callouts"
+name = "Encadrés (callouts)"
+version = "1.0.0"
+author = "Mnemo"
+description = "Transforme > [!note] Titre, > [!warning] … en encadrés avec icône dans l'aperçu."

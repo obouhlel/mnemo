@@ -1,0 +1,21 @@
+id = "daily-notes"
+name = "Notes quotidiennes"
+version = "1.0.0"
+author = "Mnemo"
+description = "Crée ou ouvre la note du jour (journal) à partir d'un modèle."
+
+[[settings]]
+key = "folder"
+label = "Dossier"
+default = "Journal"
+
+[[settings]]
+key = "format"
+label = "Format de date (strftime)"
+default = "%Y-%m-%d"
+
+[[settings]]
+key = "template"
+label = "Modèle ({{date}} est remplacé)"
+kind = "multiline"
+default = "## Tâches\n- [ ] \n\n## Notes\n\n"

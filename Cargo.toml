@@ -1,0 +1,57 @@
+[package]
+name = "mnemo"
+version = "0.1.0"
+edition = "2024"
+description = "Base de connaissances Markdown native, stockée dans PostgreSQL, synchronisée en direct"
+license = "MIT"
+authors = ["Oussama Bouhlel"]
+
+[dependencies]
+anyhow = "1.0.104"
+chrono = "0.4.45"
+directories = "6.0.0"
+eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "links", "glow", "wayland", "x11", "persistence"] }
+egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
+egui_commonmark = { version = "0.26.0", features = ["better_syntax_highlighting"] }
+futures-util = "0.3.34"
+rhai = { version = "1.27.0", features = ["sync"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+similar = "3.2.1"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-postgres = { version = "0.7.18", features = ["with-uuid-1", "with-chrono-0_4", "with-serde_json-1"] }
+tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
+toml = "1.2.0"
+ureq = { version = "2", features = ["json", "native-certs"] }
+uuid = { version = "1.29.0", features = ["v4", "serde"] }
+webpki-roots = "1.0.11"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+
+# Small local patch: bold / headings / italics use real font faces in the reading view
+[patch.crates-io]
+egui_commonmark_backend = { path = "vendor/egui_commonmark_backend" }
+
+[build-dependencies]
+winresource = "0.1.34"
+
+# Debian / Ubuntu package (cargo deb)
+[package.metadata.deb]
+name = "mnemo"
+maintainer = "Oussama Bouhlel"
+section = "editors"
+priority = "optional"
+depends = "libc6 (>= 2.28), libx11-6, libxkbcommon-x11-0, libgl1, libegl1, libwayland-client0, libxcursor1, libxrandr2, libxi6"
+extended-description = "Prise de notes Markdown façon Obsidian, sans Electron. Les notes sont stockées dans PostgreSQL et synchronisées en direct entre les appareils (LISTEN/NOTIFY), avec plugins Rhai et thèmes CSS au format Obsidian."
+assets = [
+    ["target/release/mnemo", "usr/bin/mnemo", "755"],
+    ["packaging/linux/mnemo.desktop", "usr/share/applications/mnemo.desktop", "644"],
+    ["assets/icons/mnemo-256.png", "usr/share/icons/hicolor/256x256/apps/mnemo.png", "644"],
+    ["assets/icons/mnemo-128.png", "usr/share/icons/hicolor/128x128/apps/mnemo.png", "644"],
+    ["assets/icons/mnemo-64.png", "usr/share/icons/hicolor/64x64/apps/mnemo.png", "644"],
+    ["README.md", "usr/share/doc/mnemo/README.md", "644"],
+]

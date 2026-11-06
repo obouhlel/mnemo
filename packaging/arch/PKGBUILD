@@ -1,0 +1,27 @@
+# Maintainer: Oussama Bouhlel
+# Build: copy this folder next to the sources (or set _srcdir) then run `makepkg -si`
+pkgname=mnemo
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Notes Markdown façon Obsidian, stockées dans PostgreSQL et synchronisées en direct"
+arch=('x86_64' 'aarch64')
+license=('MIT')
+depends=('libx11' 'libxkbcommon-x11' 'libglvnd' 'wayland' 'libxcursor' 'libxrandr' 'libxi' 'gcc-libs' 'glibc')
+makedepends=('cargo')
+_srcdir="${_srcdir:-$startdir/../..}"
+
+build() {
+  cd "$_srcdir"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --locked
+}
+
+package() {
+  cd "$_srcdir"
+  install -Dm755 "$srcdir/target/release/mnemo" "$pkgdir/usr/bin/mnemo"
+  install -Dm644 packaging/linux/mnemo.desktop "$pkgdir/usr/share/applications/mnemo.desktop"
+  for s in 64 128 256; do
+    install -Dm644 "assets/icons/mnemo-$s.png" "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/mnemo.png"
+  done
+  install -Dm644 README.md "$pkgdir/usr/share/doc/mnemo/README.md"
+}

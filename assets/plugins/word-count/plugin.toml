@@ -1,0 +1,10 @@
+id = "word-count"
+name = "Compteur de mots"
+version = "1.0.0"
+author = "Mnemo"
+description = "Affiche le nombre de mots, de caractères et le temps de lecture dans la barre d'état."
+
+[[settings]]
+key = "wpm"
+label = "Mots lus par minute"
+default = 200

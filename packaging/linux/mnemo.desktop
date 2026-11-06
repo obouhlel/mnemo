@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Mnemo
+GenericName=Prise de notes
+Comment=Notes Markdown synchronisées via PostgreSQL
+Exec=mnemo
+Icon=mnemo
+Terminal=false
+Categories=Office;TextEditor;Utility;
+Keywords=notes;markdown;wiki;obsidian;postgresql;
+StartupWMClass=mnemo

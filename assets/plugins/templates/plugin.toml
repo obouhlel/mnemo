@@ -1,0 +1,16 @@
+id = "templates"
+name = "Modèles"
+version = "1.0.0"
+author = "Mnemo"
+description = "Commandes pour insérer la date, une case à cocher ou un modèle de réunion au curseur."
+
+[[settings]]
+key = "date_format"
+label = "Format de date"
+default = "%d/%m/%Y"
+
+[[settings]]
+key = "meeting"
+label = "Modèle de réunion"
+kind = "multiline"
+default = "## Réunion du {{date}}\n\n**Participants :** \n\n### Ordre du jour\n- \n\n### Décisions\n- \n\n### Actions\n- [ ] \n"

@@ -1,0 +1,19 @@
+# Sorties de compilation
+/target
+/dist
+
+# Anciens binaires précompilés (remplacés par dist/, généré par le Makefile)
+/build
+
+# Paquets générés
+*.dmg
+*.deb
+*.tar.gz
+*.pkg.tar.zst
+packaging/arch/src/
+packaging/arch/pkg/
+
+# Éditeurs / OS
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,5 @@
+id = "outline"
+name = "Plan"
+version = "1.0.0"
+author = "Mnemo"
+description = "Affiche la table des matières de la note dans le panneau de droite."
