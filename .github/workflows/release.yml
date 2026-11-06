@@ -1,4 +1,5 @@
-# Builds Mnemo for every OS on native runners. Push a tag (v0.1.0) or run it by hand (Actions > Run workflow).
+# Compile Mnemo pour les trois OS en appelant les cibles du Makefile (même chemin qu'en local).
+# Se lance en poussant un tag (v0.1.0) ou à la main (Actions › build › Run workflow).
 name: build
 on:
   workflow_dispatch:
@@ -6,48 +7,44 @@ on:
     tags: ["v*"]
 
 jobs:
-  linux:
-    runs-on: ubuntu-22.04
+  check:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: "zig + cargo-zigbuild (binary compatible with glibc 2.28: Debian 10+, Ubuntu 18.04+, Arch)"
-        run: |
-          pip install ziglang
-          cargo install cargo-zigbuild cargo-deb
-          rustup target add aarch64-unknown-linux-gnu
-      - run: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28
-      - run: cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.28
-      - name: package
-        run: |
-          mkdir -p dist
-          mkdir -p target/release && cp target/x86_64-unknown-linux-gnu/release/mnemo target/release/mnemo
-          cargo deb --no-build --no-strip -o dist/
-          for a in x86_64 aarch64; do
-            d=mnemo-linux-$a; mkdir -p $d
-            cp target/$a-unknown-linux-gnu/release/mnemo $d/; cp packaging/linux/mnemo.desktop assets/icons/mnemo-256.png README.md $d/
-            tar czf dist/$d.tar.gz $d
-          done
+        with: { components: "rustfmt, clippy" }
+      - run: make check
+
+  linux:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Outils de compilation croisée (zig pour glibc 2.28)
+        run: pip install ziglang && make setup
+      - run: make linux deb
       - uses: actions/upload-artifact@v4
         with: { name: mnemo-linux, path: dist/* }
 
   windows:
-    runs-on: windows-latest
+    needs: check
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      - run: |
-          mkdir dist
-          copy target\release\mnemo.exe dist\mnemo.exe
+      - name: Outils de compilation croisée (MinGW)
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 && make setup
+      - run: make windows
       - uses: actions/upload-artifact@v4
-        with: { name: mnemo-windows, path: dist/* }
+        with: { name: mnemo-windows, path: dist/mnemo.exe }
 
   macos:
+    needs: check
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: ./scripts/build-macos.sh
+      - run: make macos
       - uses: actions/upload-artifact@v4
         with: { name: mnemo-macos, path: dist/Mnemo-macos.dmg }
