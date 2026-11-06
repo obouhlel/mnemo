@@ -271,7 +271,7 @@ impl MnemoApp {
         egui::Frame::new().inner_margin(egui::Margin { left: 20, right: 20, top: 0, bottom: 10 }).show(ui, |ui| {
             ui.horizontal(|ui| {
                 progress_bar(ui, &p, done, total, 220.0);
-                let pct = if total > 0 { done * 100 / total } else { 0 };
+                let pct = (done * 100).checked_div(total).unwrap_or(0);
                 ui.label(RichText::new(format!("{done} / {total} terminés · {pct} %")).color(p.text));
                 ui.add_space(10.0);
                 for st in Status::ALL {
@@ -1263,7 +1263,7 @@ fn group_row(
     painter.galley(egui::pos2(x, cy - count.size().y / 2.0), count, p.faint);
     x += cw + 10.0;
     if let Some(r) = repo {
-        let g = painter.layout_no_wrap(format!("\u{e0e9}"), FontId::new(12.0, theme::icon_family()), p.faint);
+        let g = painter.layout_no_wrap("\u{e0e9}".to_string(), FontId::new(12.0, theme::icon_family()), p.faint);
         painter.galley(egui::pos2(x, cy - g.size().y / 2.0), g, p.faint);
         let g2 = painter.layout_no_wrap(r.to_string(), FontId::proportional(12.0), p.faint);
         painter.galley(egui::pos2(x + 16.0, cy - g2.size().y / 2.0), g2, p.faint);
