@@ -1,4 +1,7 @@
 mod dashboard;
+mod state;
+
+use state::*;
 
 use crate::board::Board;
 use crate::config::{Config, ViewMode, redact_url};
@@ -12,129 +15,11 @@ use crate::theme::{self, icon};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use egui::{Color32, FontId, Key, KeyboardShortcut, Modifiers, RichText, TextFormat};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 use uuid::Uuid;
 
 const AUTOSAVE_DELAY: f64 = 0.6;
-
-#[derive(PartialEq)]
-enum ConnState {
-    Disconnected(Option<String>),
-    Connecting,
-    Connected,
-}
-
-#[derive(PartialEq, Clone, Copy)]
-enum LeftTab {
-    Files,
-    Search,
-    Tags,
-}
-
-#[derive(PartialEq, Clone, Copy)]
-enum SettingsTab {
-    Connection,
-    Appearance,
-    Plugins,
-    Github,
-    About,
-}
-
-struct OpenNote {
-    id: Uuid,
-    path: String,
-    content: String,
-    version: i32,
-    /// Content as last persisted in the database
-    saved: String,
-    last_edit: Option<f64>,
-    /// Content currently being saved
-    saving: Option<String>,
-    conflict: Option<Conflict>,
-    remote_flash: f64,
-}
-
-#[derive(Default, Clone)]
-struct Tab {
-    /// the dashboard tab (projects / tickets) instead of a note
-    dashboard: bool,
-    note: Option<Uuid>,
-    back: Vec<Uuid>,
-    fwd: Vec<Uuid>,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum OpenMode {
-    /// open in the current tab, pushing the previous note to its history
-    Replace,
-    NewTab,
-    /// navigation (back / forward / tab switch): no history change
-    History,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum SortOrder {
-    NameAsc,
-    NameDesc,
-    Modified,
-}
-
-#[derive(PartialEq, Clone, Copy)]
-enum ConflictTab {
-    Resolve,
-    Diff,
-}
-
-/// A divergence between the local editor and a newer version in the database,
-/// resolved hunk by hunk (three-way merge, base = last known saved version).
-struct Conflict {
-    remote: Note,
-    blocks: Vec<Block>,
-    tab: ConflictTab,
-    diff_against_result: bool,
-    window_open: bool,
-}
-
-impl OpenNote {
-    fn dirty(&self) -> bool {
-        self.content != self.saved || self.saving.is_some()
-    }
-}
-
-enum Dialog {
-    NewNote { input: String, error: Option<String> },
-    NewFolder { input: String, error: Option<String> },
-    RenameNote { id: Uuid, input: String, error: Option<String> },
-    RenameFolder { from: String, input: String, error: Option<String> },
-    DeleteNote { id: Uuid, path: String },
-    DeleteFolder { path: String },
-    Switcher { query: String, sel: usize },
-    Palette { query: String, sel: usize },
-}
-
-#[derive(Clone)]
-enum UiAction {
-    OpenId(Uuid),
-    OpenLink(String),
-    OpenTag(String),
-    NewNoteIn(String),
-    NewFolderIn(String),
-    RenameNote(Uuid, String),
-    RenameFolder(String),
-    DeleteNote(Uuid, String),
-    DeleteFolder(String),
-    Core(CoreCmd),
-    Plugin(usize, String),
-    OpenNewTab(Uuid),
-    SwitchTab(usize),
-    CloseTab(usize),
-    CloseOtherTabs(usize),
-    ToggleFolder(String),
-    SetSort(SortOrder),
-    Back,
-    Forward,
-}
 
 #[derive(Clone, Copy, PartialEq)]
 enum CoreCmd {
@@ -186,22 +71,6 @@ const CORE_COMMANDS: &[(CoreCmd, &str, &str)] = &[
     (CoreCmd::ToggleLeft, "Afficher / masquer l'explorateur", "Ctrl+Shift+L"),
     (CoreCmd::ToggleRight, "Afficher / masquer le panneau de droite", "Ctrl+Shift+R"),
 ];
-
-#[derive(Default)]
-struct TreeFolder {
-    name: String,
-    path: String,
-    folders: BTreeMap<String, TreeFolder>,
-    notes: Vec<(String, Uuid, chrono::DateTime<chrono::Utc>)>,
-}
-
-struct Autocomplete {
-    /// char index where the partial link starts (just after `[[`)
-    start: usize,
-    partial: String,
-    sel: usize,
-    matches: Vec<String>,
-}
 
 pub struct MnemoApp {
     cfg: Config,
@@ -267,31 +136,6 @@ pub struct MnemoApp {
     board: Board,
     dash: dashboard::DashState,
     github_input: String,
-}
-
-/// Obsidian-style CSS themes / snippets currently loaded.
-#[derive(Default)]
-struct CssState {
-    themes: Vec<(String, std::path::PathBuf)>,
-    snippets: Vec<(String, std::path::PathBuf)>,
-    /// files read for the current override, with their modification time (hot reload)
-    watched: Vec<(std::path::PathBuf, Option<std::time::SystemTime>)>,
-    active_theme: Option<String>,
-    active_snippets: Vec<String>,
-    report: Vec<String>,
-    last_check: f64,
-    obsidian_input: String,
-}
-
-#[derive(Default)]
-struct Needs {
-    board: bool,
-    notes: bool,
-    folders: bool,
-    backlinks: bool,
-    graph: bool,
-    tags: bool,
-    plugins: bool,
 }
 
 /// Lowercase and strip French accents, for fuzzy matching ("theme" finds "Thème").
