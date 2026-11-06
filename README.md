@@ -21,13 +21,19 @@ connectées à la même base. Un seul binaire pour Windows, macOS et Linux.
 
 ## Démarrage rapide
 
-```bash
-docker compose up -d          # PostgreSQL 16 sur localhost:5432 (base "vault")
-cargo run --release
-```
+1. Démarrez une base PostgreSQL (ou utilisez une base existante : Neon, Supabase, RDS…) :
+   ```bash
+   docker compose up -d          # PostgreSQL 16 sur localhost:5432 (base "vault")
+   ```
+2. Lancez Mnemo :
+   ```bash
+   cargo run --release
+   ```
+3. Au premier lancement, entrez l'URL de connexion (par défaut `postgres://postgres:postgres@localhost:5432/vault`).
+   Le schéma est créé automatiquement. Pour une base distante, ajoutez `?sslmode=require`.
+4. Sur un autre ordinateur, entrez la même URL : tout est synchronisé en direct.
 
-Au premier lancement, entrez l'URL de connexion (par défaut `postgres://postgres:postgres@localhost:5432/vault`).
-Le schéma est créé automatiquement. Pour une base distante (Neon, Supabase, RDS…), ajoutez `?sslmode=require`.
+Sous Linux, si une bibliothèque graphique manque, Mnemo affiche la commande `apt` / `pacman` / `dnf` à lancer.
 
 Variables d'environnement utiles :
 
@@ -36,6 +42,14 @@ Variables d'environnement utiles :
 | `MNEMO_DATABASE_URL` | URL Postgres (prioritaire sur la config) |
 | `MNEMO_CONFIG_DIR` | dossier de config (par défaut le dossier de config de l'OS) |
 | `MNEMO_PLUGINS_DIR` | dossier des plugins (par défaut `<config>/plugins`) |
+
+## Documentation
+
+| Document | Contenu |
+|---|---|
+| [docs/plugins.md](docs/plugins.md) | écrire un plugin Rhai : `plugin.toml`, hooks, API |
+| [docs/themes.md](docs/themes.md) | thèmes et snippets CSS au format Obsidian |
+| [docs/RAPPORT_TESTS.md](docs/RAPPORT_TESTS.md) | ce qui a été testé et comment |
 
 ## Installation / compilation par OS
 
@@ -76,33 +90,6 @@ Ouvrez-le avec l'icône du ruban ou **Ctrl+Shift+D**. Tout est stocké dans Post
     poussée automatiquement. Synchronisation automatique toutes les 5 minutes (désactivable).
   - Le token reste dans le fichier de configuration local (ou `MNEMO_GITHUB_TOKEN`), jamais dans la base.
 
-## Thèmes et snippets CSS (format Obsidian)
-
-Mnemo lit les thèmes et snippets CSS au format Obsidian et applique leurs **variables CSS** à l'interface native.
-Paramètres › Apparence :
-
-- **Dossier `.obsidian` d'un coffre existant** (facultatif) : ses `themes/<Nom>/theme.css` (ou `themes/<Nom>.css`),
-  `snippets/*.css` et son `appearance.json` (thème choisi, snippets activés, `baseFontSize`, `accentColor`,
-  clair/sombre) sont repris tels quels.
-- Dossiers propres à Mnemo, même structure : `<config>/themes/` et `<config>/snippets/`
-  (un snippet d'exemple `exemple-accent-vert.css` y est installé).
-- Les fichiers sont **rechargés à chaud** : modifiez un `.css`, l'interface change dans la seconde.
-
-Le moteur comprend `var()` (avec valeur de repli), `calc()`, `hsl()/hsla()`, `rgb()/rgba()`, hex, `@media`/`@supports`,
-et les déclarations sur `body`, `:root`, `.theme-dark`, `.theme-light`. La chaîne de variables par défaut est la même que
-dans Obsidian (`--color-base-00…100` → `--background-primary`…, `--accent-h/s/l` → `--interactive-accent`), donc un thème
-qui ne change que quelques variables de base fonctionne.
-
-Variables prises en charge : `--background-primary`, `--background-primary-alt`, `--background-secondary`,
-`--background-modifier-border`, `--background-modifier-hover`, `--nav-item-background-hover/active`, `--text-normal`,
-`--text-muted`, `--text-faint`, `--interactive-accent`, `--color-accent`, `--accent-h/s/l`, `--text-accent`, `--link-color`,
-`--code-background`, `--code-normal`, `--tag-background`, `--tag-color`, `--checkbox-color`, `--blockquote-border-color`,
-`--bold-color`, `--italic-color`, `--h1-color`…`--h6-color`, `--h1-size`…`--h6-size`, `--font-text-size`,
-`--file-line-width`, `--line-height-normal`, `--text-selection`, `--color-base-*`, `--mono-rgb-100`.
-
-Limites (l'interface n'est pas une page web) : les règles qui ciblent des éléments précis (`.nav-file-title { … }`),
-`color-mix()` et les polices personnalisées ne sont pas appliquées ; le rapport des paramètres les signale.
-
 ## Comment marche la synchronisation
 
 ```
@@ -123,50 +110,6 @@ Limites (l'interface n'est pas une page web) : les règles qui ciblent des élé
 - Si la note a changé ailleurs pendant que vous écriviez : fusion à 3 voies (`src/merge.rs`) avec comme base la dernière version
   enregistrée connue. Rien n'est jamais écrasé sans votre accord ; si vous quittez avec un conflit non résolu, votre version
   est conservée dans une note `… (conflit <date>)`.
-
-## Écrire un plugin
-
-Un plugin est un dossier dans le dossier des plugins (visible dans ⚙ Paramètres › Plugins) :
-
-```
-mon-plugin/
-├── plugin.toml
-└── main.rhai
-```
-
-```toml
-id = "mon-plugin"
-name = "Mon plugin"
-version = "1.0.0"
-description = "Ce que fait le plugin"
-
-[[settings]]          # optionnel : réglages éditables dans l'interface
-key = "prefixe"
-label = "Préfixe"
-default = "TODO"      # texte, nombre ou booléen ; kind = "multiline" pour un champ multiligne
-```
-
-Tous les hooks sont optionnels (`note` est une map `#{ id, path, title, content }`, ou `()` si aucune note n'est ouverte) :
-
-```rhai
-fn on_load() {}                              // à l'activation
-fn commands() { [#{ id: "go", name: "Ma commande" }] }   // apparaissent dans Ctrl+P
-fn run(command_id, note) { insert_text("Bonjour"); }
-fn status(note) { "texte de la barre d'état" }
-fn panel(note) { "## Markdown affiché à droite" }
-fn preprocess(markdown, note) { markdown }   // transforme l'aperçu (pas la note)
-fn on_open(note) {}
-fn on_save(note) {}
-fn on_event(event) {}                        // #{ kind, op, path } : événements live de la base
-```
-
-API disponible : `notice(msg)`, `log(msg)`, `open_note(path)`, `create_note(path, contenu)` (ouvre si elle existe),
-`insert_text(t)`, `replace_content(t)`, `setting(clé)`, `note_paths()`, `date(fmt)`, `date_offset(jours, fmt)`,
-`word_count(t)`, `char_count(t)`, `state_get(clé)`, `state_set(clé, valeur)`.
-
-Plugins fournis (copiés au premier lancement, désactivés par défaut) : **Compteur de mots**, **Notes quotidiennes**,
-**Plan** (table des matières), **Encadrés** (`> [!note]`, `> [!warning]`…), **Modèles**.
-Les scripts sont limités en nombre d'opérations : un plugin bogué ne peut pas figer l'application.
 
 ## Structure
 
