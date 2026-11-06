@@ -8,6 +8,9 @@ arch=('x86_64' 'aarch64')
 license=('MIT')
 depends=('libx11' 'libxkbcommon-x11' 'libglvnd' 'wayland' 'libxcursor' 'libxrandr' 'libxi' 'gcc-libs' 'glibc')
 makedepends=('cargo')
+# Le LTO de makepkg (-flto=auto dans CFLAGS) compile le C de `ring` en bitcode GCC,
+# illisible par rust-lld : symboles ring_core_* introuvables à l'édition de liens.
+options=('!lto')
 _srcdir="${_srcdir:-$startdir/../..}"
 
 build() {
