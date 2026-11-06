@@ -3769,44 +3769,6 @@ impl MnemoApp {
     }
 }
 
-const EXAMPLE_SNIPPET: &str = r#"/* Exemple de snippet CSS au format Obsidian.
-   Activez-le dans Paramètres > Apparence > Snippets CSS ; il est rechargé à chaud. */
-.theme-dark,
-.theme-light {
-  --accent-h: 152;
-  --accent-s: 55%;
-  --accent-l: 45%;
-}
-.theme-dark {
-  --background-primary: #191b1d;
-  --background-secondary: #212426;
-}
-body {
-  --file-line-width: 760px;
-}
-"#;
+const EXAMPLE_SNIPPET: &str = include_str!("../assets/texts/example-snippet.css");
 
-const WELCOME: &str = r#"Mnemo est une base de connaissances **Markdown** stockée dans **PostgreSQL**.
-Ouvrez Mnemo sur un autre ordinateur connecté à la même base : chaque frappe s'y affiche en direct.
-
-## Les bases
-- Créez une note avec **Ctrl+N** (utilisez `Dossier/Nom` pour ranger)
-- Liez des notes avec des doubles crochets : [[Idées]] (tapez `[[` pour l'autocomplétion)
-- Taguez avec #exemple et retrouvez vos tags dans l'onglet *Tags*
-- **Ctrl+P** ouvre la palette de commandes, **Ctrl+O** le sélecteur de notes
-- **Ctrl+G** affiche le graphe des liens
-
-## Tâches
-- [x] Installer Mnemo
-- [ ] Activer des plugins (⚙ Paramètres > Plugins)
-- [ ] Écrire ma première note
-
-> [!tip] Plugins
-> Activez le plugin « Encadrés » pour que ce bloc s'affiche joliment.
-
-```rust
-fn main() {
-    println!("Le code est coloré !");
-}
-```
-"#;
+const WELCOME: &str = include_str!("../assets/texts/welcome.md");

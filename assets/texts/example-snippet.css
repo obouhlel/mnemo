@@ -1,0 +1,15 @@
+/* Exemple de snippet CSS au format Obsidian.
+   Activez-le dans Paramètres > Apparence > Snippets CSS ; il est rechargé à chaud. */
+.theme-dark,
+.theme-light {
+  --accent-h: 152;
+  --accent-s: 55%;
+  --accent-l: 45%;
+}
+.theme-dark {
+  --background-primary: #191b1d;
+  --background-secondary: #212426;
+}
+body {
+  --file-line-width: 760px;
+}
