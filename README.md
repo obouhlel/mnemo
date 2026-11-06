@@ -23,9 +23,9 @@ connectées à la même base. Un seul binaire pour Windows, macOS et Linux.
 
 1. Démarrez une base PostgreSQL (ou utilisez une base existante : Neon, Supabase, RDS…) :
    ```bash
-   docker compose up -d          # PostgreSQL 16 sur localhost:5432 (base "vault")
+   make db                       # PostgreSQL 16 dans Docker, sur localhost:5432 (base "vault")
    ```
-2. Lancez Mnemo :
+2. Lancez Mnemo (`make run` fait les deux étapes et passe l'URL locale automatiquement) :
    ```bash
    cargo run --release
    ```
@@ -47,26 +47,46 @@ Variables d'environnement utiles :
 
 | Document | Contenu |
 |---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | organisation du code, flux de synchronisation, recettes (ajouter une commande…) |
 | [docs/plugins.md](docs/plugins.md) | écrire un plugin Rhai : `plugin.toml`, hooks, API |
 | [docs/themes.md](docs/themes.md) | thèmes et snippets CSS au format Obsidian |
 | [docs/RAPPORT_TESTS.md](docs/RAPPORT_TESTS.md) | ce qui a été testé et comment |
 
-## Installation / compilation par OS
+## Installation
 
-| OS | Installer | Compiler soi-même |
-|---|---|---|
-| **Debian / Ubuntu** | `sudo apt install ./mnemo_0.1.0-1_amd64.deb` | `cargo build --release` |
-| **Arch Linux** | `cd packaging/arch && makepkg -si` | idem |
-| **Autres Linux** | binaire `mnemo-linux-x86_64` / `aarch64` (glibc ≥ 2.28) | idem |
-| **Windows 10/11** | `mnemo.exe` | `cargo build --release` (Rust + MSVC) |
-| **macOS 11+** (Apple Silicon et Intel) | `scripts/build-macos.sh` → `Mnemo.app` + `.dmg` | idem (Xcode CLT) |
+| OS | Installer |
+|---|---|
+| **Debian / Ubuntu** | `sudo apt install ./mnemo_0.1.0-1_amd64.deb` |
+| **Arch Linux** | `make arch` puis `sudo pacman -U dist/mnemo-*.pkg.tar.zst` |
+| **Autres Linux** | archive `mnemo-<version>-linux-x86_64.tar.gz` / `aarch64` (glibc ≥ 2.28) |
+| **Windows 10/11** | `mnemo.exe` |
+| **macOS 11+** (Apple Silicon et Intel) | `Mnemo.app` / `.dmg` |
 
-Le workflow `.github/workflows/release.yml` compile les trois OS sur des machines natives (Actions › Run workflow,
-ou en poussant un tag `v*`). Le binaire Linux est construit avec `cargo zigbuild` pour glibc 2.28 : il tourne sur
-Debian 10+, Ubuntu 18.04+, Arch, Fedora… Bibliothèques nécessaires (présentes sur tout poste de bureau) :
+Le binaire Linux tourne sur Debian 10+, Ubuntu 18.04+, Arch, Fedora… Bibliothèques nécessaires (présentes sur tout
+poste de bureau) :
 
 - Debian / Ubuntu : `sudo apt install libx11-6 libxkbcommon-x11-0 libgl1 libegl1 libwayland-client0 libxcursor1 libxrandr2 libxi6`
 - Arch : `sudo pacman -S libx11 libxkbcommon-x11 libglvnd mesa wayland libxcursor libxrandr libxi`
+
+## Compiler
+
+Tout passe par le `Makefile` (`make` seul liste les cibles). Les binaires et paquets sont écrits dans `dist/`.
+
+| Commande | Résultat |
+|---|---|
+| `make run` | base Docker + Mnemo en release |
+| `make check` | formatage, clippy et tests (à lancer avant chaque commit) |
+| `make setup` | une fois : cibles Rust croisées, `cargo-zigbuild`, `cargo-deb` (nécessite rustup, zig, mingw-w64) |
+| `make linux` | `dist/mnemo-<version>-linux-{x86_64,aarch64}.tar.gz` (glibc 2.28, via `cargo zigbuild`) |
+| `make deb` | `dist/*.deb` |
+| `make arch` | `dist/*.pkg.tar.zst` |
+| `make windows` | `dist/mnemo.exe` (MinGW depuis Linux, ou natif sous Windows) |
+| `make macos` | `dist/Mnemo.app` + `.dmg`, **uniquement sur un Mac** (SDK Apple) |
+| `make all` | tout ce que la machine peut compiler (`linux deb windows`, ou `macos` sur un Mac) |
+| `make clean` | supprime `target/` et `dist/` |
+
+Le workflow `.github/workflows/release.yml` appelle les mêmes cibles sur des machines natives, y compris macOS
+(Actions › Run workflow, ou en poussant un tag `v*`).
 
 ## Tableau de bord : projets, tickets et GitHub
 
@@ -113,23 +133,17 @@ Ouvrez-le avec l'icône du ruban ou **Ctrl+Shift+D**. Tout est stocké dans Post
 
 ## Structure
 
-| Fichier | Rôle |
+| Chemin | Rôle |
 |---|---|
+| `src/app.rs`, `src/app/` | interface egui (un fichier par zone : éditeur, barres latérales, tableau de bord…) |
+| `src/db/` | worker Postgres : connexion et LISTEN, commandes notes / tableau de bord / GitHub |
 | `src/schema.sql` | tables, triggers de version / liens / NOTIFY |
-| `src/db.rs` | worker Postgres (tokio-postgres), LISTEN, transactions |
-| `src/app.rs` | interface egui |
-| `src/merge.rs` | fusion à 3 voies et diff unifié |
-| `src/board.rs` | projets, tickets, tags, plan de synchronisation GitHub |
-| `src/github.rs` | client API GitHub (issues) |
-| `src/app/dashboard.rs` | interface du tableau de bord |
-| `src/plugins.rs` | hôte de plugins Rhai |
-| `src/markdown.rs` | wikilinks / tags → liens cliquables |
-| `src/graph.rs` | vue graphe (optionnelle) |
-| `src/theme.rs` | palette, polices, widgets, coloration / live preview de l'éditeur |
-| `src/css.rs` | lecture des thèmes / snippets CSS Obsidian (variables, var(), calc(), couleurs) |
-| `assets/plugins/` | plugins d'exemple |
-| `assets/fonts/` | Inter (OFL) et icônes Lucide (ISC), licences incluses |
+| `src/merge.rs`, `src/board.rs`, `src/github.rs` | fusion à 3 voies, domaine du tableau de bord, client GitHub |
+| `src/plugins.rs`, `src/css.rs`, `src/theme.rs` | plugins Rhai, thèmes CSS, apparence |
+| `assets/` | polices, icônes, plugins d'exemple, textes intégrés |
 | `vendor/egui_commonmark_backend` | petit patch : vrai gras / italique dans le mode lecture |
+
+Le détail de chaque module est dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Raccourcis
 
