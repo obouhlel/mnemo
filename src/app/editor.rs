@@ -1,6 +1,7 @@
 //! Zone d'édition d'une note : titre intégré (renomme la note), éditeur avec live preview,
 //! autocomplétion des [[liens]], cases à cocher cliquables et aperçu Markdown.
 
+use super::layout::centered;
 use super::*;
 
 pub(super) fn char_to_byte(s: &str, ci: usize) -> usize {
