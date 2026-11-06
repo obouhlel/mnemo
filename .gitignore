@@ -2,9 +2,6 @@
 /target
 /dist
 
-# Anciens binaires précompilés (remplacés par dist/, généré par le Makefile)
-/build
-
 # Paquets générés
 *.dmg
 *.deb
