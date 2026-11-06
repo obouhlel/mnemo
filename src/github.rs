@@ -27,9 +27,11 @@ fn no_proxy_matches(host: &str, list: &str) -> bool {
 fn agent(url: &str) -> ureq::Agent {
     let mut b = ureq::AgentBuilder::new().timeout(Duration::from_secs(25));
     let host = url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or("");
-    let env = |k: &str| std::env::var(k).or_else(|_| std::env::var(k.to_lowercase())).ok().filter(|v| !v.trim().is_empty());
+    let env =
+        |k: &str| std::env::var(k).or_else(|_| std::env::var(k.to_lowercase())).ok().filter(|v| !v.trim().is_empty());
     let excluded = env("NO_PROXY").is_some_and(|l| no_proxy_matches(host, &l));
-    let proxy = if url.starts_with("https") { env("HTTPS_PROXY") } else { env("HTTP_PROXY") }.or_else(|| env("ALL_PROXY"));
+    let proxy =
+        if url.starts_with("https") { env("HTTPS_PROXY") } else { env("HTTP_PROXY") }.or_else(|| env("ALL_PROXY"));
     if !excluded
         && let Some(p) = proxy
         && let Ok(p) = ureq::Proxy::new(p)
@@ -56,7 +58,9 @@ fn error(e: ureq::Error) -> String {
             let msg = body.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string();
             match code {
                 401 => "Token GitHub invalide ou expiré".into(),
-                403 if msg.to_lowercase().contains("rate limit") => "Limite de requêtes GitHub atteinte, réessayez plus tard".into(),
+                403 if msg.to_lowercase().contains("rate limit") => {
+                    "Limite de requêtes GitHub atteinte, réessayez plus tard".into()
+                }
                 403 => format!("Accès refusé par GitHub (droits du token ?) : {msg}"),
                 404 => "Dépôt introuvable, ou le token n'y a pas accès".into(),
                 410 => "Les issues sont désactivées sur ce dépôt".into(),
@@ -71,7 +75,9 @@ fn error(e: ureq::Error) -> String {
 fn valid_repo(repo: &str) -> Result<&str, String> {
     let r = repo.trim().trim_start_matches("https://github.com/").trim_end_matches(".git").trim_matches('/');
     let parts: Vec<&str> = r.split('/').collect();
-    if parts.len() == 2 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_alphanumeric() || "-_.".contains(c))) {
+    if parts.len() == 2
+        && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_alphanumeric() || "-_.".contains(c)))
+    {
         Ok(r)
     } else {
         Err(format!("Dépôt invalide « {repo} » (attendu : propriétaire/nom)"))
@@ -135,7 +141,13 @@ pub fn list_issues(cfg: &GhConfig, repo: &str) -> Result<Vec<RemoteIssue>, Strin
     Ok(out)
 }
 
-pub fn create_issue(cfg: &GhConfig, repo: &str, title: &str, body: &str, labels: &[String]) -> Result<RemoteIssue, String> {
+pub fn create_issue(
+    cfg: &GhConfig,
+    repo: &str,
+    title: &str,
+    body: &str,
+    labels: &[String],
+) -> Result<RemoteIssue, String> {
     let repo = valid_repo(repo)?;
     let v: Value = request(cfg, "POST", &format!("/repos/{repo}/issues"))
         .send_json(json!({ "title": title, "body": body, "labels": labels }))
@@ -145,7 +157,15 @@ pub fn create_issue(cfg: &GhConfig, repo: &str, title: &str, body: &str, labels:
     parse_issue(&v).ok_or_else(|| "Réponse GitHub inattendue".into())
 }
 
-pub fn update_issue(cfg: &GhConfig, repo: &str, number: i32, title: &str, body: &str, open: bool, labels: &[String]) -> Result<RemoteIssue, String> {
+pub fn update_issue(
+    cfg: &GhConfig,
+    repo: &str,
+    number: i32,
+    title: &str,
+    body: &str,
+    open: bool,
+    labels: &[String],
+) -> Result<RemoteIssue, String> {
     let repo = valid_repo(repo)?;
     let v: Value = request(cfg, "PATCH", &format!("/repos/{repo}/issues/{number}"))
         .send_json(json!({

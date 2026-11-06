@@ -30,36 +30,84 @@ pub enum Cmd {
     Connect(String),
     ListNotes,
     ListFolders,
-    Load { id: Uuid, purpose: LoadPurpose },
+    Load {
+        id: Uuid,
+        purpose: LoadPurpose,
+    },
     /// Opens the note designated by a wikilink, creating it if needed.
     OpenLink(String),
-    Create { path: String, content: String, open: bool, if_missing: bool },
-    Save { id: Uuid, content: String, base_version: i32 },
-    Rename { id: Uuid, new_path: String },
+    Create {
+        path: String,
+        content: String,
+        open: bool,
+        if_missing: bool,
+    },
+    Save {
+        id: Uuid,
+        content: String,
+        base_version: i32,
+    },
+    Rename {
+        id: Uuid,
+        new_path: String,
+    },
     Delete(Uuid),
     CreateFolder(String),
-    RenameFolder { from: String, to: String },
+    RenameFolder {
+        from: String,
+        to: String,
+    },
     DeleteFolder(String),
     Search(String),
     Backlinks(Uuid),
     Tags,
     Graph,
     LoadPlugins,
-    SetPlugin { id: String, state: PluginState },
+    SetPlugin {
+        id: String,
+        state: PluginState,
+    },
     // ---- dashboard
     SetGithub(Option<GhConfig>),
     GithubTest,
     LoadBoard,
-    CreateProject { name: String, description: String, repo: Option<String> },
-    UpdateProject { id: Uuid, name: String, description: String, repo: Option<String> },
+    CreateProject {
+        name: String,
+        description: String,
+        repo: Option<String>,
+    },
+    UpdateProject {
+        id: Uuid,
+        name: String,
+        description: String,
+        repo: Option<String>,
+    },
     DeleteProject(Uuid),
-    CreateTicket { project_id: Uuid, title: String, tags: Vec<String>, status: Status },
-    UpdateTicket { id: Uuid, patch: TicketPatch },
+    CreateTicket {
+        project_id: Uuid,
+        title: String,
+        tags: Vec<String>,
+        status: Status,
+    },
+    UpdateTicket {
+        id: Uuid,
+        patch: TicketPatch,
+    },
     DeleteTicket(Uuid),
-    LinkReport { ticket: Uuid, note: Uuid },
-    UnlinkReport { ticket: Uuid, note: Uuid },
+    LinkReport {
+        ticket: Uuid,
+        note: Uuid,
+    },
+    UnlinkReport {
+        ticket: Uuid,
+        note: Uuid,
+    },
     /// Creates a note, links it to the ticket and opens it
-    CreateReport { ticket: Uuid, path: String, content: String },
+    CreateReport {
+        ticket: Uuid,
+        path: String,
+        content: String,
+    },
     GithubSync(Uuid),
     GithubPublish(Uuid),
 }
@@ -72,14 +120,29 @@ pub enum Msg {
     Live(bool),
     Notes(Vec<NoteMeta>),
     Folders(Vec<String>),
-    Loaded { note: Note, purpose: LoadPurpose },
-    Created { note: Note, open: bool },
+    Loaded {
+        note: Note,
+        purpose: LoadPurpose,
+    },
+    Created {
+        note: Note,
+        open: bool,
+    },
     Saved(Note),
     Conflict(Note),
-    Renamed { note: Note, relinked: usize },
+    Renamed {
+        note: Note,
+        relinked: usize,
+    },
     Deleted(Uuid),
-    SearchResults { query: String, hits: Vec<SearchHit> },
-    Backlinks { id: Uuid, links: Vec<Backlink> },
+    SearchResults {
+        query: String,
+        hits: Vec<SearchHit>,
+    },
+    Backlinks {
+        id: Uuid,
+        links: Vec<Backlink>,
+    },
     Tags(Vec<(String, i64)>),
     Graph(GraphData),
     Plugins(HashMap<String, PluginState>),
@@ -108,7 +171,11 @@ impl DbHandle {
 }
 
 /// Spawns the worker thread. `notify` is called after each message so the UI repaints.
-pub fn spawn(client_id: String, out: std::sync::mpsc::Sender<Msg>, notify: impl Fn() + Send + Sync + 'static) -> DbHandle {
+pub fn spawn(
+    client_id: String,
+    out: std::sync::mpsc::Sender<Msg>,
+    notify: impl Fn() + Send + Sync + 'static,
+) -> DbHandle {
     let (tx, rx) = mpsc::unbounded_channel();
     let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(notify);
     std::thread::Builder::new()
@@ -119,7 +186,10 @@ pub fn spawn(client_id: String, out: std::sync::mpsc::Sender<Msg>, notify: impl 
                 .enable_all()
                 .build()
                 .expect("tokio runtime");
-            rt.block_on(Worker { client_id, out, notify, client: None, url: String::new(), listener: None, github: None }.run(rx));
+            rt.block_on(
+                Worker { client_id, out, notify, client: None, url: String::new(), listener: None, github: None }
+                    .run(rx),
+            );
         })
         .expect("spawn db thread");
     DbHandle { tx }
@@ -156,7 +226,9 @@ impl Worker {
             if let Cmd::GithubTest = cmd {
                 let cfg = self.github.clone();
                 let r = match cfg {
-                    Some(c) => tokio::task::spawn_blocking(move || github::whoami(&c)).await.unwrap_or_else(|e| Err(e.to_string())),
+                    Some(c) => tokio::task::spawn_blocking(move || github::whoami(&c))
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string())),
                     None => Err("Aucun token GitHub configuré".into()),
                 };
                 self.emit(Msg::GithubUser(r));
@@ -216,7 +288,8 @@ impl Worker {
         match cmd {
             Cmd::Connect(_) => unreachable!(),
             Cmd::ListNotes => {
-                let rows = self.c().query("SELECT id, path, version, updated_at FROM notes ORDER BY lower(path)", &[]).await?;
+                let rows =
+                    self.c().query("SELECT id, path, version, updated_at FROM notes ORDER BY lower(path)", &[]).await?;
                 let notes = rows
                     .iter()
                     .map(|r| NoteMeta { id: r.get(0), path: r.get(1), version: r.get(2), updated_at: r.get(3) })
@@ -250,7 +323,10 @@ impl Worker {
             }
             Cmd::Create { path, content, open, if_missing } => {
                 if if_missing
-                    && let Some(r) = self.c().query_opt(&format!("SELECT {NOTE_COLS} FROM notes WHERE lower(path) = lower($1)"), &[&path]).await?
+                    && let Some(r) = self
+                        .c()
+                        .query_opt(&format!("SELECT {NOTE_COLS} FROM notes WHERE lower(path) = lower($1)"), &[&path])
+                        .await?
                 {
                     if open {
                         em.emit(Msg::Loaded { note: note_from(&r), purpose: LoadPurpose::Open });
@@ -258,7 +334,12 @@ impl Worker {
                     return Ok(());
                 }
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
-                let r = t.query_one(&format!("INSERT INTO notes (path, content) VALUES ($1, $2) RETURNING {NOTE_COLS}"), &[&path, &content]).await;
+                let r = t
+                    .query_one(
+                        &format!("INSERT INTO notes (path, content) VALUES ($1, $2) RETURNING {NOTE_COLS}"),
+                        &[&path, &content],
+                    )
+                    .await;
                 match r {
                     Ok(row) => {
                         t.commit().await?;
@@ -270,7 +351,8 @@ impl Worker {
             }
             Cmd::Save { id, content, base_version } => {
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
-                let cur = t.query_opt(&format!("SELECT {NOTE_COLS} FROM notes WHERE id = $1 FOR UPDATE"), &[&id]).await?;
+                let cur =
+                    t.query_opt(&format!("SELECT {NOTE_COLS} FROM notes WHERE id = $1 FOR UPDATE"), &[&id]).await?;
                 let Some(cur) = cur else {
                     em.emit(Msg::Error("La note a été supprimée entre-temps".into()));
                     return Ok(());
@@ -281,18 +363,30 @@ impl Worker {
                     em.emit(Msg::Conflict(current));
                     return Ok(());
                 }
-                let row = t.query_opt(&format!("UPDATE notes SET content = $2 WHERE id = $1 RETURNING {NOTE_COLS}"), &[&id, &content]).await?;
+                let row = t
+                    .query_opt(
+                        &format!("UPDATE notes SET content = $2 WHERE id = $1 RETURNING {NOTE_COLS}"),
+                        &[&id, &content],
+                    )
+                    .await?;
                 t.commit().await?;
                 em.emit(Msg::Saved(row.map(|r| note_from(&r)).unwrap_or(current)));
             }
             Cmd::Rename { id, new_path } => {
                 let mut t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
-                let old: Option<String> = t.query_opt("SELECT path FROM notes WHERE id = $1", &[&id]).await?.map(|r| r.get(0));
+                let old: Option<String> =
+                    t.query_opt("SELECT path FROM notes WHERE id = $1", &[&id]).await?.map(|r| r.get(0));
                 let Some(old) = old else { return Ok(()) };
                 if old == new_path {
                     return Ok(()); // nothing to do (e.g. the same rename sent twice)
                 }
-                let row = match t.query_one(&format!("UPDATE notes SET path = $2 WHERE id = $1 RETURNING {NOTE_COLS}"), &[&id, &new_path]).await {
+                let row = match t
+                    .query_one(
+                        &format!("UPDATE notes SET path = $2 WHERE id = $1 RETURNING {NOTE_COLS}"),
+                        &[&id, &new_path],
+                    )
+                    .await
+                {
                     Ok(r) => r,
                     Err(e) if is_unique_violation(&e) => {
                         em.emit(Msg::Error(format!("« {new_path} » existe déjà")));
@@ -334,10 +428,15 @@ impl Worker {
                     }
                     relink(&mut t, id, &path, &np).await?;
                 }
-                let folders = t.query(&format!("DELETE FROM folders WHERE {PREFIXED} RETURNING path"), &[&from]).await?;
+                let folders =
+                    t.query(&format!("DELETE FROM folders WHERE {PREFIXED} RETURNING path"), &[&from]).await?;
                 for f in &folders {
                     let p: String = f.get(0);
-                    t.execute("INSERT INTO folders (path) VALUES ($1) ON CONFLICT DO NOTHING", &[&format!("{to}{}", &p[from.len()..])]).await?;
+                    t.execute(
+                        "INSERT INTO folders (path) VALUES ($1) ON CONFLICT DO NOTHING",
+                        &[&format!("{to}{}", &p[from.len()..])],
+                    )
+                    .await?;
                 }
                 t.commit().await?;
             }
@@ -374,7 +473,9 @@ impl Worker {
                 em.emit(Msg::SearchResults { query: q, hits });
             }
             Cmd::Backlinks(id) => {
-                let Some(row) = self.c().query_opt("SELECT path FROM notes WHERE id = $1", &[&id]).await? else { return Ok(()) };
+                let Some(row) = self.c().query_opt("SELECT path FROM notes WHERE id = $1", &[&id]).await? else {
+                    return Ok(());
+                };
                 let path: String = row.get(0);
                 let base = basename(&path).to_string();
                 let rows = self
@@ -395,7 +496,9 @@ impl Worker {
                             .lines()
                             .filter(|line| {
                                 let l = line.to_lowercase();
-                                [&pl, &bl].iter().any(|t| ["]]", "|", "#"].iter().any(|end| l.contains(&format!("[[{t}{end}"))))
+                                [&pl, &bl]
+                                    .iter()
+                                    .any(|t| ["]]", "|", "#"].iter().any(|end| l.contains(&format!("[[{t}{end}"))))
                             })
                             .take(3)
                             .map(|l| l.trim().chars().take(200).collect())
@@ -431,7 +534,8 @@ impl Worker {
                         &[],
                     )
                     .await?;
-                let mut g = GraphData { nodes: nodes.iter().map(|r| (r.get(0), r.get(1), false)).collect(), edges: vec![] };
+                let mut g =
+                    GraphData { nodes: nodes.iter().map(|r| (r.get(0), r.get(1), false)).collect(), edges: vec![] };
                 let mut ghosts = std::collections::HashSet::new();
                 for e in &edges {
                     let src: String = e.get(0);
@@ -490,18 +594,25 @@ impl Worker {
                     .await
                 {
                     Ok(_) => t.commit().await?,
-                    Err(e) if is_unique_violation(&e) => em.emit(Msg::Error(format!("Le projet « {name} » existe déjà"))),
+                    Err(e) if is_unique_violation(&e) => {
+                        em.emit(Msg::Error(format!("Le projet « {name} » existe déjà")))
+                    }
                     Err(e) => return Err(e),
                 }
             }
             Cmd::UpdateProject { id, name, description, repo } => {
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
                 match t
-                    .execute("UPDATE projects SET name = $2, description = $3, github_repo = $4 WHERE id = $1", &[&id, &name.trim(), &description, &repo])
+                    .execute(
+                        "UPDATE projects SET name = $2, description = $3, github_repo = $4 WHERE id = $1",
+                        &[&id, &name.trim(), &description, &repo],
+                    )
                     .await
                 {
                     Ok(_) => t.commit().await?,
-                    Err(e) if is_unique_violation(&e) => em.emit(Msg::Error(format!("Le projet « {name} » existe déjà"))),
+                    Err(e) if is_unique_violation(&e) => {
+                        em.emit(Msg::Error(format!("Le projet « {name} » existe déjà")))
+                    }
                     Err(e) => return Err(e),
                 }
             }
@@ -534,11 +645,17 @@ impl Worker {
                 .await?;
                 t.commit().await?;
                 // keep the GitHub issue in step (title, body, labels, open/closed)
-                let touches_github = patch.title.is_some() || patch.body.is_some() || patch.status.is_some() || patch.tags.is_some();
+                let touches_github =
+                    patch.title.is_some() || patch.body.is_some() || patch.status.is_some() || patch.tags.is_some();
                 if touches_github && self.github.is_some() {
-                    let linked = self.c().query_opt(
-                        "SELECT t.github_number FROM tickets t JOIN projects p ON p.id = t.project_id
-                         WHERE t.id = $1 AND t.github_number IS NOT NULL AND p.github_repo IS NOT NULL", &[&id]).await?;
+                    let linked = self
+                        .c()
+                        .query_opt(
+                            "SELECT t.github_number FROM tickets t JOIN projects p ON p.id = t.project_id
+                         WHERE t.id = $1 AND t.github_number IS NOT NULL AND p.github_repo IS NOT NULL",
+                            &[&id],
+                        )
+                        .await?;
                     if linked.is_some()
                         && let Err(e) = self.push_ticket(id).await?
                     {
@@ -553,12 +670,17 @@ impl Worker {
             }
             Cmd::LinkReport { ticket, note } => {
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
-                t.execute("INSERT INTO ticket_reports (ticket_id, note_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", &[&ticket, &note]).await?;
+                t.execute(
+                    "INSERT INTO ticket_reports (ticket_id, note_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                    &[&ticket, &note],
+                )
+                .await?;
                 t.commit().await?;
             }
             Cmd::UnlinkReport { ticket, note } => {
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
-                t.execute("DELETE FROM ticket_reports WHERE ticket_id = $1 AND note_id = $2", &[&ticket, &note]).await?;
+                t.execute("DELETE FROM ticket_reports WHERE ticket_id = $1 AND note_id = $2", &[&ticket, &note])
+                    .await?;
                 t.commit().await?;
             }
             Cmd::CreateReport { ticket, path, content } => {
@@ -570,21 +692,32 @@ impl Worker {
                     candidate = format!("{path} ({n})");
                     n += 1;
                 }
-                let row = t.query_one(&format!("INSERT INTO notes (path, content) VALUES ($1, $2) RETURNING {NOTE_COLS}"), &[&candidate, &content]).await?;
+                let row = t
+                    .query_one(
+                        &format!("INSERT INTO notes (path, content) VALUES ($1, $2) RETURNING {NOTE_COLS}"),
+                        &[&candidate, &content],
+                    )
+                    .await?;
                 let note = note_from(&row);
-                t.execute("INSERT INTO ticket_reports (ticket_id, note_id) VALUES ($1, $2)", &[&ticket, &note.id]).await?;
+                t.execute("INSERT INTO ticket_reports (ticket_id, note_id) VALUES ($1, $2)", &[&ticket, &note.id])
+                    .await?;
                 t.commit().await?;
                 em.emit(Msg::Created { note, open: true });
             }
             Cmd::GithubPublish(id) => match self.github.is_some() {
-                false => em.emit(Msg::GithubFailed(None, "Configurez d'abord un token GitHub (Paramètres › GitHub)".into())),
+                false => {
+                    em.emit(Msg::GithubFailed(None, "Configurez d'abord un token GitHub (Paramètres › GitHub)".into()))
+                }
                 true => match self.publish_ticket(id).await? {
                     Ok(n) => em.emit(Msg::GithubDone(None, format!("Issue #{n} créée sur GitHub"))),
                     Err(e) => em.emit(Msg::GithubFailed(None, e)),
                 },
             },
             Cmd::GithubSync(project) => match self.github.is_some() {
-                false => em.emit(Msg::GithubFailed(Some(project), "Configurez d'abord un token GitHub (Paramètres › GitHub)".into())),
+                false => em.emit(Msg::GithubFailed(
+                    Some(project),
+                    "Configurez d'abord un token GitHub (Paramètres › GitHub)".into(),
+                )),
                 true => match self.sync_project(project).await? {
                     Ok(summary) => em.emit(Msg::GithubDone(Some(project), summary)),
                     Err(e) => em.emit(Msg::GithubFailed(Some(project), e)),
@@ -616,13 +749,17 @@ impl Worker {
     }
 
     async fn push_ticket(&mut self, id: Uuid) -> Res<Result<(), String>> {
-        let Some((tk, repo)) = self.ticket_with_repo(id).await? else { return Ok(Err("Projet sans dépôt GitHub".into())) };
+        let Some((tk, repo)) = self.ticket_with_repo(id).await? else {
+            return Ok(Err("Projet sans dépôt GitHub".into()));
+        };
         let Some(number) = tk.github_number else { return Ok(Err("Ticket non publié sur GitHub".into())) };
         let cfg = self.github.clone().expect("github");
         let labels: Vec<String> = tk.tags.iter().map(|t| tag_to_label(t)).collect();
-        let r = tokio::task::spawn_blocking(move || github::update_issue(&cfg, &repo, number, &tk.title, &tk.body, tk.status != Status::Done, &labels))
-            .await
-            .unwrap_or_else(|e| Err(e.to_string()));
+        let r = tokio::task::spawn_blocking(move || {
+            github::update_issue(&cfg, &repo, number, &tk.title, &tk.body, tk.status != Status::Done, &labels)
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
         match r {
             Ok(issue) => {
                 self.mark_synced(id, &issue).await?;
@@ -644,7 +781,11 @@ impl Worker {
         let done = tk.status == Status::Done;
         let r = tokio::task::spawn_blocking(move || {
             let issue = github::create_issue(&cfg, &repo, &tk.title, &tk.body, &labels)?;
-            if done { github::update_issue(&cfg, &repo, issue.number, &tk.title, &tk.body, false, &labels) } else { Ok(issue) }
+            if done {
+                github::update_issue(&cfg, &repo, issue.number, &tk.title, &tk.body, false, &labels)
+            } else {
+                Ok(issue)
+            }
         })
         .await
         .unwrap_or_else(|e| Err(e.to_string()));
@@ -658,18 +799,25 @@ impl Worker {
     }
 
     async fn sync_project(&mut self, project: Uuid) -> Res<Result<String, String>> {
-        let Some(row) = self.c().query_opt("SELECT name, github_repo FROM projects WHERE id = $1", &[&project]).await? else {
+        let Some(row) = self.c().query_opt("SELECT name, github_repo FROM projects WHERE id = $1", &[&project]).await?
+        else {
             return Ok(Err("Projet introuvable".into()));
         };
         let (name, repo): (String, Option<String>) = (row.get(0), row.get(1));
         let Some(repo) = repo else { return Ok(Err(format!("Le projet « {name} » n'a pas de dépôt GitHub"))) };
         let cfg = self.github.clone().expect("github");
         let r2 = repo.clone();
-        let issues = match tokio::task::spawn_blocking(move || github::list_issues(&cfg, &r2)).await.unwrap_or_else(|e| Err(e.to_string())) {
+        let issues = match tokio::task::spawn_blocking(move || github::list_issues(&cfg, &r2))
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()))
+        {
             Ok(i) => i,
             Err(e) => return Ok(Err(e)),
         };
-        let rows = self.c().query(&format!("SELECT {TICKET_COLS} FROM tickets t WHERE t.project_id = $1"), &[&project]).await?;
+        let rows = self
+            .c()
+            .query(&format!("SELECT {TICKET_COLS} FROM tickets t WHERE t.project_id = $1"), &[&project])
+            .await?;
         let tickets: Vec<Ticket> = rows.iter().map(ticket_from).collect();
         let refs: Vec<&Ticket> = tickets.iter().collect();
         let (mut imported, mut pulled, mut pushed, mut errors) = (0, 0, 0, vec![]);
@@ -707,7 +855,9 @@ impl Worker {
                 },
             }
         }
-        let mut summary = format!("{name} ↔ {repo} : {imported} importé(s), {pulled} mis à jour depuis GitHub, {pushed} envoyé(s) vers GitHub");
+        let mut summary = format!(
+            "{name} ↔ {repo} : {imported} importé(s), {pulled} mis à jour depuis GitHub, {pushed} envoyé(s) vers GitHub"
+        );
         if !errors.is_empty() {
             summary.push_str(&format!(" — {} erreur(s) : {}", errors.len(), errors[0]));
         }
@@ -715,7 +865,8 @@ impl Worker {
     }
 }
 
-const TICKET_COLS: &str = "t.id, t.project_id, t.number, t.title, t.body, t.status, t.tags, t.priority, t.github_number, t.github_url,
+const TICKET_COLS: &str =
+    "t.id, t.project_id, t.number, t.title, t.body, t.status, t.tags, t.priority, t.github_number, t.github_url,
   t.github_state, t.github_synced_at, t.created_at, t.updated_at, t.done_at";
 const TICKET_COLS_N: usize = 15;
 
@@ -747,7 +898,12 @@ async fn load_board(c: &Client) -> Res<Board> {
         .map(|r| Project { id: r.get(0), name: r.get(1), description: r.get(2), github_repo: r.get(3) })
         .collect();
     let tickets = c
-        .query(&format!("SELECT {TICKET_COLS} FROM tickets t ORDER BY t.project_id, t.priority DESC, t.position, t.number"), &[])
+        .query(
+            &format!(
+                "SELECT {TICKET_COLS} FROM tickets t ORDER BY t.project_id, t.priority DESC, t.position, t.number"
+            ),
+            &[],
+        )
         .await?
         .iter()
         .map(ticket_from)
@@ -760,8 +916,6 @@ async fn load_board(c: &Client) -> Res<Board> {
         .collect();
     Ok(Board { projects, tickets, reports })
 }
-
-
 
 struct Emitter {
     out: std::sync::mpsc::Sender<Msg>,
@@ -789,7 +943,14 @@ const RESOLVE_SQL: &str = "SELECT id, path, content, version, updated_by, update
   ORDER BY (lower(path) = lower($1)) DESC, length(path) LIMIT 1";
 
 fn note_from(r: &Row) -> Note {
-    Note { id: r.get(0), path: r.get(1), content: r.get(2), version: r.get(3), updated_by: r.get(4), updated_at: r.get(5) }
+    Note {
+        id: r.get(0),
+        path: r.get(1),
+        content: r.get(2),
+        version: r.get(3),
+        updated_by: r.get(4),
+        updated_at: r.get(5),
+    }
 }
 
 fn is_unique_violation(e: &tokio_postgres::Error) -> bool {
@@ -816,7 +977,10 @@ async fn relink(t: &mut tokio_postgres::Transaction<'_>, id: Uuid, old: &str, ne
     let old_base = basename(old).to_string();
     // Use the full path if the new basename becomes ambiguous
     let same: i64 = t
-        .query_one("SELECT count(*) FROM notes WHERE lower(regexp_replace(path, '^.*/', '')) = lower($1) AND id <> $2", &[&basename(new), &id])
+        .query_one(
+            "SELECT count(*) FROM notes WHERE lower(regexp_replace(path, '^.*/', '')) = lower($1) AND id <> $2",
+            &[&basename(new), &id],
+        )
         .await?
         .get(0);
     let target = if same > 0 { new.to_string() } else { basename(new).to_string() };
@@ -917,10 +1081,7 @@ async fn open_client(url: &str) -> Res<Client> {
     connect_with(url, None).await.map(|(c, _)| c)
 }
 
-async fn connect_with(
-    url: &str,
-    events: Option<EventSink>,
-) -> Res<(Client, tokio::task::JoinHandle<()>)> {
+async fn connect_with(url: &str, events: Option<EventSink>) -> Res<(Client, tokio::task::JoinHandle<()>)> {
     let mut config: tokio_postgres::Config = url.parse()?;
     config.connect_timeout(Duration::from_secs(10));
     if wants_tls(url) {
@@ -969,6 +1130,9 @@ mod tests {
     #[test]
     fn rewrite() {
         let s = "a [[Old]] b [[old|alias]] c [[Dir/Old#h]] d [[Older]] [[x]]";
-        assert_eq!(rewrite_links(s, &["Dir/Old", "Old"], "New"), "a [[New]] b [[New|alias]] c [[New#h]] d [[Older]] [[x]]");
+        assert_eq!(
+            rewrite_links(s, &["Dir/Old", "Old"], "New"),
+            "a [[New]] b [[New|alias]] c [[New#h]] d [[Older]] [[x]]"
+        );
     }
 }

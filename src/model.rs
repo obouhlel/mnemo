@@ -86,16 +86,8 @@ pub fn parent(path: &str) -> Option<&str> {
 /// Normalizes a user-entered note path. Returns an error message in French.
 pub fn normalize_path(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
-    let trimmed = trimmed
-        .strip_suffix(".md")
-        .or_else(|| trimmed.strip_suffix(".MD"))
-        .unwrap_or(trimmed);
-    let p = trimmed
-        .split('/')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
+    let trimmed = trimmed.strip_suffix(".md").or_else(|| trimmed.strip_suffix(".MD")).unwrap_or(trimmed);
+    let p = trimmed.split('/').map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>().join("/");
     if p.is_empty() {
         return Err("Le nom ne peut pas être vide".into());
     }

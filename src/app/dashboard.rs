@@ -194,7 +194,11 @@ impl MnemoApp {
 
         // ---- view header (like a note's)
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
-        let project_name = self.dash.project.and_then(|id| self.board.projects.iter().find(|pr| pr.id == id)).map(|pr| pr.name.clone());
+        let project_name = self
+            .dash
+            .project
+            .and_then(|id| self.board.projects.iter().find(|pr| pr.id == id))
+            .map(|pr| pr.name.clone());
         let crumb = match &project_name {
             Some(n) => format!("Tableau de bord  /  {n}"),
             None => "Tableau de bord".to_string(),
@@ -212,8 +216,10 @@ impl MnemoApp {
                     }
                 });
                 ui.add_space(6.0);
-                ui.selectable_value(&mut self.dash.mode, DashMode::Rows, "Lignes").on_hover_text("Todo list par projet, regroupée par tag");
-                ui.selectable_value(&mut self.dash.mode, DashMode::Columns, "Colonnes").on_hover_text("Kanban par statut (glisser-déposer)");
+                ui.selectable_value(&mut self.dash.mode, DashMode::Rows, "Lignes")
+                    .on_hover_text("Todo list par projet, regroupée par tag");
+                ui.selectable_value(&mut self.dash.mode, DashMode::Columns, "Colonnes")
+                    .on_hover_text("Kanban par statut (glisser-déposer)");
                 ui.add_space(6.0);
                 ui.checkbox(&mut self.dash.show_done, "Terminés");
                 ui.add(egui::TextEdit::singleline(&mut self.dash.filter).hint_text("Filtrer…").desired_width(170.0));
@@ -223,13 +229,31 @@ impl MnemoApp {
                         acts.push(DA::EditProject(None));
                     }
                     if let Some(pid) = self.dash.project {
-                        if theme::icon_button_sized(ui, icon::SETTINGS, "Modifier le projet (nom, description, dépôt GitHub)", false, true, 16.0).clicked() {
+                        if theme::icon_button_sized(
+                            ui,
+                            icon::SETTINGS,
+                            "Modifier le projet (nom, description, dépôt GitHub)",
+                            false,
+                            true,
+                            16.0,
+                        )
+                        .clicked()
+                        {
                             acts.push(DA::EditProject(Some(pid)));
                         }
                         if self.board.projects.iter().any(|pr| pr.id == pid && pr.github_repo.is_some()) {
                             if self.dash.syncing.contains(&pid) {
                                 ui.spinner();
-                            } else if theme::icon_button_sized(ui, icon::SYNC, "Synchroniser avec GitHub", false, true, 16.0).clicked() {
+                            } else if theme::icon_button_sized(
+                                ui,
+                                icon::SYNC,
+                                "Synchroniser avec GitHub",
+                                false,
+                                true,
+                                16.0,
+                            )
+                            .clicked()
+                            {
                                 acts.push(DA::Sync(pid));
                             }
                         }
@@ -327,8 +351,16 @@ impl MnemoApp {
                         depth = 1;
                     }
                     // tag groups: built-in tags first, then custom ones, then untagged
-                    let mut groups: Vec<String> = TAGS.iter().map(|t| t.0.to_string()).filter(|tag| tickets.iter().any(|t| t.tags.contains(tag))).collect();
-                    let mut custom: Vec<String> = tickets.iter().flat_map(|t| t.tags.iter().cloned()).filter(|g| !groups.contains(g) && !TAGS.iter().any(|t| t.0 == g)).collect();
+                    let mut groups: Vec<String> = TAGS
+                        .iter()
+                        .map(|t| t.0.to_string())
+                        .filter(|tag| tickets.iter().any(|t| t.tags.contains(tag)))
+                        .collect();
+                    let mut custom: Vec<String> = tickets
+                        .iter()
+                        .flat_map(|t| t.tags.iter().cloned())
+                        .filter(|g| !groups.contains(g) && !TAGS.iter().any(|t| t.0 == g))
+                        .collect();
                     custom.sort();
                     custom.dedup();
                     groups.extend(custom);
@@ -336,8 +368,13 @@ impl MnemoApp {
                         groups.extend(["Feature".to_string(), "Bug".to_string()]);
                     }
                     let untagged: Vec<&Ticket> = tickets.iter().copied().filter(|t| t.tags.is_empty()).collect();
-                    let mut keys: Vec<(String, Vec<&Ticket>)> =
-                        groups.into_iter().map(|g| { let v = tickets.iter().copied().filter(|t| t.tags.contains(&g)).collect(); (g, v) }).collect();
+                    let mut keys: Vec<(String, Vec<&Ticket>)> = groups
+                        .into_iter()
+                        .map(|g| {
+                            let v = tickets.iter().copied().filter(|t| t.tags.contains(&g)).collect();
+                            (g, v)
+                        })
+                        .collect();
                     if !untagged.is_empty() {
                         keys.push((String::new(), untagged));
                     }
@@ -346,7 +383,18 @@ impl MnemoApp {
                         let open = !self.dash.collapsed.contains(&gkey);
                         let (d, n) = progress(list.iter().copied());
                         let label = if tag.is_empty() { "Sans tag".to_string() } else { tag.clone() };
-                        let r = group_row(ui, &p, &label, Some(if tag.is_empty() { p.faint } else { tag_color(&tag) }), d, n, open, depth, false, None);
+                        let r = group_row(
+                            ui,
+                            &p,
+                            &label,
+                            Some(if tag.is_empty() { p.faint } else { tag_color(&tag) }),
+                            d,
+                            n,
+                            open,
+                            depth,
+                            false,
+                            None,
+                        );
                         if r.clicked() {
                             acts.push(DA::Toggle(gkey.clone()));
                         }
@@ -362,7 +410,11 @@ impl MnemoApp {
                         ui.add_space(2.0);
                         ui.horizontal(|ui| {
                             ui.add_space(14.0 + (depth + 1) as f32 * 20.0);
-                            let hint = if tag.is_empty() { "+ Ajouter un ticket…".to_string() } else { format!("+ Ajouter un ticket « {tag} »…") };
+                            let hint = if tag.is_empty() {
+                                "+ Ajouter un ticket…".to_string()
+                            } else {
+                                format!("+ Ajouter un ticket « {tag} »…")
+                            };
                             let r = ui.add(
                                 egui::TextEdit::singleline(buf)
                                     .hint_text(RichText::new(hint).color(p.faint))
@@ -390,7 +442,16 @@ impl MnemoApp {
     #[allow(clippy::too_many_arguments)]
     /// `salt`: the group key (a ticket with several tags is listed in several groups)
     #[allow(clippy::too_many_arguments)]
-    fn ticket_row(&self, ui: &mut egui::Ui, p: &theme::Palette, t: &Ticket, reports: usize, depth: usize, salt: &str, acts: &mut Vec<DA>) {
+    fn ticket_row(
+        &self,
+        ui: &mut egui::Ui,
+        p: &theme::Palette,
+        t: &Ticket,
+        reports: usize,
+        depth: usize,
+        salt: &str,
+        acts: &mut Vec<DA>,
+    ) {
         let width = ui.available_width();
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::click());
         let painter = ui.painter_at(rect);
@@ -412,11 +473,19 @@ impl MnemoApp {
             painter.line_segment([c + egui::vec2(-3.8, 0.2), c + egui::vec2(-1.0, 3.0)], s);
             painter.line_segment([c + egui::vec2(-1.0, 3.0), c + egui::vec2(4.0, -2.8)], s);
         } else {
-            painter.rect_stroke(cb, 4.0, egui::Stroke::new(1.3, if t.status == Status::Todo { p.faint } else { t.status.color() }), egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                cb,
+                4.0,
+                egui::Stroke::new(1.3, if t.status == Status::Todo { p.faint } else { t.status.color() }),
+                egui::StrokeKind::Inside,
+            );
         }
         let cb_resp = ui.interact(cb.expand(4.0), egui::Id::unique(("ticket-cb", t.id, salt)), egui::Sense::click());
         if cb_resp.clicked() {
-            acts.push(DA::Patch(t.id, TicketPatch { status: Some(if done { Status::Todo } else { Status::Done }), ..Default::default() }));
+            acts.push(DA::Patch(
+                t.id,
+                TicketPatch { status: Some(if done { Status::Todo } else { Status::Done }), ..Default::default() },
+            ));
         }
         // number + title
         let mut x = x0 + 24.0;
@@ -487,12 +556,14 @@ impl MnemoApp {
     // ------------------------------------------------------------------ columns (kanban)
     fn columns_view(&mut self, ui: &mut egui::Ui, acts: &mut Vec<DA>) {
         let p = self.pal();
-        let statuses: Vec<Status> = Status::ALL.into_iter().filter(|s| self.dash.show_done || *s != Status::Done).collect();
+        let statuses: Vec<Status> =
+            Status::ALL.into_iter().filter(|s| self.dash.show_done || *s != Status::Done).collect();
         let projects: Vec<Uuid> = match self.dash.project {
             Some(pid) => vec![pid],
             None => self.board.projects.iter().map(|pr| pr.id).collect(),
         };
-        let tickets: Vec<Ticket> = projects.iter().flat_map(|pid| self.scoped_tickets(*pid).into_iter().cloned()).collect();
+        let tickets: Vec<Ticket> =
+            projects.iter().flat_map(|pid| self.scoped_tickets(*pid).into_iter().cloned()).collect();
         let names: HashMap<Uuid, String> = self.board.projects.iter().map(|pr| (pr.id, pr.name.clone())).collect();
         let show_project = self.dash.project.is_none();
         egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 10 }).show(ui, |ui| {
@@ -511,66 +582,99 @@ impl MnemoApp {
                     let (_, dropped) = ui.dnd_drop_zone::<Uuid, ()>(frame, |ui| {
                         ui.set_min_height((ui.available_height() - 10.0).max(120.0));
                         ui.set_width(ui.available_width());
-                        egui::ScrollArea::vertical().id_salt(("kanban", ci)).auto_shrink([false, false]).show(ui, |ui| {
-                            if *st == Status::Todo
-                                && let Some(pid) = self.dash.project
-                            {
-                                let buf = self.dash.new_titles.entry(format!("k:{pid}")).or_default();
-                                let r = ui.add(egui::TextEdit::singleline(buf).hint_text("+ Nouveau ticket…").desired_width(f32::INFINITY));
-                                if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !buf.trim().is_empty() {
-                                    acts.push(DA::Create { project: pid, title: std::mem::take(buf), tags: vec![], status: Status::Todo });
-                                    r.request_focus();
+                        egui::ScrollArea::vertical().id_salt(("kanban", ci)).auto_shrink([false, false]).show(
+                            ui,
+                            |ui| {
+                                if *st == Status::Todo
+                                    && let Some(pid) = self.dash.project
+                                {
+                                    let buf = self.dash.new_titles.entry(format!("k:{pid}")).or_default();
+                                    let r = ui.add(
+                                        egui::TextEdit::singleline(buf)
+                                            .hint_text("+ Nouveau ticket…")
+                                            .desired_width(f32::INFINITY),
+                                    );
+                                    if r.lost_focus()
+                                        && ui.input(|i| i.key_pressed(Key::Enter))
+                                        && !buf.trim().is_empty()
+                                    {
+                                        acts.push(DA::Create {
+                                            project: pid,
+                                            title: std::mem::take(buf),
+                                            tags: vec![],
+                                            status: Status::Todo,
+                                        });
+                                        r.request_focus();
+                                    }
+                                    ui.add_space(4.0);
                                 }
-                                ui.add_space(4.0);
-                            }
-                            for t in col {
-                                let reports = self.board.reports.iter().filter(|r| r.ticket_id == t.id).count();
-                                let selected = self.dash.selected == Some(t.id);
-                                let id = egui::Id::unique(("card", t.id));
-                                let r = ui.dnd_drag_source(id, t.id, |ui| {
-                                    egui::Frame::new()
-                                        .fill(p.bg)
-                                        .stroke(egui::Stroke::new(1.0, if selected { p.accent } else { p.border }))
-                                        .corner_radius(6.0)
-                                        .inner_margin(egui::Margin::symmetric(10, 8))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            // left-aligned (the column layout would justify the text)
-                                            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                                            ui.add(egui::Label::new(RichText::new(&t.title).color(p.text)).wrap());
-                                            ui.add_space(4.0);
-                                            ui.horizontal_wrapped(|ui| {
-                                                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                                                ui.label(RichText::new(format!("T-{}", t.number)).size(11.5).color(p.faint));
-                                                if show_project && let Some(n) = names.get(&t.project_id) {
-                                                    ui.label(RichText::new(n).size(11.5).color(p.muted));
-                                                }
-                                                for g in &t.tags {
-                                                    pill(ui, g, tag_color(g), false);
-                                                }
-                                                if let Some(n) = t.github_number {
-                                                    ui.label(theme::icon_text("\u{e0e9}", 12.0).color(p.faint));
-                                                    ui.label(RichText::new(format!("#{n}")).size(11.5).color(p.faint));
-                                                }
-                                                if reports > 0 {
-                                                    ui.label(theme::icon_text("\u{e0d0}", 12.0).color(p.faint));
-                                                    ui.label(RichText::new(reports.to_string()).size(11.5).color(p.faint));
-                                                }
-                                                if let Some(c) = priority_color(t.priority) {
-                                                    ui.label(RichText::new(PRIORITIES[t.priority as usize]).size(11.5).color(c));
-                                                }
-                                            });
-                                            });
-                                        })
-                                        .response
-                                });
-                                let click = ui.interact(r.response.rect, id.with("click"), egui::Sense::click());
-                                if click.clicked() {
-                                    acts.push(DA::Select(if selected { None } else { Some(t.id) }));
+                                for t in col {
+                                    let reports = self.board.reports.iter().filter(|r| r.ticket_id == t.id).count();
+                                    let selected = self.dash.selected == Some(t.id);
+                                    let id = egui::Id::unique(("card", t.id));
+                                    let r = ui.dnd_drag_source(id, t.id, |ui| {
+                                        egui::Frame::new()
+                                            .fill(p.bg)
+                                            .stroke(egui::Stroke::new(1.0, if selected { p.accent } else { p.border }))
+                                            .corner_radius(6.0)
+                                            .inner_margin(egui::Margin::symmetric(10, 8))
+                                            .show(ui, |ui| {
+                                                ui.set_width(ui.available_width());
+                                                // left-aligned (the column layout would justify the text)
+                                                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                                                    ui.add(
+                                                        egui::Label::new(RichText::new(&t.title).color(p.text)).wrap(),
+                                                    );
+                                                    ui.add_space(4.0);
+                                                    ui.horizontal_wrapped(|ui| {
+                                                        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                                                        ui.label(
+                                                            RichText::new(format!("T-{}", t.number))
+                                                                .size(11.5)
+                                                                .color(p.faint),
+                                                        );
+                                                        if show_project && let Some(n) = names.get(&t.project_id) {
+                                                            ui.label(RichText::new(n).size(11.5).color(p.muted));
+                                                        }
+                                                        for g in &t.tags {
+                                                            pill(ui, g, tag_color(g), false);
+                                                        }
+                                                        if let Some(n) = t.github_number {
+                                                            ui.label(theme::icon_text("\u{e0e9}", 12.0).color(p.faint));
+                                                            ui.label(
+                                                                RichText::new(format!("#{n}"))
+                                                                    .size(11.5)
+                                                                    .color(p.faint),
+                                                            );
+                                                        }
+                                                        if reports > 0 {
+                                                            ui.label(theme::icon_text("\u{e0d0}", 12.0).color(p.faint));
+                                                            ui.label(
+                                                                RichText::new(reports.to_string())
+                                                                    .size(11.5)
+                                                                    .color(p.faint),
+                                                            );
+                                                        }
+                                                        if let Some(c) = priority_color(t.priority) {
+                                                            ui.label(
+                                                                RichText::new(PRIORITIES[t.priority as usize])
+                                                                    .size(11.5)
+                                                                    .color(c),
+                                                            );
+                                                        }
+                                                    });
+                                                });
+                                            })
+                                            .response
+                                    });
+                                    let click = ui.interact(r.response.rect, id.with("click"), egui::Sense::click());
+                                    if click.clicked() {
+                                        acts.push(DA::Select(if selected { None } else { Some(t.id) }));
+                                    }
+                                    ui.add_space(6.0);
                                 }
-                                ui.add_space(6.0);
-                            }
-                        });
+                            },
+                        );
                     });
                     if let Some(id) = dropped {
                         acts.push(DA::Patch(*id, TicketPatch { status: Some(*st), ..Default::default() }));
@@ -584,12 +688,19 @@ impl MnemoApp {
     fn ticket_detail(&mut self, ui: &mut egui::Ui, t: &Ticket, acts: &mut Vec<DA>) {
         let p = self.pal();
         let fresh = !matches!(&self.dash.edit, Some(e) if e.id == t.id);
-        let stale = matches!(&self.dash.edit, Some(e) if e.id == t.id && (e.base_title != t.title || e.base_body != t.body));
+        let stale =
+            matches!(&self.dash.edit, Some(e) if e.id == t.id && (e.base_title != t.title || e.base_body != t.body));
         let title_id = egui::Id::unique(("ticket-title", t.id));
         let body_id = egui::Id::unique(("ticket-body", t.id));
         let editing = ui.memory(|m| m.has_focus(title_id) || m.has_focus(body_id));
         if fresh || (stale && !editing) {
-            self.dash.edit = Some(Edit { id: t.id, title: t.title.clone(), body: t.body.clone(), base_title: t.title.clone(), base_body: t.body.clone() });
+            self.dash.edit = Some(Edit {
+                id: t.id,
+                title: t.title.clone(),
+                body: t.body.clone(),
+                base_title: t.title.clone(),
+                base_body: t.body.clone(),
+            });
             self.dash.confirm_delete = None;
         }
         let project = self.board.projects.iter().find(|pr| pr.id == t.project_id).cloned();
@@ -828,10 +939,21 @@ impl MnemoApp {
         let p = self.pal();
         let mut close = false;
         let modal = egui::Modal::new(egui::Id::unique("project-form"))
-            .frame(egui::Frame::new().fill(p.bg2).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(10.0).inner_margin(20.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(p.bg2)
+                    .stroke(egui::Stroke::new(1.0, p.border))
+                    .corner_radius(10.0)
+                    .inner_margin(20.0),
+            )
             .show(ctx, |ui| {
                 ui.set_width(440.0);
-                ui.label(RichText::new(if form.id.is_some() { "Modifier le projet" } else { "Nouveau projet" }).size(18.0).strong().color(p.text));
+                ui.label(
+                    RichText::new(if form.id.is_some() { "Modifier le projet" } else { "Nouveau projet" })
+                        .size(18.0)
+                        .strong()
+                        .color(p.text),
+                );
                 ui.add_space(10.0);
                 ui.label(RichText::new("Nom").color(p.muted));
                 ui.add(egui::TextEdit::singleline(&mut form.name).desired_width(f32::INFINITY));
@@ -840,9 +962,15 @@ impl MnemoApp {
                 ui.add(egui::TextEdit::multiline(&mut form.description).desired_rows(2).desired_width(f32::INFINITY));
                 ui.add_space(6.0);
                 ui.label(RichText::new("Dépôt GitHub (facultatif)").color(p.muted));
-                ui.add(egui::TextEdit::singleline(&mut form.repo).hint_text("propriétaire/dépôt ou https://github.com/…").desired_width(f32::INFINITY));
+                ui.add(
+                    egui::TextEdit::singleline(&mut form.repo)
+                        .hint_text("propriétaire/dépôt ou https://github.com/…")
+                        .desired_width(f32::INFINITY),
+                );
                 if self.cfg.github_token.is_none() && !form.repo.trim().is_empty() {
-                    ui.label(RichText::new("Pensez à renseigner un token dans Paramètres › GitHub.").small().color(p.faint));
+                    ui.label(
+                        RichText::new("Pensez à renseigner un token dans Paramètres › GitHub.").small().color(p.faint),
+                    );
                 }
                 if let Some(e) = &form.error {
                     ui.colored_label(Color32::from_rgb(0xfb, 0x46, 0x4c), e);
@@ -851,7 +979,8 @@ impl MnemoApp {
                 ui.horizontal(|ui| {
                     if ui.button("Enregistrer").clicked() {
                         let repo = form.repo.trim();
-                        let repo = if repo.is_empty() { Ok(None) } else { crate::github::normalize_repo(repo).map(Some) };
+                        let repo =
+                            if repo.is_empty() { Ok(None) } else { crate::github::normalize_repo(repo).map(Some) };
                         match (form.name.trim().is_empty(), repo) {
                             (true, _) => form.error = Some("Le nom est obligatoire".into()),
                             (_, Err(e)) => form.error = Some(e),
@@ -870,7 +999,11 @@ impl MnemoApp {
                     }
                     if let Some(id) = form.id {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let label = if form.confirm_delete { "Confirmer : supprimer projet et tickets" } else { "Supprimer" };
+                            let label = if form.confirm_delete {
+                                "Confirmer : supprimer projet et tickets"
+                            } else {
+                                "Supprimer"
+                            };
                             if ui.button(RichText::new(label).color(Color32::from_rgb(0xfb, 0x46, 0x4c))).clicked() {
                                 if form.confirm_delete {
                                     self.db.send(Cmd::DeleteProject(id));
@@ -917,9 +1050,16 @@ impl MnemoApp {
                 DA::OpenNote(id) => self.open_in(id, OpenMode::NewTab),
                 DA::NewReport(id) => {
                     if let Some(t) = self.board.tickets.iter().find(|t| t.id == id) {
-                        let project = self.board.projects.iter().find(|pr| pr.id == t.project_id).map(|pr| pr.name.clone()).unwrap_or_default();
+                        let project = self
+                            .board
+                            .projects
+                            .iter()
+                            .find(|pr| pr.id == t.project_id)
+                            .map(|pr| pr.name.clone())
+                            .unwrap_or_default();
                         let date = chrono::Local::now().format("%Y-%m-%d");
-                        let path = format!("Rapports/{}/T-{} {} ({date})", path_safe(&project), t.number, path_safe(&t.title));
+                        let path =
+                            format!("Rapports/{}/T-{} {} ({date})", path_safe(&project), t.number, path_safe(&t.title));
                         let content = format!(
                             "**Ticket :** T-{} {} ({})\n**Projet :** {}\n**Tags :** {}\n\n## Contexte\n\n\n## Travail réalisé\n\n\n## Prochaines étapes\n- [ ] \n",
                             t.number,
@@ -1000,7 +1140,12 @@ impl MnemoApp {
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 ui.painter().circle_filled(r.center(), 4.0, t.status.color());
-                if ui.add(egui::Label::new(RichText::new(format!("T-{} {}", t.number, t.title)).color(p.link)).sense(egui::Sense::click()).truncate())
+                if ui
+                    .add(
+                        egui::Label::new(RichText::new(format!("T-{} {}", t.number, t.title)).color(p.link))
+                            .sense(egui::Sense::click())
+                            .truncate(),
+                    )
                     .on_hover_text(t.status.label())
                     .clicked()
                 {
@@ -1017,15 +1162,28 @@ impl MnemoApp {
         let btn = ui.button("Lier à un ticket…");
         egui::Popup::menu(&btn).show(|ui| {
             ui.set_min_width(300.0);
-            ui.add(egui::TextEdit::singleline(&mut self.dash.link_query).hint_text("Rechercher un ticket…").desired_width(f32::INFINITY));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.dash.link_query)
+                    .hint_text("Rechercher un ticket…")
+                    .desired_width(f32::INFINITY),
+            );
             let q = fold(&self.dash.link_query);
             let mut shown = 0;
             for t in &self.board.tickets {
-                if shown >= 10 || linked.iter().any(|l| l.id == t.id) || !(fold(&t.title).contains(&q) || format!("t-{}", t.number).contains(&q)) {
+                if shown >= 10
+                    || linked.iter().any(|l| l.id == t.id)
+                    || !(fold(&t.title).contains(&q) || format!("t-{}", t.number).contains(&q))
+                {
                     continue;
                 }
                 shown += 1;
-                let project = self.board.projects.iter().find(|pr| pr.id == t.project_id).map(|pr| pr.name.as_str()).unwrap_or("");
+                let project = self
+                    .board
+                    .projects
+                    .iter()
+                    .find(|pr| pr.id == t.project_id)
+                    .map(|pr| pr.name.as_str())
+                    .unwrap_or("");
                 if theme::suggestion_row(ui, &format!("T-{} {}", t.number, t.title), project, false).clicked() {
                     self.db.send(Cmd::LinkReport { ticket: t.id, note });
                     ui.close();
@@ -1060,20 +1218,39 @@ fn group_row(
     repo: Option<&str>,
 ) -> egui::Response {
     let width = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, if strong { 34.0 } else { 30.0 }), egui::Sense::click());
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(width, if strong { 34.0 } else { 30.0 }), egui::Sense::click());
     let painter = ui.painter_at(rect);
     if resp.hovered() {
         painter.rect_filled(rect.shrink2(egui::vec2(2.0, 1.0)), 5.0, p.hover);
     }
     let cy = rect.center().y;
     let mut x = rect.left() + 8.0 + depth as f32 * 20.0;
-    painter.text(egui::pos2(x + 6.0, cy), egui::Align2::CENTER_CENTER, if open { icon::CHEVRON_DOWN } else { icon::CHEVRON_RIGHT }, FontId::new(13.0, theme::icon_family()), p.faint);
+    painter.text(
+        egui::pos2(x + 6.0, cy),
+        egui::Align2::CENTER_CENTER,
+        if open { icon::CHEVRON_DOWN } else { icon::CHEVRON_RIGHT },
+        FontId::new(13.0, theme::icon_family()),
+        p.faint,
+    );
     x += 18.0;
     if let Some(c) = dot {
-        painter.text(egui::pos2(x + 7.0, cy), egui::Align2::CENTER_CENTER, tag_icon(label), FontId::new(14.0, theme::icon_family()), c);
+        painter.text(
+            egui::pos2(x + 7.0, cy),
+            egui::Align2::CENTER_CENTER,
+            tag_icon(label),
+            FontId::new(14.0, theme::icon_family()),
+            c,
+        );
         x += 20.0;
     } else {
-        painter.text(egui::pos2(x + 7.0, cy), egui::Align2::CENTER_CENTER, "\u{e4cb}", FontId::new(15.0, theme::icon_family()), p.muted);
+        painter.text(
+            egui::pos2(x + 7.0, cy),
+            egui::Align2::CENTER_CENTER,
+            "\u{e4cb}",
+            FontId::new(15.0, theme::icon_family()),
+            p.muted,
+        );
         x += 20.0;
     }
     let font = if strong { FontId::new(15.0, theme::bold_family()) } else { FontId::new(14.0, theme::bold_family()) };

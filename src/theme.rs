@@ -2,7 +2,10 @@
 //! and a few custom widgets (icon buttons, file-tree rows, tabs).
 
 use egui::text::LayoutJob;
-use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Response, Sense, Stroke, TextFormat, Ui, Vec2, vec2};
+use egui::{
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Response, Sense, Stroke, TextFormat, Ui,
+    Vec2, vec2,
+};
 use std::sync::Arc;
 
 pub const FONT_BOLD: &str = "inter-semibold";
@@ -93,14 +96,26 @@ pub fn generation() -> u64 {
 
 pub fn palette(dark: bool) -> Palette {
     match OVERRIDE.read().unwrap().as_ref() {
-        Some(o) => if dark { o.dark.0 } else { o.light.0 },
+        Some(o) => {
+            if dark {
+                o.dark.0
+            } else {
+                o.light.0
+            }
+        }
         None => builtin_palette(dark),
     }
 }
 
 pub fn metrics(dark: bool) -> Metrics {
     match OVERRIDE.read().unwrap().as_ref() {
-        Some(o) => if dark { o.dark.1 } else { o.light.1 },
+        Some(o) => {
+            if dark {
+                o.dark.1
+            } else {
+                o.light.1
+            }
+        }
         None => Metrics::default(),
     }
 }
@@ -192,10 +207,20 @@ pub fn icon_text(icon: &str, size: f32) -> egui::RichText {
 
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
-    fonts.font_data.insert("inter".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Inter-Regular.ttf"))));
-    fonts.font_data.insert(FONT_BOLD.into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Inter-SemiBold.ttf"))));
-    fonts.font_data.insert(FONT_ITALIC.into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Inter-Italic.ttf"))));
-    fonts.font_data.insert("lucide".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/lucide.ttf"))));
+    fonts
+        .font_data
+        .insert("inter".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Inter-Regular.ttf"))));
+    fonts.font_data.insert(
+        FONT_BOLD.into(),
+        Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Inter-SemiBold.ttf"))),
+    );
+    fonts.font_data.insert(
+        FONT_ITALIC.into(),
+        Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Inter-Italic.ttf"))),
+    );
+    fonts
+        .font_data
+        .insert("lucide".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/lucide.ttf"))));
     fonts.families.insert(icon_family(), vec!["lucide".into()]);
     // keep egui's default fonts (emoji, symbols) as fallbacks
     let fallbacks = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
@@ -255,8 +280,18 @@ pub fn apply(ctx: &egui::Context, dark: bool, size: f32) {
     w.active.corner_radius = round;
     w.active.expansion = 0.0;
     w.open = w.active;
-    v.window_shadow = egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(if dark { 110 } else { 40 }) };
-    v.popup_shadow = egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(if dark { 90 } else { 30 }) };
+    v.window_shadow = egui::Shadow {
+        offset: [0, 8],
+        blur: 28,
+        spread: 0,
+        color: Color32::from_black_alpha(if dark { 110 } else { 40 }),
+    };
+    v.popup_shadow = egui::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: Color32::from_black_alpha(if dark { 90 } else { 30 }),
+    };
     ctx.set_visuals(v);
 
     ctx.global_style_mut(|s| {
@@ -282,14 +317,27 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, active: bool) -> Resp
     icon_button_sized(ui, icon, tooltip, active, true, 18.0)
 }
 
-pub fn icon_button_sized(ui: &mut Ui, icon: &str, tooltip: &str, active: bool, enabled: bool, icon_size: f32) -> Response {
+pub fn icon_button_sized(
+    ui: &mut Ui,
+    icon: &str,
+    tooltip: &str,
+    active: bool,
+    enabled: bool,
+    icon_size: f32,
+) -> Response {
     let p = palette(ui.visuals().dark_mode);
     let size = vec2(icon_size + 12.0, icon_size + 12.0);
     let (rect, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     if enabled && (resp.hovered() || active) {
         ui.painter().rect_filled(rect, 5.0, if active { p.active } else { p.hover });
     }
-    let color = if !enabled { p.faint.gamma_multiply(0.7) } else if resp.hovered() || active { p.text } else { p.muted };
+    let color = if !enabled {
+        p.faint.gamma_multiply(0.7)
+    } else if resp.hovered() || active {
+        p.text
+    } else {
+        p.muted
+    };
     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon, FontId::new(icon_size, icon_family()), color);
     if tooltip.is_empty() { resp } else { resp.on_hover_text(tooltip) }
 }
@@ -302,7 +350,10 @@ pub fn tree_row(ui: &mut Ui, label: &str, depth: usize, active: bool, folder: Op
     let painter = ui.painter();
     let indent = 16.0;
     let left = rect.left() + 6.0 + depth as f32 * indent;
-    let row = egui::Rect::from_min_max(egui::pos2(rect.left() + 2.0, rect.top() + 1.0), egui::pos2(rect.right() - 2.0, rect.bottom() - 1.0));
+    let row = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 2.0, rect.top() + 1.0),
+        egui::pos2(rect.right() - 2.0, rect.bottom() - 1.0),
+    );
     if active {
         painter.rect_filled(row, 5.0, p.active);
     } else if resp.hovered() {
@@ -325,7 +376,11 @@ pub fn tree_row(ui: &mut Ui, label: &str, depth: usize, active: bool, folder: Op
     // single line, truncated with "…" (full name in the tooltip)
     let mut job = LayoutJob::single_section(
         label.to_string(),
-        TextFormat { font_id: FontId::proportional(ui.style().text_styles[&egui::TextStyle::Body].size - 1.0), color: text_color, ..Default::default() },
+        TextFormat {
+            font_id: FontId::proportional(ui.style().text_styles[&egui::TextStyle::Body].size - 1.0),
+            color: text_color,
+            ..Default::default()
+        },
     );
     job.wrap = egui::text::TextWrapping::truncate_at_width((rect.right() - x - 8.0).max(10.0));
     let galley = painter.layout_job(job);
@@ -374,8 +429,16 @@ pub fn tab(ui: &mut Ui, title: &str, active: bool, dirty: bool) -> (Response, bo
     let color = if active { p.text } else { p.muted };
     let text_w = w - 42.0;
     let galley = painter.layout(title.to_string(), font, color, text_w);
-    let galley = if galley.rows.len() > 1 { painter.layout_no_wrap(truncate(title, 22), FontId::proportional(13.5), color) } else { galley };
-    painter.with_clip_rect(body.shrink2(vec2(12.0, 0.0))).galley(egui::pos2(body.left() + 14.0, body.center().y - galley.size().y / 2.0), galley, color);
+    let galley = if galley.rows.len() > 1 {
+        painter.layout_no_wrap(truncate(title, 22), FontId::proportional(13.5), color)
+    } else {
+        galley
+    };
+    painter.with_clip_rect(body.shrink2(vec2(12.0, 0.0))).galley(
+        egui::pos2(body.left() + 14.0, body.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
     // close button / dirty dot
     let close_rect = egui::Rect::from_center_size(egui::pos2(body.right() - 16.0, body.center().y), Vec2::splat(18.0));
     let close_hover = ui.rect_contains_pointer(close_rect);
@@ -419,10 +482,22 @@ pub fn section_header(ui: &mut Ui, text: &str) {
 /// code, links, tags...) while keeping every character, so cursor positions stay exact.
 /// `active` is the range of line indices containing the cursor/selection: markdown syntax is
 /// shown there and hidden elsewhere ("live preview"); `None` hides it everywhere.
-pub fn markdown_job(text: &str, p: &Palette, m: &Metrics, size: f32, wrap_width: f32, active: Option<(usize, usize)>) -> LayoutJob {
+pub fn markdown_job(
+    text: &str,
+    p: &Palette,
+    m: &Metrics,
+    size: f32,
+    wrap_width: f32,
+    active: Option<(usize, usize)>,
+) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap_width;
-    let base = TextFormat { font_id: FontId::proportional(size), color: p.text, line_height: Some(size * m.line_height), ..Default::default() };
+    let base = TextFormat {
+        font_id: FontId::proportional(size),
+        color: p.text,
+        line_height: Some(size * m.line_height),
+        ..Default::default()
+    };
     let mono = TextFormat {
         font_id: FontId::monospace(size - 1.5),
         color: p.code_text,
@@ -434,7 +509,8 @@ pub fn markdown_job(text: &str, p: &Palette, m: &Metrics, size: f32, wrap_width:
     let mut fence = false;
     for (line_no, line) in text.split_inclusive('\n').enumerate() {
         let reveal = active.is_some_and(|(a, b)| line_no >= a && line_no <= b);
-        let hidden = TextFormat { font_id: FontId::proportional(0.5), color: Color32::TRANSPARENT, ..Default::default() };
+        let hidden =
+            TextFormat { font_id: FontId::proportional(0.5), color: Color32::TRANSPARENT, ..Default::default() };
         let syntax = |f: &TextFormat| if reveal { TextFormat { color: p.faint, ..f.clone() } } else { hidden.clone() };
         let t = line.trim_start();
         let code_line = TextFormat { background: Color32::TRANSPARENT, ..mono.clone() };
@@ -469,7 +545,11 @@ pub fn markdown_job(text: &str, p: &Palette, m: &Metrics, size: f32, wrap_width:
         }
         // horizontal rule
         let compact: String = t.trim_end().chars().filter(|c| !c.is_whitespace()).collect();
-        if compact.len() >= 3 && (compact.chars().all(|c| c == '-') || compact.chars().all(|c| c == '*') || compact.chars().all(|c| c == '_')) {
+        if compact.len() >= 3
+            && (compact.chars().all(|c| c == '-')
+                || compact.chars().all(|c| c == '*')
+                || compact.chars().all(|c| c == '_'))
+        {
             job.append(t, 0.0, faint.clone());
             continue;
         }
@@ -478,7 +558,11 @@ pub fn markdown_job(text: &str, p: &Palette, m: &Metrics, size: f32, wrap_width:
         // blockquote / callout
         if rest.starts_with('>') {
             let n = rest.chars().take_while(|c| *c == '>' || *c == ' ').count();
-            job.append(&rest[..n], 0.0, if reveal { TextFormat { color: p.accent, ..base.clone() } } else { invisible.clone() });
+            job.append(
+                &rest[..n],
+                0.0,
+                if reveal { TextFormat { color: p.accent, ..base.clone() } } else { invisible.clone() },
+            );
             rest = &rest[n..];
             fmt = TextFormat { color: p.muted, font_id: FontId::new(size, italic_family()), ..base.clone() };
         }
@@ -491,7 +575,10 @@ pub fn markdown_job(text: &str, p: &Palette, m: &Metrics, size: f32, wrap_width:
         };
         if marker > 0 {
             let after = &rest[marker..];
-            let is_task = after.len() >= 3 && after.starts_with('[') && after.as_bytes()[2] == b']' && matches!(after.as_bytes()[1], b' ' | b'x' | b'X');
+            let is_task = after.len() >= 3
+                && after.starts_with('[')
+                && after.as_bytes()[2] == b']'
+                && matches!(after.as_bytes()[1], b' ' | b'x' | b'X');
             let bullet = rest.starts_with(['-', '*', '+']);
             let marker_fmt = if reveal {
                 TextFormat { color: p.faint, ..base.clone() }
@@ -506,7 +593,11 @@ pub fn markdown_job(text: &str, p: &Palette, m: &Metrics, size: f32, wrap_width:
             rest = &rest[marker..];
             if is_task {
                 let done = rest.as_bytes()[1] != b' ';
-                let f = if reveal { TextFormat { color: if done { p.accent } else { p.faint }, ..mono.clone() } } else { invisible.clone() };
+                let f = if reveal {
+                    TextFormat { color: if done { p.accent } else { p.faint }, ..mono.clone() }
+                } else {
+                    invisible.clone()
+                };
                 job.append(&rest[..3], 0.0, f);
                 rest = &rest[3..];
                 if done {
@@ -545,7 +636,11 @@ pub fn decorate_editor(
     let total_chars = content.chars().count();
     let code_rect = |a: usize, b: usize| {
         let (top, bottom) = (pos(a).top(), pos(b).bottom());
-        egui::Shape::rect_filled(egui::Rect::from_min_max(egui::pos2(origin.x - 12.0, top - 3.0), egui::pos2(right + 12.0, bottom + 3.0)), 4.0, p.code_bg)
+        egui::Shape::rect_filled(
+            egui::Rect::from_min_max(egui::pos2(origin.x - 12.0, top - 3.0), egui::pos2(right + 12.0, bottom + 3.0)),
+            4.0,
+            p.code_bg,
+        )
     };
     for (no, line) in content.split_inclusive('\n').enumerate() {
         let reveal = active.is_some_and(|(a, b)| no >= a && no <= b);
@@ -567,7 +662,10 @@ pub fn decorate_editor(
             let mut rest = t;
             if rest.starts_with('>') {
                 let r = pos(k);
-                painter.line_segment([egui::pos2(r.left() + 1.0, r.top() + 2.0), egui::pos2(r.left() + 1.0, r.bottom() - 2.0)], Stroke::new(2.0, bar));
+                painter.line_segment(
+                    [egui::pos2(r.left() + 1.0, r.top() + 2.0), egui::pos2(r.left() + 1.0, r.bottom() - 2.0)],
+                    Stroke::new(2.0, bar),
+                );
                 let n = rest.chars().take_while(|c| *c == '>' || *c == ' ').count();
                 k += n;
                 kb += n;
@@ -575,7 +673,10 @@ pub fn decorate_editor(
             }
             if rest.starts_with("- ") || rest.starts_with("* ") || rest.starts_with("+ ") {
                 let after = &rest[2..];
-                let is_task = after.len() >= 3 && after.starts_with('[') && after.as_bytes()[2] == b']' && matches!(after.as_bytes()[1], b' ' | b'x' | b'X');
+                let is_task = after.len() >= 3
+                    && after.starts_with('[')
+                    && after.as_bytes()[2] == b']'
+                    && matches!(after.as_bytes()[1], b' ' | b'x' | b'X');
                 if is_task {
                     let (a, b) = (pos(k + 2), pos(k + 5));
                     let c = egui::pos2((a.left() + b.left()) / 2.0, a.center().y);
@@ -676,7 +777,11 @@ fn inline(job: &mut LayoutJob, s: &str, base: &TextFormat, p: &Palette, m: &Metr
             && end > 0
         {
             flush(job, plain_start, i);
-            let b = TextFormat { font_id: FontId::new(base.font_id.size, bold_family()), color: m.bold.unwrap_or(p.heading), ..base.clone() };
+            let b = TextFormat {
+                font_id: FontId::new(base.font_id.size, bold_family()),
+                color: m.bold.unwrap_or(p.heading),
+                ..base.clone()
+            };
             job.append(&rest[..2], 0.0, faint.clone());
             job.append(&rest[2..2 + end], 0.0, b);
             job.append(&rest[2 + end..4 + end], 0.0, faint.clone());
@@ -692,7 +797,11 @@ fn inline(job: &mut LayoutJob, s: &str, base: &TextFormat, p: &Palette, m: &Metr
             && end > 0
         {
             flush(job, plain_start, i);
-            let it = TextFormat { font_id: FontId::new(base.font_id.size, italic_family()), color: m.italic.unwrap_or(base.color), ..base.clone() };
+            let it = TextFormat {
+                font_id: FontId::new(base.font_id.size, italic_family()),
+                color: m.italic.unwrap_or(base.color),
+                ..base.clone()
+            };
             job.append(&rest[..1], 0.0, faint.clone());
             job.append(&rest[1..1 + end], 0.0, it);
             job.append(&rest[1 + end..2 + end], 0.0, faint.clone());
@@ -707,7 +816,11 @@ fn inline(job: &mut LayoutJob, s: &str, base: &TextFormat, p: &Palette, m: &Metr
         {
             flush(job, plain_start, i);
             job.append(&rest[..2], 0.0, faint.clone());
-            job.append(&rest[2..2 + end], 0.0, TextFormat { background: Color32::from_rgba_unmultiplied(255, 208, 0, 60), ..base.clone() });
+            job.append(
+                &rest[2..2 + end],
+                0.0,
+                TextFormat { background: Color32::from_rgba_unmultiplied(255, 208, 0, 60), ..base.clone() },
+            );
             job.append(&rest[2 + end..4 + end], 0.0, faint.clone());
             i += end + 4;
             plain_start = i;
@@ -722,7 +835,11 @@ fn inline(job: &mut LayoutJob, s: &str, base: &TextFormat, p: &Palette, m: &Metr
                 .sum();
             if tag_len > 0 && rest[1..].chars().next().is_some_and(|c| c.is_alphabetic() || c == '_') {
                 flush(job, plain_start, i);
-                job.append(&rest[..1 + tag_len], 0.0, TextFormat { color: m.tag_color.unwrap_or(p.link), background: p.tag_bg, ..base.clone() });
+                job.append(
+                    &rest[..1 + tag_len],
+                    0.0,
+                    TextFormat { color: m.tag_color.unwrap_or(p.link), background: p.tag_bg, ..base.clone() },
+                );
                 i += 1 + tag_len;
                 plain_start = i;
                 continue;

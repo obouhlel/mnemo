@@ -34,11 +34,8 @@ impl GraphView {
         self.paths = data.nodes.iter().map(|n| n.1.clone()).collect();
         self.ghost = data.nodes.iter().map(|n| n.2).collect();
         let index: HashMap<&str, usize> = self.ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
-        self.edges = data
-            .edges
-            .iter()
-            .filter_map(|(a, b)| Some((*index.get(a.as_str())?, *index.get(b.as_str())?)))
-            .collect();
+        self.edges =
+            data.edges.iter().filter_map(|(a, b)| Some((*index.get(a.as_str())?, *index.get(b.as_str())?))).collect();
         self.degree = vec![0; n];
         for (a, b) in &self.edges {
             self.degree[*a] += 1;
@@ -112,7 +109,8 @@ impl GraphView {
     }
 
     fn fit(&mut self, rect: Rect) {
-        let pts: Vec<Vec2> = (0..self.pos.len()).filter(|&i| self.show_ghosts || !self.ghost[i]).map(|i| self.pos[i]).collect();
+        let pts: Vec<Vec2> =
+            (0..self.pos.len()).filter(|&i| self.show_ghosts || !self.ghost[i]).map(|i| self.pos[i]).collect();
         if pts.is_empty() {
             return;
         }
@@ -140,7 +138,8 @@ impl GraphView {
             if ui.button("Réorganiser").clicked() {
                 self.alpha = 1.0;
             }
-            let links = self.edges.iter().filter(|(a, b)| self.show_ghosts || (!self.ghost[*a] && !self.ghost[*b])).count();
+            let links =
+                self.edges.iter().filter(|(a, b)| self.show_ghosts || (!self.ghost[*a] && !self.ghost[*b])).count();
             ui.weak(format!("{} notes · {links} liens", self.ghost.iter().filter(|g| !**g).count()));
         });
         let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());

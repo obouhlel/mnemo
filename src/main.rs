@@ -32,7 +32,9 @@ fn main() -> eframe::Result {
     let result = eframe::run_native("Mnemo", options, Box::new(|cc| Ok(Box::new(app::MnemoApp::new(cc, cfg)))));
     if let Err(e) = &result {
         let msg = e.to_string();
-        if cfg!(target_os = "linux") && (msg.contains("libX11") || msg.contains("xkbcommon") || msg.contains("Wayland") || msg.contains("EGL")) {
+        if cfg!(target_os = "linux")
+            && (msg.contains("libX11") || msg.contains("xkbcommon") || msg.contains("Wayland") || msg.contains("EGL"))
+        {
             eprintln!(
                 "Mnemo n'a pas pu ouvrir de fenêtre : une bibliothèque graphique du système manque.\n\
                  Installez-les puis relancez :\n\

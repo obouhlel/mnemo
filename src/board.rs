@@ -116,7 +116,11 @@ pub fn label_to_tag(label: &str) -> String {
         "security" => "Sécurité".into(),
         "performance" | "perf" => "Performance".into(),
         "research" | "spike" | "investigation" => "Recherche".into(),
-        _ => TAGS.iter().find(|t| t.0.eq_ignore_ascii_case(label)).map(|t| t.0.to_string()).unwrap_or_else(|| label.to_string()),
+        _ => TAGS
+            .iter()
+            .find(|t| t.0.eq_ignore_ascii_case(label))
+            .map(|t| t.0.to_string())
+            .unwrap_or_else(|| label.to_string()),
     }
 }
 

@@ -237,7 +237,12 @@ fn tokenize(s: &str) -> Option<Vec<Tok>> {
         let c = chars[i];
         if c.is_whitespace() {
             i += 1;
-        } else if c.is_ascii_digit() || c == '.' || (c == '-' && matches!(out.last(), None | Some(Tok::Op(_))) && chars.get(i + 1).is_some_and(|n| n.is_ascii_digit() || *n == '.')) {
+        } else if c.is_ascii_digit()
+            || c == '.'
+            || (c == '-'
+                && matches!(out.last(), None | Some(Tok::Op(_)))
+                && chars.get(i + 1).is_some_and(|n| n.is_ascii_digit() || *n == '.'))
+        {
             let start = i;
             i += 1;
             while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
@@ -380,7 +385,8 @@ pub fn parse_color(s: &str) -> Option<Color32> {
                 Some(rgba(ch(&a[0])?, ch(&a[1])?, ch(&a[2])?, alpha_of(a.get(3))?))
             }
             "hsl" | "hsla" if a.len() >= 3 => {
-                let (r, g, b) = hsl_to_rgb(eval_number(&a[0])?, eval_number(&a[1])? / 100.0, eval_number(&a[2])? / 100.0);
+                let (r, g, b) =
+                    hsl_to_rgb(eval_number(&a[0])?, eval_number(&a[1])? / 100.0, eval_number(&a[2])? / 100.0);
                 Some(rgba(r, g, b, alpha_of(a.get(3))?))
             }
             _ => None, // color-mix(), lab(), … not supported
@@ -479,19 +485,61 @@ pub struct Applied {
 }
 
 const KNOWN: &[&str] = &[
-    "--background-primary", "--background-primary-alt", "--background-secondary", "--background-modifier-border",
-    "--background-modifier-hover", "--background-modifier-active-hover", "--nav-item-background-hover",
-    "--nav-item-background-active", "--text-normal", "--text-muted", "--text-faint", "--interactive-accent", "--color-accent",
-    "--text-accent", "--link-color", "--code-background", "--code-normal", "--tag-background", "--tag-color", "--checkbox-color",
-    "--blockquote-border-color", "--bold-color", "--italic-color", "--font-text-size", "--file-line-width", "--line-height-normal",
-    "--h1-size", "--h2-size", "--h3-size", "--h4-size", "--h5-size", "--h6-size", "--h1-color", "--h2-color", "--h3-color",
-    "--h4-color", "--h5-color", "--h6-color", "--text-selection", "--accent-h", "--accent-s", "--accent-l", "--mono-rgb-100",
-    "--color-base-00", "--color-base-10", "--color-base-20", "--color-base-30", "--color-base-50", "--color-base-70",
+    "--background-primary",
+    "--background-primary-alt",
+    "--background-secondary",
+    "--background-modifier-border",
+    "--background-modifier-hover",
+    "--background-modifier-active-hover",
+    "--nav-item-background-hover",
+    "--nav-item-background-active",
+    "--text-normal",
+    "--text-muted",
+    "--text-faint",
+    "--interactive-accent",
+    "--color-accent",
+    "--text-accent",
+    "--link-color",
+    "--code-background",
+    "--code-normal",
+    "--tag-background",
+    "--tag-color",
+    "--checkbox-color",
+    "--blockquote-border-color",
+    "--bold-color",
+    "--italic-color",
+    "--font-text-size",
+    "--file-line-width",
+    "--line-height-normal",
+    "--h1-size",
+    "--h2-size",
+    "--h3-size",
+    "--h4-size",
+    "--h5-size",
+    "--h6-size",
+    "--h1-color",
+    "--h2-color",
+    "--h3-color",
+    "--h4-color",
+    "--h5-color",
+    "--h6-color",
+    "--text-selection",
+    "--accent-h",
+    "--accent-s",
+    "--accent-l",
+    "--mono-rgb-100",
+    "--color-base-00",
+    "--color-base-10",
+    "--color-base-20",
+    "--color-base-30",
+    "--color-base-50",
+    "--color-base-70",
     "--color-base-100",
 ];
 
 pub fn apply(parsed: &Parsed, extra: &[(String, String)], dark: bool, base: Palette, base_metrics: Metrics) -> Applied {
-    let mut vars: HashMap<String, String> = defaults(dark).into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let mut vars: HashMap<String, String> =
+        defaults(dark).into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     let mut user = std::collections::HashSet::new();
     let scope = if dark { Scope::Dark } else { Scope::Light };
     for (s, k, v) in &parsed.vars {
@@ -505,7 +553,9 @@ pub fn apply(parsed: &Parsed, extra: &[(String, String)], dark: bool, base: Pale
         user.insert(k.clone());
     }
     let get = |name: &str| resolve(vars.get(name)?, &vars, 0);
-    let color = |names: &[&str], fallback: Color32| names.iter().find_map(|n| get(n).and_then(|v| parse_color(&v))).unwrap_or(fallback);
+    let color = |names: &[&str], fallback: Color32| {
+        names.iter().find_map(|n| get(n).and_then(|v| parse_color(&v))).unwrap_or(fallback)
+    };
     let opt_color = |name: &str| if user.contains(name) { get(name).and_then(|v| parse_color(&v)) } else { None };
     let palette = Palette {
         bg: color(&["--background-primary"], base.bg),
@@ -568,7 +618,8 @@ pub fn discover(dirs: &[PathBuf]) -> (Named, Named) {
     let mut themes: Vec<(String, PathBuf)> = vec![];
     let mut snippets: Vec<(String, PathBuf)> = vec![];
     let list = |d: &Path| -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = std::fs::read_dir(d).map(|r| r.filter_map(|e| e.ok()).map(|e| e.path()).collect()).unwrap_or_default();
+        let mut v: Vec<PathBuf> =
+            std::fs::read_dir(d).map(|r| r.filter_map(|e| e.ok()).map(|e| e.path()).collect()).unwrap_or_default();
         v.sort();
         v
     };

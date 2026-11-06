@@ -117,7 +117,9 @@ fn note_dyn(note: Option<&NoteCtx>) -> Dynamic {
 fn json_to_dyn(v: &serde_json::Value) -> Dynamic {
     match v {
         serde_json::Value::Bool(b) => (*b).into(),
-        serde_json::Value::Number(n) => n.as_i64().map(Dynamic::from).or_else(|| n.as_f64().map(Dynamic::from)).unwrap_or(Dynamic::UNIT),
+        serde_json::Value::Number(n) => {
+            n.as_i64().map(Dynamic::from).or_else(|| n.as_f64().map(Dynamic::from)).unwrap_or(Dynamic::UNIT)
+        }
         serde_json::Value::String(s) => s.clone().into(),
         serde_json::Value::Null => Dynamic::UNIT,
         other => other.to_string().into(),
@@ -195,7 +197,9 @@ impl PluginHost {
         engine.register_fn("date_offset", |days: i64, fmt: &str| {
             (chrono::Local::now() + chrono::Duration::days(days)).format(fmt).to_string()
         });
-        engine.register_fn("word_count", |t: &str| t.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).count() as i64);
+        engine.register_fn("word_count", |t: &str| {
+            t.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).count() as i64
+        });
         engine.register_fn("char_count", |t: &str| t.chars().count() as i64);
 
         Self { engine, shared, plugins: vec![], dir, states: HashMap::new() }
@@ -254,7 +258,10 @@ impl PluginHost {
             // settings = manifest defaults overridden by stored values
             let mut m = Map::new();
             for def in &p.manifest.settings {
-                m.insert(def.key.as_str().into(), def.default.as_ref().map(|d| json_to_dyn(&toml_to_json(d))).unwrap_or_else(|| "".into()));
+                m.insert(
+                    def.key.as_str().into(),
+                    def.default.as_ref().map(|d| json_to_dyn(&toml_to_json(d))).unwrap_or_else(|| "".into()),
+                );
             }
             if let Some(st) = st {
                 for (k, v) in &st.settings {
@@ -300,7 +307,11 @@ impl PluginHost {
             Err(e) => {
                 let msg = format!("{name}() : {e}");
                 eprintln!("[plugin:{}] {msg}", p.manifest.id);
-                self.shared.actions.lock().unwrap().push(Action::Notice(format!("Plugin « {} » : {msg}", p.manifest.name)));
+                self.shared
+                    .actions
+                    .lock()
+                    .unwrap()
+                    .push(Action::Notice(format!("Plugin « {} » : {msg}", p.manifest.name)));
                 self.plugins[i].error = Some(msg);
                 None
             }
@@ -407,26 +418,41 @@ fn load_manifest(dir: &Path) -> Result<Manifest, String> {
 
 type Bundle = &'static [(&'static str, &'static [(&'static str, &'static str)])];
 const BUNDLED: Bundle = &[
-    ("word-count", &[
-        ("plugin.toml", include_str!("../assets/plugins/word-count/plugin.toml")),
-        ("main.rhai", include_str!("../assets/plugins/word-count/main.rhai")),
-    ]),
-    ("daily-notes", &[
-        ("plugin.toml", include_str!("../assets/plugins/daily-notes/plugin.toml")),
-        ("main.rhai", include_str!("../assets/plugins/daily-notes/main.rhai")),
-    ]),
-    ("outline", &[
-        ("plugin.toml", include_str!("../assets/plugins/outline/plugin.toml")),
-        ("main.rhai", include_str!("../assets/plugins/outline/main.rhai")),
-    ]),
-    ("callouts", &[
-        ("plugin.toml", include_str!("../assets/plugins/callouts/plugin.toml")),
-        ("main.rhai", include_str!("../assets/plugins/callouts/main.rhai")),
-    ]),
-    ("templates", &[
-        ("plugin.toml", include_str!("../assets/plugins/templates/plugin.toml")),
-        ("main.rhai", include_str!("../assets/plugins/templates/main.rhai")),
-    ]),
+    (
+        "word-count",
+        &[
+            ("plugin.toml", include_str!("../assets/plugins/word-count/plugin.toml")),
+            ("main.rhai", include_str!("../assets/plugins/word-count/main.rhai")),
+        ],
+    ),
+    (
+        "daily-notes",
+        &[
+            ("plugin.toml", include_str!("../assets/plugins/daily-notes/plugin.toml")),
+            ("main.rhai", include_str!("../assets/plugins/daily-notes/main.rhai")),
+        ],
+    ),
+    (
+        "outline",
+        &[
+            ("plugin.toml", include_str!("../assets/plugins/outline/plugin.toml")),
+            ("main.rhai", include_str!("../assets/plugins/outline/main.rhai")),
+        ],
+    ),
+    (
+        "callouts",
+        &[
+            ("plugin.toml", include_str!("../assets/plugins/callouts/plugin.toml")),
+            ("main.rhai", include_str!("../assets/plugins/callouts/main.rhai")),
+        ],
+    ),
+    (
+        "templates",
+        &[
+            ("plugin.toml", include_str!("../assets/plugins/templates/plugin.toml")),
+            ("main.rhai", include_str!("../assets/plugins/templates/main.rhai")),
+        ],
+    ),
 ];
 
 #[cfg(test)]
@@ -467,7 +493,10 @@ mod tests {
         let (i, id, _) = cmds.iter().find(|c| c.1 == "today").unwrap().clone();
         h.run_command(i, &id, None);
         let actions = h.take_actions();
-        assert!(matches!(&actions[..], [Action::CreateNote { path, .. }] if path.starts_with("Journal/")), "{actions:?}");
+        assert!(
+            matches!(&actions[..], [Action::CreateNote { path, .. }] if path.starts_with("Journal/")),
+            "{actions:?}"
+        );
         for p in &h.plugins {
             assert!(p.error.is_none(), "{}: {:?}", p.manifest.id, p.error);
         }

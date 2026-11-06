@@ -62,7 +62,8 @@ pub fn build(base: &str, mine: &str, theirs: &str) -> Vec<Block> {
             _ => Block::Conflict { base: b, mine: m, theirs: t, choice: Choice::Unresolved, custom: String::new() },
         };
         // coalesce consecutive text blocks of the same origin
-        if let (Some(Block::Text { text: prev, origin: po }), Block::Text { text, origin }) = (blocks.last_mut(), &block)
+        if let (Some(Block::Text { text: prev, origin: po }), Block::Text { text, origin }) =
+            (blocks.last_mut(), &block)
             && po == origin
         {
             prev.push_str(text);

@@ -451,13 +451,28 @@ impl MnemoApp {
                 Msg::Connected => {
                     self.conn = ConnState::Connected;
                     self.restore_done = false;
-                    self.need = Needs { notes: true, folders: true, plugins: true, tags: true, board: true, ..Default::default() };
+                    self.need = Needs {
+                        notes: true,
+                        folders: true,
+                        plugins: true,
+                        tags: true,
+                        board: true,
+                        ..Default::default()
+                    };
                     self.send_github_config();
                 }
                 Msg::ConnectionFailed(e) => self.conn = ConnState::Disconnected(Some(e)),
                 Msg::Live(v) => self.live = v,
                 Msg::Resync => {
-                    self.need = Needs { notes: true, folders: true, plugins: true, backlinks: true, tags: true, graph: self.graph.open, board: true };
+                    self.need = Needs {
+                        notes: true,
+                        folders: true,
+                        plugins: true,
+                        backlinks: true,
+                        tags: true,
+                        graph: self.graph.open,
+                        board: true,
+                    };
                     if let Some(n) = &self.open {
                         self.db.send(Cmd::Load { id: n.id, purpose: LoadPurpose::Refresh });
                     }
@@ -493,7 +508,9 @@ impl MnemoApp {
                     self.folders = f;
                     self.rebuild_tree();
                 }
-                Msg::Loaded { note, purpose: LoadPurpose::Open } | Msg::Created { note, open: true } => self.set_open(note, now),
+                Msg::Loaded { note, purpose: LoadPurpose::Open } | Msg::Created { note, open: true } => {
+                    self.set_open(note, now)
+                }
                 Msg::Loaded { note, purpose: LoadPurpose::Refresh } => self.apply_refresh(note, now),
                 Msg::Created { .. } => {}
                 Msg::Saved(note) => {
@@ -747,7 +764,13 @@ impl MnemoApp {
             self.content_gen += 1;
             self.notice("Modifications distantes fusionnées automatiquement avec les vôtres", false, now);
         } else {
-            n.conflict = Some(Conflict { remote, blocks, tab: ConflictTab::Resolve, diff_against_result: false, window_open: true });
+            n.conflict = Some(Conflict {
+                remote,
+                blocks,
+                tab: ConflictTab::Resolve,
+                diff_against_result: false,
+                window_open: true,
+            });
             self.notice(format!("Conflit : {total} bloc(s) modifié(s) des deux côtés à résoudre"), true, now);
         }
     }
@@ -877,10 +900,11 @@ impl MnemoApp {
                 }
                 acc.push_str(seg);
                 let p = acc.clone();
-                cur = cur
-                    .folders
-                    .entry(seg.to_lowercase())
-                    .or_insert_with(|| TreeFolder { name: seg.to_string(), path: p, ..Default::default() });
+                cur = cur.folders.entry(seg.to_lowercase()).or_insert_with(|| TreeFolder {
+                    name: seg.to_string(),
+                    path: p,
+                    ..Default::default()
+                });
             }
             cur
         }
@@ -1023,7 +1047,8 @@ impl MnemoApp {
     }
 
     fn run_core(&mut self, c: CoreCmd, ctx: &egui::Context, now: f64) {
-        let current_folder = || self.open.as_ref().and_then(|n| parent(&n.path).map(|p| format!("{p}/"))).unwrap_or_default();
+        let current_folder =
+            || self.open.as_ref().and_then(|n| parent(&n.path).map(|p| format!("{p}/"))).unwrap_or_default();
         match c {
             CoreCmd::NewNote => {
                 self.dialog = Some(Dialog::NewNote { input: current_folder(), error: None });
@@ -1056,7 +1081,8 @@ impl MnemoApp {
                 }
             }
             CoreCmd::ToggleMode => {
-                self.cfg.view_mode = if self.cfg.view_mode == ViewMode::Preview { ViewMode::Edit } else { ViewMode::Preview };
+                self.cfg.view_mode =
+                    if self.cfg.view_mode == ViewMode::Preview { ViewMode::Edit } else { ViewMode::Preview };
                 self.cfg.save();
             }
             CoreCmd::SplitMode => {
@@ -1116,7 +1142,15 @@ impl MnemoApp {
                 self.cfg.save();
             }
             CoreCmd::Refresh => {
-                self.need = Needs { notes: true, folders: true, plugins: true, backlinks: true, tags: true, graph: self.graph.open, board: true };
+                self.need = Needs {
+                    notes: true,
+                    folders: true,
+                    plugins: true,
+                    backlinks: true,
+                    tags: true,
+                    graph: self.graph.open,
+                    board: true,
+                };
                 if let Some(n) = &self.open {
                     self.db.send(Cmd::Load { id: n.id, purpose: LoadPurpose::Refresh });
                 }
@@ -1193,23 +1227,36 @@ impl MnemoApp {
     /// Name shown in the vault footer: the database name.
     fn vault_name(&self) -> String {
         let url = &self.cfg.database_url;
-        url.rsplit('/').next().and_then(|s| s.split('?').next()).filter(|s| !s.is_empty() && !s.contains('@')).unwrap_or("Mnemo").to_string()
+        url.rsplit('/')
+            .next()
+            .and_then(|s| s.split('?').next())
+            .filter(|s| !s.is_empty() && !s.contains('@'))
+            .unwrap_or("Mnemo")
+            .to_string()
     }
 
     fn left_sidebar(&mut self, ui: &mut egui::Ui, now: f64) {
         let p = self.pal();
         // header: view tabs
-        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 40.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add_space(6.0);
-            for (tab, ic, tip) in [(LeftTab::Files, icon::FILES_TAB, "Fichiers"), (LeftTab::Search, icon::SEARCH, "Rechercher"), (LeftTab::Tags, icon::TAG, "Tags")] {
-                if theme::icon_button_sized(ui, ic, tip, self.left_tab == tab, true, 16.0).clicked() {
-                    self.left_tab = tab;
-                    if tab == LeftTab::Search {
-                        self.focus_search = true;
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 40.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.add_space(6.0);
+                for (tab, ic, tip) in [
+                    (LeftTab::Files, icon::FILES_TAB, "Fichiers"),
+                    (LeftTab::Search, icon::SEARCH, "Rechercher"),
+                    (LeftTab::Tags, icon::TAG, "Tags"),
+                ] {
+                    if theme::icon_button_sized(ui, ic, tip, self.left_tab == tab, true, 16.0).clicked() {
+                        self.left_tab = tab;
+                        if tab == LeftTab::Search {
+                            self.focus_search = true;
+                        }
                     }
                 }
-            }
-        });
+            },
+        );
         let footer_h = 42.0;
         let body_h = (ui.available_height() - footer_h).max(50.0);
         ui.allocate_ui(egui::vec2(ui.available_width(), body_h), |ui| {
@@ -1223,12 +1270,19 @@ impl MnemoApp {
                         if theme::icon_button_sized(ui, icon::NEW_NOTE, "Nouvelle note", false, true, 16.0).clicked() {
                             self.actions.push(UiAction::Core(CoreCmd::NewNote));
                         }
-                        if theme::icon_button_sized(ui, icon::NEW_FOLDER, "Nouveau dossier", false, true, 16.0).clicked() {
+                        if theme::icon_button_sized(ui, icon::NEW_FOLDER, "Nouveau dossier", false, true, 16.0)
+                            .clicked()
+                        {
                             self.actions.push(UiAction::Core(CoreCmd::NewFolder));
                         }
-                        let sort = theme::icon_button_sized(ui, icon::SORT, "Changer l'ordre de tri", false, true, 16.0);
+                        let sort =
+                            theme::icon_button_sized(ui, icon::SORT, "Changer l'ordre de tri", false, true, 16.0);
                         egui::Popup::menu(&sort).show(|ui| {
-                            for (o, label) in [(SortOrder::NameAsc, "Nom du fichier (A à Z)"), (SortOrder::NameDesc, "Nom du fichier (Z à A)"), (SortOrder::Modified, "Date de modification (récent d'abord)")] {
+                            for (o, label) in [
+                                (SortOrder::NameAsc, "Nom du fichier (A à Z)"),
+                                (SortOrder::NameDesc, "Nom du fichier (Z à A)"),
+                                (SortOrder::Modified, "Date de modification (récent d'abord)"),
+                            ] {
                                 if ui.selectable_label(self.sort == o, label).clicked() {
                                     self.actions.push(UiAction::SetSort(o));
                                     ui.close();
@@ -1248,7 +1302,8 @@ impl MnemoApp {
                         tree_ui(ui, &tree, open_id, &mut actions, 0, &self.expanded, self.sort);
                         self.tree = tree;
                         self.actions.extend(actions);
-                        let rest = ui.allocate_response(ui.available_size().max(egui::vec2(10.0, 40.0)), egui::Sense::click());
+                        let rest =
+                            ui.allocate_response(ui.available_size().max(egui::vec2(10.0, 40.0)), egui::Sense::click());
                         rest.context_menu(|ui| {
                             if ui.button("Nouvelle note").clicked() {
                                 self.actions.push(UiAction::Core(CoreCmd::NewNote));
@@ -1290,13 +1345,19 @@ impl MnemoApp {
                             }
                             let open_id = self.open.as_ref().map(|n| n.id);
                             for hit in &self.search_results {
-                                if theme::tree_row(ui, basename(&hit.path), 0, open_id == Some(hit.id), Some(true)).clicked() {
+                                if theme::tree_row(ui, basename(&hit.path), 0, open_id == Some(hit.id), Some(true))
+                                    .clicked()
+                                {
                                     self.actions.push(UiAction::OpenId(hit.id));
                                 }
-                                egui::Frame::new().fill(p.bg).corner_radius(4.0).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.label(highlight_job(&hit.snippet.replace('\n', " "), ui));
-                                });
+                                egui::Frame::new()
+                                    .fill(p.bg)
+                                    .corner_radius(4.0)
+                                    .inner_margin(egui::Margin::symmetric(8, 5))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(highlight_job(&hit.snippet.replace('\n', " "), ui));
+                                    });
                                 ui.add_space(6.0);
                             }
                         });
@@ -1322,51 +1383,74 @@ impl MnemoApp {
         // vault footer
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
         ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, p.border));
-        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), footer_h - 2.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add_space(6.0);
-            let name = self.vault_name();
-            let r = ui.add(egui::Button::new(
-                RichText::new(format!("{name}  ")).color(p.text).strong()).frame(false)
-            ).on_hover_text(format!("Base : {}", redact_url(&self.cfg.database_url)));
-            ui.label(theme::icon_text(icon::VAULT_SWITCH, 13.0).color(p.faint));
-            if r.clicked() {
-                self.settings_tab = SettingsTab::Connection;
-                self.show_settings = true;
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(4.0);
-                if theme::icon_button_sized(ui, icon::SETTINGS, "Paramètres", self.show_settings, true, 16.0).clicked() {
-                    self.actions.push(UiAction::Core(CoreCmd::Settings));
-                }
-                if theme::icon_button_sized(ui, icon::HELP, "Aide et raccourcis", false, true, 16.0).clicked() {
-                    self.settings_tab = SettingsTab::About;
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), footer_h - 2.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.add_space(6.0);
+                let name = self.vault_name();
+                let r = ui
+                    .add(egui::Button::new(RichText::new(format!("{name}  ")).color(p.text).strong()).frame(false))
+                    .on_hover_text(format!("Base : {}", redact_url(&self.cfg.database_url)));
+                ui.label(theme::icon_text(icon::VAULT_SWITCH, 13.0).color(p.faint));
+                if r.clicked() {
+                    self.settings_tab = SettingsTab::Connection;
                     self.show_settings = true;
                 }
-            });
-        });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(4.0);
+                    if theme::icon_button_sized(ui, icon::SETTINGS, "Paramètres", self.show_settings, true, 16.0)
+                        .clicked()
+                    {
+                        self.actions.push(UiAction::Core(CoreCmd::Settings));
+                    }
+                    if theme::icon_button_sized(ui, icon::HELP, "Aide et raccourcis", false, true, 16.0).clicked() {
+                        self.settings_tab = SettingsTab::About;
+                        self.show_settings = true;
+                    }
+                });
+            },
+        );
     }
 
     fn right_sidebar(&mut self, ui: &mut egui::Ui) {
         let p = self.pal();
         let tabs: Vec<(&str, String)> = std::iter::once((icon::LINK, "Rétroliens".to_string()))
             .chain(std::iter::once((icon::TICKET, "Tickets liés".to_string())))
-            .chain(self.plugin_panels.iter().map(|(name, _)| (if name == "Plan" { icon::LIST } else { icon::PUZZLE }, name.clone())))
+            .chain(
+                self.plugin_panels
+                    .iter()
+                    .map(|(name, _)| (if name == "Plan" { icon::LIST } else { icon::PUZZLE }, name.clone())),
+            )
             .collect();
         self.right_tab = self.right_tab.min(tabs.len() - 1);
-        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 40.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add_space(6.0);
-            for (i, (ic, name)) in tabs.iter().enumerate() {
-                if theme::icon_button_sized(ui, ic, name, self.right_tab == i, true, 16.0).clicked() {
-                    self.right_tab = i;
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 40.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.add_space(6.0);
+                for (i, (ic, name)) in tabs.iter().enumerate() {
+                    if theme::icon_button_sized(ui, ic, name, self.right_tab == i, true, 16.0).clicked() {
+                        self.right_tab = i;
+                    }
                 }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(4.0);
-                if theme::icon_button_sized(ui, icon::PANEL_RIGHT, "Masquer le panneau de droite", false, true, 16.0).clicked() {
-                    self.actions.push(UiAction::Core(CoreCmd::ToggleRight));
-                }
-            });
-        });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(4.0);
+                    if theme::icon_button_sized(
+                        ui,
+                        icon::PANEL_RIGHT,
+                        "Masquer le panneau de droite",
+                        false,
+                        true,
+                        16.0,
+                    )
+                    .clicked()
+                    {
+                        self.actions.push(UiAction::Core(CoreCmd::ToggleRight));
+                    }
+                });
+            },
+        );
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Frame::new().inner_margin(egui::Margin::symmetric(12, 4)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -1386,14 +1470,19 @@ impl MnemoApp {
                         ui.label(RichText::new("Aucune mention trouvée.").color(p.faint));
                     }
                     for b in &self.backlinks {
-                        if theme::tree_row(ui, basename(&b.path), 0, false, Some(true)).on_hover_text(&b.path).clicked() {
+                        if theme::tree_row(ui, basename(&b.path), 0, false, Some(true)).on_hover_text(&b.path).clicked()
+                        {
                             self.actions.push(UiAction::OpenId(b.id));
                         }
                         for s in &b.snippets {
-                            egui::Frame::new().fill(p.bg).corner_radius(4.0).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.add(egui::Label::new(RichText::new(s).size(12.5).color(p.muted)).wrap());
-                            });
+                            egui::Frame::new()
+                                .fill(p.bg)
+                                .corner_radius(4.0)
+                                .inner_margin(egui::Margin::symmetric(8, 5))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.add(egui::Label::new(RichText::new(s).size(12.5).color(p.muted)).wrap());
+                                });
                             ui.add_space(3.0);
                         }
                         ui.add_space(6.0);
@@ -1404,7 +1493,12 @@ impl MnemoApp {
                     ui.label(RichText::new(name).color(p.text).strong());
                     ui.add_space(4.0);
                     let src = markdown::preprocess(md);
-                    CommonMarkViewer::new().show_with_id(egui::Id::unique(("plugin-panel", self.right_tab)), ui, &mut self.md_cache, &src);
+                    CommonMarkViewer::new().show_with_id(
+                        egui::Id::unique(("plugin-panel", self.right_tab)),
+                        ui,
+                        &mut self.md_cache,
+                        &src,
+                    );
                 }
             });
         });
@@ -1429,9 +1523,17 @@ impl MnemoApp {
                             let small = |t: String| RichText::new(t).size(12.0).color(p.muted);
                             if let Some(n) = &self.open {
                                 if n.conflict.is_some() {
-                                    ui.label(RichText::new("Conflit à résoudre").size(12.0).color(Color32::from_rgb(0xe9, 0x97, 0x3f)));
+                                    ui.label(
+                                        RichText::new("Conflit à résoudre")
+                                            .size(12.0)
+                                            .color(Color32::from_rgb(0xe9, 0x97, 0x3f)),
+                                    );
                                 }
-                                ui.label(small(format!("{} rétrolien{}", self.backlinks.len(), if self.backlinks.len() > 1 { "s" } else { "" })));
+                                ui.label(small(format!(
+                                    "{} rétrolien{}",
+                                    self.backlinks.len(),
+                                    if self.backlinks.len() > 1 { "s" } else { "" }
+                                )));
                                 for s in &self.plugin_status {
                                     ui.label(small(s.clone()));
                                 }
@@ -1441,13 +1543,25 @@ impl MnemoApp {
                                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
                                 }
                             }
-                            let (ic, color, tip) = match (&self.conn, self.live, self.open.as_ref().map(|n| n.dirty())) {
-                                (ConnState::Connected, true, Some(true)) => (icon::SYNC, p.faint, "Enregistrement…".to_string()),
-                                (ConnState::Connected, true, _) => (icon::SYNC, Color32::from_rgb(0x44, 0xcf, 0x6e), "Synchronisé en direct".to_string()),
-                                (ConnState::Connected, false, _) => (icon::SYNC, Color32::from_rgb(0xe9, 0x97, 0x3f), "Connecté, flux live en reconnexion…".to_string()),
+                            let (ic, color, tip) = match (&self.conn, self.live, self.open.as_ref().map(|n| n.dirty()))
+                            {
+                                (ConnState::Connected, true, Some(true)) => {
+                                    (icon::SYNC, p.faint, "Enregistrement…".to_string())
+                                }
+                                (ConnState::Connected, true, _) => (
+                                    icon::SYNC,
+                                    Color32::from_rgb(0x44, 0xcf, 0x6e),
+                                    "Synchronisé en direct".to_string(),
+                                ),
+                                (ConnState::Connected, false, _) => (
+                                    icon::SYNC,
+                                    Color32::from_rgb(0xe9, 0x97, 0x3f),
+                                    "Connecté, flux live en reconnexion…".to_string(),
+                                ),
                                 _ => (icon::OFFLINE, Color32::from_rgb(0xfb, 0x46, 0x4c), "Hors ligne".to_string()),
                             };
-                            ui.label(theme::icon_text(ic, 13.0).color(color)).on_hover_text(format!("{tip}\n{}", redact_url(&self.cfg.database_url)));
+                            ui.label(theme::icon_text(ic, 13.0).color(color))
+                                .on_hover_text(format!("{tip}\n{}", redact_url(&self.cfg.database_url)));
                         });
                     });
             });
@@ -1495,7 +1609,8 @@ impl MnemoApp {
         let p = self.pal();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, 0.0, p.bg2);
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Max)));
+        let mut child =
+            ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Max)));
         let ui = &mut child;
         ui.spacing_mut().item_spacing.x = 1.0;
         ui.add_space(6.0);
@@ -1532,7 +1647,15 @@ impl MnemoApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(6.0);
                 if !self.right_visible(ui.ctx())
-                    && theme::icon_button_sized(ui, icon::PANEL_RIGHT, "Afficher le panneau de droite", false, true, 16.0).clicked()
+                    && theme::icon_button_sized(
+                        ui,
+                        icon::PANEL_RIGHT,
+                        "Afficher le panneau de droite",
+                        false,
+                        true,
+                        16.0,
+                    )
+                    .clicked()
                 {
                     self.actions.push(UiAction::Core(CoreCmd::ToggleRight));
                 }
@@ -1566,7 +1689,8 @@ impl MnemoApp {
         }
         crumb_resp.on_hover_text(format!("{path}\nDouble-clic pour déplacer"));
 
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        let mut child = ui
+            .new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
         let ui = &mut child;
         ui.spacing_mut().item_spacing.x = 2.0;
         ui.add_space(8.0);
@@ -1594,17 +1718,24 @@ impl MnemoApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui.button(RichText::new("Supprimer le fichier").color(Color32::from_rgb(0xfb, 0x46, 0x4c))).clicked() {
+                if ui.button(RichText::new("Supprimer le fichier").color(Color32::from_rgb(0xfb, 0x46, 0x4c))).clicked()
+                {
                     self.actions.push(UiAction::DeleteNote(id, path.clone()));
                     ui.close();
                 }
             });
             let reading = self.cfg.view_mode == ViewMode::Preview;
-            let (ic, tip) = if reading { (icon::EDITING, "Basculer en mode édition (Ctrl+E)") } else { (icon::READING, "Basculer en mode lecture (Ctrl+E)") };
+            let (ic, tip) = if reading {
+                (icon::EDITING, "Basculer en mode édition (Ctrl+E)")
+            } else {
+                (icon::READING, "Basculer en mode lecture (Ctrl+E)")
+            };
             if theme::icon_button_sized(ui, ic, tip, false, true, 16.0).clicked() {
                 self.actions.push(UiAction::Core(CoreCmd::ToggleMode));
             }
-            if self.cfg.view_mode == ViewMode::Split && theme::icon_button_sized(ui, icon::SPLIT, "Quitter le mode divisé", true, true, 16.0).clicked() {
+            if self.cfg.view_mode == ViewMode::Split
+                && theme::icon_button_sized(ui, icon::SPLIT, "Quitter le mode divisé", true, true, 16.0).clicked()
+            {
                 self.cfg.view_mode = ViewMode::Edit;
                 self.cfg.save();
             }
@@ -1617,7 +1748,9 @@ impl MnemoApp {
             ui.add_space((ui.available_height() * 0.32).max(20.0));
             ui.label(RichText::new("Aucun fichier n'est ouvert").size(22.0).color(p.muted));
             ui.add_space(18.0);
-            let link = |ui: &mut egui::Ui, t: &str| ui.add(egui::Label::new(RichText::new(t).size(15.0).color(p.link)).sense(egui::Sense::click()));
+            let link = |ui: &mut egui::Ui, t: &str| {
+                ui.add(egui::Label::new(RichText::new(t).size(15.0).color(p.link)).sense(egui::Sense::click()))
+            };
             if link(ui, "Créer une nouvelle note (Ctrl+N)").clicked() {
                 self.actions.push(UiAction::Core(CoreCmd::NewNote));
             }
@@ -1683,7 +1816,13 @@ impl MnemoApp {
                             extra.push(("--font-text-size".into(), format!("{size}px")));
                         }
                         if let Some(acc) = &a.accent {
-                            for k in ["--color-accent", "--interactive-accent", "--text-accent", "--checkbox-color", "--blockquote-border-color"] {
+                            for k in [
+                                "--color-accent",
+                                "--interactive-accent",
+                                "--text-accent",
+                                "--checkbox-color",
+                                "--blockquote-border-color",
+                            ] {
                                 extra.push((k.into(), acc.clone()));
                             }
                         }
@@ -1745,7 +1884,10 @@ impl MnemoApp {
                 names.len() - known
             ));
             if parsed.ignored_rules > 0 {
-                report.push(format!("{} règle(s) ciblant des éléments précis ignorée(s) (non applicables hors navigateur)", parsed.ignored_rules));
+                report.push(format!(
+                    "{} règle(s) ciblant des éléments précis ignorée(s) (non applicables hors navigateur)",
+                    parsed.ignored_rules
+                ));
             }
             if names.iter().any(|n| n.starts_with("--font-") && !n.ends_with("-size")) {
                 report.push("Polices personnalisées (--font-text / --font-interface) non prises en charge : Inter reste utilisée".into());
@@ -1754,7 +1896,13 @@ impl MnemoApp {
             theme::set_override(Some(theme::Override { dark: (d.palette, d.metrics), light: (l.palette, l.metrics) }));
         }
         let mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-        self.css.watched = watched.into_iter().map(|p| { let t = mtime(&p); (p, t) }).collect();
+        self.css.watched = watched
+            .into_iter()
+            .map(|p| {
+                let t = mtime(&p);
+                (p, t)
+            })
+            .collect();
         self.css.report = report;
         self.theme_applied = None;
         self.preview_gen = u64::MAX;
@@ -1768,11 +1916,7 @@ impl MnemoApp {
         }
         self.css.last_check = now;
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
-        let changed = self
-            .css
-            .watched
-            .iter()
-            .any(|(p, t)| std::fs::metadata(p).and_then(|m| m.modified()).ok() != *t);
+        let changed = self.css.watched.iter().any(|(p, t)| std::fs::metadata(p).and_then(|m| m.modified()).ok() != *t);
         if changed {
             self.reload_css();
             self.notice("Thème CSS rechargé", false, now);
@@ -1780,10 +1924,12 @@ impl MnemoApp {
     }
 
     fn send_github_config(&self) {
-        let cfg = self.cfg.github_token.clone().filter(|t| !t.trim().is_empty()).map(|token| crate::github::GhConfig {
-            token,
-            api: self.cfg.github_api.clone(),
-        });
+        let cfg = self
+            .cfg
+            .github_token
+            .clone()
+            .filter(|t| !t.trim().is_empty())
+            .map(|token| crate::github::GhConfig { token, api: self.cfg.github_api.clone() });
         self.db.send(Cmd::SetGithub(cfg));
     }
 
@@ -1801,8 +1947,14 @@ impl MnemoApp {
              (ou la variable MNEMO_GITHUB_TOKEN), jamais dans la base.",
         ).size(12.5).color(p.faint)).wrap());
         ui.horizontal(|ui| {
-            let hint = if self.cfg.github_token.is_some() { "•••••••• (enregistré)" } else { "ghp_… ou github_pat_…" };
-            ui.add(egui::TextEdit::singleline(&mut self.github_input).password(true).hint_text(hint).desired_width(320.0));
+            let hint = if self.cfg.github_token.is_some() {
+                "•••••••• (enregistré)"
+            } else {
+                "ghp_… ou github_pat_…"
+            };
+            ui.add(
+                egui::TextEdit::singleline(&mut self.github_input).password(true).hint_text(hint).desired_width(320.0),
+            );
             if ui.button("Enregistrer").clicked() && !self.github_input.trim().is_empty() {
                 self.cfg.github_token = Some(self.github_input.trim().to_string());
                 self.github_input.clear();
@@ -1820,13 +1972,23 @@ impl MnemoApp {
         ui.add_space(8.0);
         ui.label(RichText::new("URL de l'API").color(p.text));
         let r = ui.add(egui::TextEdit::singleline(&mut self.cfg.github_api).desired_width(320.0));
-        ui.label(RichText::new("https://api.github.com, ou https://<serveur>/api/v3 pour GitHub Enterprise").size(12.0).color(p.faint));
+        ui.label(
+            RichText::new("https://api.github.com, ou https://<serveur>/api/v3 pour GitHub Enterprise")
+                .size(12.0)
+                .color(p.faint),
+        );
         if r.lost_focus() {
             self.cfg.save();
             self.send_github_config();
         }
         ui.add_space(8.0);
-        if ui.checkbox(&mut self.cfg.github_auto_sync, "Synchroniser automatiquement toutes les 5 minutes (tableau de bord ouvert)").changed() {
+        if ui
+            .checkbox(
+                &mut self.cfg.github_auto_sync,
+                "Synchroniser automatiquement toutes les 5 minutes (tableau de bord ouvert)",
+            )
+            .changed()
+        {
             self.cfg.save();
         }
         ui.add_space(10.0);
@@ -1837,7 +1999,10 @@ impl MnemoApp {
             }
             match &self.dash.github_user {
                 Some(Ok(login)) => {
-                    ui.label(RichText::new(format!("Connecté en tant que {login}")).color(crate::board::Status::Done.color()));
+                    ui.label(
+                        RichText::new(format!("Connecté en tant que {login}"))
+                            .color(crate::board::Status::Done.color()),
+                    );
                 }
                 Some(Err(e)) => {
                     ui.label(RichText::new(e).color(Color32::from_rgb(0xfb, 0x46, 0x4c)));
@@ -1846,10 +2011,17 @@ impl MnemoApp {
             }
         });
         ui.add_space(10.0);
-        let linked: Vec<String> = self.board.projects.iter().filter_map(|pr| pr.github_repo.as_ref().map(|r| format!("{} → {r}", pr.name))).collect();
+        let linked: Vec<String> = self
+            .board
+            .projects
+            .iter()
+            .filter_map(|pr| pr.github_repo.as_ref().map(|r| format!("{} → {r}", pr.name)))
+            .collect();
         ui.label(RichText::new("Projets reliés").color(p.text));
         if linked.is_empty() {
-            ui.label(RichText::new("Aucun : ouvrez le tableau de bord › Modifier le projet › Dépôt GitHub.").color(p.faint));
+            ui.label(
+                RichText::new("Aucun : ouvrez le tableau de bord › Modifier le projet › Dépôt GitHub.").color(p.faint),
+            );
         }
         for l in linked {
             ui.label(RichText::new(format!("• {l}")).color(p.muted));
@@ -1878,19 +2050,27 @@ impl MnemoApp {
         let mut changed = false;
         let mut dark = self.cfg.dark_mode;
         row(ui, "Thème de base", "Sombre ou clair.", &mut |ui| {
-            egui::ComboBox::from_id_salt("base-theme").selected_text(if dark { "Sombre" } else { "Clair" }).show_ui(ui, |ui| {
-                ui.selectable_value(&mut dark, true, "Sombre");
-                ui.selectable_value(&mut dark, false, "Clair");
-            });
+            egui::ComboBox::from_id_salt("base-theme").selected_text(if dark { "Sombre" } else { "Clair" }).show_ui(
+                ui,
+                |ui| {
+                    ui.selectable_value(&mut dark, true, "Sombre");
+                    ui.selectable_value(&mut dark, false, "Clair");
+                },
+            );
         });
         if dark != self.cfg.dark_mode {
             self.cfg.dark_mode = dark;
             changed = true;
         }
         let mut size = self.cfg.font_size;
-        row(ui, "Taille de police", "Taille du texte de l'éditeur et du mode lecture (remplacée par --font-text-size si un thème la définit).", &mut |ui| {
-            ui.add(egui::Slider::new(&mut size, 11.0..=26.0).step_by(1.0).suffix(" px"));
-        });
+        row(
+            ui,
+            "Taille de police",
+            "Taille du texte de l'éditeur et du mode lecture (remplacée par --font-text-size si un thème la définit).",
+            &mut |ui| {
+                ui.add(egui::Slider::new(&mut size, 11.0..=26.0).step_by(1.0).suffix(" px"));
+            },
+        );
         if size != self.cfg.font_size {
             self.cfg.font_size = size;
             changed = true;
@@ -1906,12 +2086,17 @@ impl MnemoApp {
 
         let mut input = self.css.obsidian_input.clone();
         let mut apply_dir = false;
-        row(ui, "Dossier .obsidian d'un coffre", "Facultatif : réutilise les thèmes, snippets et appearance.json d'un coffre Obsidian existant.", &mut |ui| {
-            if ui.button("Appliquer").clicked() {
-                apply_dir = true;
-            }
-            ui.add(egui::TextEdit::singleline(&mut input).hint_text("~/MonCoffre/.obsidian").desired_width(220.0));
-        });
+        row(
+            ui,
+            "Dossier .obsidian d'un coffre",
+            "Facultatif : réutilise les thèmes, snippets et appearance.json d'un coffre Obsidian existant.",
+            &mut |ui| {
+                if ui.button("Appliquer").clicked() {
+                    apply_dir = true;
+                }
+                ui.add(egui::TextEdit::singleline(&mut input).hint_text("~/MonCoffre/.obsidian").desired_width(220.0));
+            },
+        );
         self.css.obsidian_input = input;
         if apply_dir {
             let raw = self.css.obsidian_input.trim();
@@ -1934,9 +2119,14 @@ impl MnemoApp {
         }
         if self.cfg.obsidian_dir.is_some() {
             let mut follow = self.cfg.follow_appearance;
-            row(ui, "Suivre appearance.json", "Utilise le thème, les snippets activés, la taille de police, la couleur d'accent et le mode clair/sombre de ce coffre.", &mut |ui| {
-                ui.checkbox(&mut follow, "");
-            });
+            row(
+                ui,
+                "Suivre appearance.json",
+                "Utilise le thème, les snippets activés, la taille de police, la couleur d'accent et le mode clair/sombre de ce coffre.",
+                &mut |ui| {
+                    ui.checkbox(&mut follow, "");
+                },
+            );
             if follow != self.cfg.follow_appearance {
                 self.cfg.follow_appearance = follow;
                 changed = true;
@@ -1945,16 +2135,23 @@ impl MnemoApp {
 
         let mut theme_sel = self.css.active_theme.clone();
         let names: Vec<String> = self.css.themes.iter().map(|t| t.0.clone()).collect();
-        row(ui, "Thème", if following { "Défini par appearance.json." } else { "Thèmes trouvés dans les dossiers themes/." }, &mut |ui| {
-            ui.add_enabled_ui(!following, |ui| {
-                egui::ComboBox::from_id_salt("css-theme").selected_text(theme_sel.clone().unwrap_or_else(|| "Par défaut".into())).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut theme_sel, None, "Par défaut");
-                    for n in &names {
-                        ui.selectable_value(&mut theme_sel, Some(n.clone()), n);
-                    }
+        row(
+            ui,
+            "Thème",
+            if following { "Défini par appearance.json." } else { "Thèmes trouvés dans les dossiers themes/." },
+            &mut |ui| {
+                ui.add_enabled_ui(!following, |ui| {
+                    egui::ComboBox::from_id_salt("css-theme")
+                        .selected_text(theme_sel.clone().unwrap_or_else(|| "Par défaut".into()))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut theme_sel, None, "Par défaut");
+                            for n in &names {
+                                ui.selectable_value(&mut theme_sel, Some(n.clone()), n);
+                            }
+                        });
                 });
-            });
-        });
+            },
+        );
         if !following && theme_sel != self.css.active_theme {
             self.cfg.css_theme = theme_sel;
             changed = true;
@@ -1973,8 +2170,10 @@ impl MnemoApp {
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(!following, |ui| ui.checkbox(&mut on, ""));
                 ui.label(RichText::new(name).color(p.text));
-                ui.add(egui::Label::new(RichText::new(path.display().to_string()).size(11.5).color(p.faint)).truncate())
-                    .on_hover_text(path.display().to_string());
+                ui.add(
+                    egui::Label::new(RichText::new(path.display().to_string()).size(11.5).color(p.faint)).truncate(),
+                )
+                .on_hover_text(path.display().to_string());
             });
             if on != before && !following {
                 let mut list = self.css.active_snippets.clone();
@@ -1993,8 +2192,11 @@ impl MnemoApp {
         }
         ui.add_space(4.0);
         for d in self.css_dirs() {
-            ui.add(egui::Label::new(RichText::new(format!("Dossier lu : {}", d.display())).size(11.5).color(p.faint)).truncate())
-                .on_hover_text(d.display().to_string());
+            ui.add(
+                egui::Label::new(RichText::new(format!("Dossier lu : {}", d.display())).size(11.5).color(p.faint))
+                    .truncate(),
+            )
+            .on_hover_text(d.display().to_string());
         }
         ui.add_space(8.0);
         egui::Frame::new().fill(p.bg2).corner_radius(6.0).inner_margin(10.0).show(ui, |ui| {
@@ -2140,24 +2342,30 @@ impl MnemoApp {
             }
             ViewMode::Split => {
                 ui.columns(2, |cols| {
-                    egui::ScrollArea::vertical().id_salt("split-edit").auto_shrink([false, false]).show(&mut cols[0], |ui| {
-                        centered(ui, width, |ui| {
-                            ui.add_space(26.0);
-                            self.inline_title(ui, true);
-                            ui.add_space(14.0);
-                            self.editor(ui, note_id, now);
-                            ui.add_space(120.0);
-                        });
-                    });
-                    egui::ScrollArea::vertical().id_salt("split-read").auto_shrink([false, false]).show(&mut cols[1], |ui| {
-                        centered(ui, width, |ui| {
-                            ui.add_space(26.0);
-                            self.inline_title(ui, false);
-                            ui.add_space(14.0);
-                            self.preview(ui, now);
-                            ui.add_space(120.0);
-                        });
-                    });
+                    egui::ScrollArea::vertical().id_salt("split-edit").auto_shrink([false, false]).show(
+                        &mut cols[0],
+                        |ui| {
+                            centered(ui, width, |ui| {
+                                ui.add_space(26.0);
+                                self.inline_title(ui, true);
+                                ui.add_space(14.0);
+                                self.editor(ui, note_id, now);
+                                ui.add_space(120.0);
+                            });
+                        },
+                    );
+                    egui::ScrollArea::vertical().id_salt("split-read").auto_shrink([false, false]).show(
+                        &mut cols[1],
+                        |ui| {
+                            centered(ui, width, |ui| {
+                                ui.add_space(26.0);
+                                self.inline_title(ui, false);
+                                ui.add_space(14.0);
+                                self.preview(ui, now);
+                                ui.add_space(120.0);
+                            });
+                        },
+                    );
                 });
             }
         }
@@ -2231,7 +2439,17 @@ impl MnemoApp {
         let boxes = {
             let n = self.open.as_ref().unwrap();
             let right = out.response.rect.right();
-            theme::decorate_editor(&n.content, active, &out.galley, out.galley_pos, right, &pal, &met, ui.painter(), bg_slot)
+            theme::decorate_editor(
+                &n.content,
+                active,
+                &out.galley,
+                out.galley_pos,
+                right,
+                &pal,
+                &met,
+                ui.painter(),
+                bg_slot,
+            )
         };
         if out.response.clicked()
             && !ui.input(|i| i.modifiers.command)
@@ -2291,7 +2509,8 @@ impl MnemoApp {
                     matches.sort_by_key(|p| (!basename(p).to_lowercase().starts_with(&q), p.len()));
                     matches.truncate(8);
                     let pos = out.galley_pos + out.galley.pos_from_cursor(range.primary).left_bottom().to_vec2();
-                    let show_create = !partial.trim().is_empty() && !matches.iter().any(|m| m.eq_ignore_ascii_case(partial.trim()));
+                    let show_create =
+                        !partial.trim().is_empty() && !matches.iter().any(|m| m.eq_ignore_ascii_case(partial.trim()));
                     if show_create {
                         matches.push(partial.trim().to_string());
                     }
@@ -2300,9 +2519,10 @@ impl MnemoApp {
                     ac.sel = prev_sel.min(ac.matches.len().saturating_sub(1));
                     if !ac.matches.is_empty() {
                         let mut clicked = None;
-                        egui::Area::new(egui::Id::unique("wikilink-ac")).order(egui::Order::Foreground).fixed_pos(pos + egui::vec2(0.0, 6.0)).show(
-                            ui.ctx(),
-                            |ui| {
+                        egui::Area::new(egui::Id::unique("wikilink-ac"))
+                            .order(egui::Order::Foreground)
+                            .fixed_pos(pos + egui::vec2(0.0, 6.0))
+                            .show(ui.ctx(), |ui| {
                                 egui::Frame::popup(ui.style()).fill(pal.bg2).inner_margin(6.0).show(ui, |ui| {
                                     ui.set_width(320.0);
                                     ui.spacing_mut().item_spacing.y = 0.0;
@@ -2317,10 +2537,13 @@ impl MnemoApp {
                                         }
                                     }
                                     ui.add_space(4.0);
-                                    ui.label(RichText::new("↑↓ naviguer   ↵ insérer   échap ignorer").size(11.5).color(pal.faint));
+                                    ui.label(
+                                        RichText::new("↑↓ naviguer   ↵ insérer   échap ignorer")
+                                            .size(11.5)
+                                            .color(pal.faint),
+                                    );
                                 });
-                            },
-                        );
+                            });
                         if let Some(c) = clicked {
                             self.accept_autocomplete(ui.ctx(), &c, now);
                         } else {
@@ -2368,7 +2591,11 @@ impl MnemoApp {
                 st.spacing.item_spacing.y = 8.0;
             }
             let mut copy = self.preview_src.clone();
-            CommonMarkViewer::new().default_width(Some(ui.available_width() as usize)).show_mut(ui, &mut self.md_cache, &mut copy);
+            CommonMarkViewer::new().default_width(Some(ui.available_width() as usize)).show_mut(
+                ui,
+                &mut self.md_cache,
+                &mut copy,
+            );
             if copy != self.preview_src {
                 // a checkbox was toggled in the preview: apply it to the real source
                 let before = task_positions(&self.preview_src);
@@ -2394,14 +2621,16 @@ impl MnemoApp {
         let prompt = matches!(dialog, Dialog::Switcher { .. } | Dialog::Palette { .. });
         let p = self.pal();
         let mid = egui::Id::unique("mnemo-dialog");
-        let mut modal = egui::Modal::new(mid).backdrop_color(Color32::from_black_alpha(if self.cfg.dark_mode { 110 } else { 50 })).frame(
-            egui::Frame::new()
-                .fill(p.bg2)
-                .stroke(egui::Stroke::new(1.0, p.border))
-                .corner_radius(10.0)
-                .inner_margin(if prompt { egui::Margin::ZERO } else { egui::Margin::same(20) })
-                .shadow(ctx.global_style().visuals.window_shadow),
-        );
+        let mut modal = egui::Modal::new(mid)
+            .backdrop_color(Color32::from_black_alpha(if self.cfg.dark_mode { 110 } else { 50 }))
+            .frame(
+                egui::Frame::new()
+                    .fill(p.bg2)
+                    .stroke(egui::Stroke::new(1.0, p.border))
+                    .corner_radius(10.0)
+                    .inner_margin(if prompt { egui::Margin::ZERO } else { egui::Margin::same(20) })
+                    .shadow(ctx.global_style().visuals.window_shadow),
+            );
         if prompt {
             modal = modal.area(egui::Modal::default_area(mid).anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 80.0)));
         }
@@ -2549,12 +2778,20 @@ impl MnemoApp {
                     });
                 }
                 Dialog::DeleteFolder { path } => {
-                    let count = self.notes.iter().filter(|n| n.path.to_lowercase().starts_with(&(path.to_lowercase() + "/"))).count();
+                    let count = self
+                        .notes
+                        .iter()
+                        .filter(|n| n.path.to_lowercase().starts_with(&(path.to_lowercase() + "/")))
+                        .count();
                     ui.heading("Supprimer le dossier ?");
                     ui.label(format!("« {path} » et ses {count} note(s) seront supprimés définitivement."));
                     ui.horizontal(|ui| {
                         if ui.button(RichText::new("Supprimer").color(Color32::from_rgb(230, 90, 90))).clicked() {
-                            if self.open.as_ref().is_some_and(|n| n.path.to_lowercase().starts_with(&(path.to_lowercase() + "/"))) {
+                            if self
+                                .open
+                                .as_ref()
+                                .is_some_and(|n| n.path.to_lowercase().starts_with(&(path.to_lowercase() + "/")))
+                            {
                                 self.open = None;
                             }
                             self.db.send(Cmd::DeleteFolder(path.clone()));
@@ -2568,10 +2805,12 @@ impl MnemoApp {
                 Dialog::Switcher { query, sel } => {
                     let q = fold(query);
                     let words: Vec<&str> = q.split_whitespace().collect();
-                    let mut items: Vec<&NoteMeta> = self.notes.iter().filter(|n| words.iter().all(|w| fold(&n.path).contains(w))).collect();
+                    let mut items: Vec<&NoteMeta> =
+                        self.notes.iter().filter(|n| words.iter().all(|w| fold(&n.path).contains(w))).collect();
                     items.sort_by_key(|n| (!fold(basename(&n.path)).starts_with(&q), std::cmp::Reverse(n.updated_at)));
                     items.truncate(12);
-                    let create = !query.trim().is_empty() && !items.iter().any(|n| n.path.eq_ignore_ascii_case(query.trim()));
+                    let create =
+                        !query.trim().is_empty() && !items.iter().any(|n| n.path.eq_ignore_ascii_case(query.trim()));
                     nav_keys(ui, sel, items.len() + usize::from(create));
                     let r = prompt_field(ui, query, "Trouver ou créer une note…");
                     if r.changed() {
@@ -2581,7 +2820,8 @@ impl MnemoApp {
                     egui::Frame::new().inner_margin(egui::Margin::symmetric(6, 0)).show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         for (i, n) in items.iter().enumerate() {
-                            let r = theme::suggestion_row(ui, basename(&n.path), parent(&n.path).unwrap_or(""), *sel == i);
+                            let r =
+                                theme::suggestion_row(ui, basename(&n.path), parent(&n.path).unwrap_or(""), *sel == i);
                             if r.clicked() || (enter && *sel == i) {
                                 chosen = Some(Some(n.id));
                             }
@@ -2598,7 +2838,16 @@ impl MnemoApp {
                             ui.label(RichText::new("  Aucun résultat.").color(p.faint));
                         }
                     });
-                    prompt_footer(ui, &p, &[("↑↓", "pour naviguer"), ("↵", "pour ouvrir"), ("ctrl ↵", "dans un nouvel onglet"), ("échap", "pour annuler")]);
+                    prompt_footer(
+                        ui,
+                        &p,
+                        &[
+                            ("↑↓", "pour naviguer"),
+                            ("↵", "pour ouvrir"),
+                            ("ctrl ↵", "dans un nouvel onglet"),
+                            ("échap", "pour annuler"),
+                        ],
+                    );
                     let new_tab = ui.input(|i| i.modifiers.command);
                     match chosen {
                         Some(Some(id)) => {
@@ -2618,7 +2867,11 @@ impl MnemoApp {
                     let mut items: Vec<(String, String, UiAction)> = CORE_COMMANDS
                         .iter()
                         .map(|(c, name, key)| (name.to_string(), key.to_string(), UiAction::Core(*c)))
-                        .chain(self.plugin_cmds.iter().map(|(i, id, name)| (name.clone(), String::new(), UiAction::Plugin(*i, id.clone()))))
+                        .chain(
+                            self.plugin_cmds
+                                .iter()
+                                .map(|(i, id, name)| (name.clone(), String::new(), UiAction::Plugin(*i, id.clone()))),
+                        )
                         .filter(|(name, _, _)| words.iter().all(|w| fold(name).contains(w)))
                         .collect();
                     items.truncate(14);
@@ -2640,7 +2893,11 @@ impl MnemoApp {
                             ui.label(RichText::new("  Aucune commande trouvée.").color(p.faint));
                         }
                     });
-                    prompt_footer(ui, &p, &[("↑↓", "pour naviguer"), ("↵", "pour utiliser"), ("échap", "pour annuler")]);
+                    prompt_footer(
+                        ui,
+                        &p,
+                        &[("↑↓", "pour naviguer"), ("↵", "pour utiliser"), ("échap", "pour annuler")],
+                    );
                 }
             }
         });
@@ -2657,61 +2914,92 @@ impl MnemoApp {
         let p = self.pal();
         let mut open = self.show_settings;
         let screen = ctx.content_rect();
-        let size = egui::vec2((screen.width() - 80.0).clamp(500.0, 1000.0), (screen.height() - 90.0).clamp(360.0, 720.0));
+        let size =
+            egui::vec2((screen.width() - 80.0).clamp(500.0, 1000.0), (screen.height() - 90.0).clamp(360.0, 720.0));
         let modal = egui::Modal::new(egui::Id::unique("settings-modal"))
             .backdrop_color(Color32::from_black_alpha(if self.cfg.dark_mode { 110 } else { 50 }))
-            .frame(egui::Frame::new().fill(p.bg).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(10.0).shadow(ctx.global_style().visuals.window_shadow));
+            .frame(
+                egui::Frame::new()
+                    .fill(p.bg)
+                    .stroke(egui::Stroke::new(1.0, p.border))
+                    .corner_radius(10.0)
+                    .shadow(ctx.global_style().visuals.window_shadow),
+            );
         let resp = modal.show(ctx, |ui| {
             ui.set_min_size(size);
             ui.set_max_size(size);
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 // left navigation
-                egui::Frame::new().fill(p.bg2).corner_radius(egui::CornerRadius { nw: 10, sw: 10, ne: 0, se: 0 }).inner_margin(egui::Margin::symmetric(10, 14)).show(ui, |ui| {
-                    ui.set_width(200.0);
-                    ui.set_min_height(size.y - 28.0);
-                    ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    ui.label(RichText::new("Options").size(12.0).color(p.faint).strong());
-                    ui.add_space(4.0);
-                    for (t, label) in [(SettingsTab::Connection, "Base de données"), (SettingsTab::Appearance, "Apparence"), (SettingsTab::Github, "GitHub"), (SettingsTab::About, "À propos")] {
-                        if theme::tree_row(ui, label, 0, self.settings_tab == t, None).clicked() {
-                            self.settings_tab = t;
-                        }
-                    }
-                    ui.add_space(14.0);
-                    ui.label(RichText::new("Plugins").size(12.0).color(p.faint).strong());
-                    ui.add_space(4.0);
-                    if theme::tree_row(ui, "Plugins communautaires", 0, self.settings_tab == SettingsTab::Plugins, None).clicked() {
-                        self.settings_tab = SettingsTab::Plugins;
-                    }
+                egui::Frame::new()
+                    .fill(p.bg2)
+                    .corner_radius(egui::CornerRadius { nw: 10, sw: 10, ne: 0, se: 0 })
+                    .inner_margin(egui::Margin::symmetric(10, 14))
+                    .show(ui, |ui| {
+                        ui.set_width(200.0);
+                        ui.set_min_height(size.y - 28.0);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            ui.label(RichText::new("Options").size(12.0).color(p.faint).strong());
+                            ui.add_space(4.0);
+                            for (t, label) in [
+                                (SettingsTab::Connection, "Base de données"),
+                                (SettingsTab::Appearance, "Apparence"),
+                                (SettingsTab::Github, "GitHub"),
+                                (SettingsTab::About, "À propos"),
+                            ] {
+                                if theme::tree_row(ui, label, 0, self.settings_tab == t, None).clicked() {
+                                    self.settings_tab = t;
+                                }
+                            }
+                            ui.add_space(14.0);
+                            ui.label(RichText::new("Plugins").size(12.0).color(p.faint).strong());
+                            ui.add_space(4.0);
+                            if theme::tree_row(
+                                ui,
+                                "Plugins communautaires",
+                                0,
+                                self.settings_tab == SettingsTab::Plugins,
+                                None,
+                            )
+                            .clicked()
+                            {
+                                self.settings_tab = SettingsTab::Plugins;
+                            }
+                        });
                     });
-                });
                 // content
                 ui.vertical(|ui| {
                     ui.set_width(size.x - 220.0);
                     ui.set_max_width(size.x - 220.0);
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 34.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(8.0);
-                        if theme::icon_button_sized(ui, "\u{e1b2}", "Fermer", false, true, 16.0).clicked() {
-                            open = false;
-                        }
-                    });
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), 34.0),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            ui.add_space(8.0);
+                            if theme::icon_button_sized(ui, "\u{e1b2}", "Fermer", false, true, 16.0).clicked() {
+                                open = false;
+                            }
+                        },
+                    );
                     egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(size.y - 44.0).show(ui, |ui| {
-                        egui::Frame::new().inner_margin(egui::Margin { left: 28, right: 28, top: 0, bottom: 20 }).show(ui, |ui| {
-                            ui.set_max_width(size.x - 220.0 - 56.0);
-                            let title = match self.settings_tab {
-                                SettingsTab::Connection => "Base de données",
-                                SettingsTab::Appearance => "Apparence",
-                                SettingsTab::Plugins => "Plugins",
-                                SettingsTab::Github => "GitHub",
-                                SettingsTab::About => "À propos",
-                            };
-                            ui.label(RichText::new(title).size(20.0).strong().color(p.text));
-                            ui.add_space(12.0);
-                            self.settings_content(ui, now);
-                        });
+                        egui::Frame::new().inner_margin(egui::Margin { left: 28, right: 28, top: 0, bottom: 20 }).show(
+                            ui,
+                            |ui| {
+                                ui.set_max_width(size.x - 220.0 - 56.0);
+                                let title = match self.settings_tab {
+                                    SettingsTab::Connection => "Base de données",
+                                    SettingsTab::Appearance => "Apparence",
+                                    SettingsTab::Plugins => "Plugins",
+                                    SettingsTab::Github => "GitHub",
+                                    SettingsTab::About => "À propos",
+                                };
+                                ui.label(RichText::new(title).size(20.0).strong().color(p.text));
+                                ui.add_space(12.0);
+                                self.settings_content(ui, now);
+                            },
+                        );
                     });
                 });
             });
@@ -2728,7 +3016,11 @@ impl MnemoApp {
                 SettingsTab::Connection => {
                     ui.label("URL PostgreSQL");
                     ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut self.url_input).password(!self.show_password).desired_width(420.0));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.url_input)
+                                .password(!self.show_password)
+                                .desired_width(420.0),
+                        );
                         ui.checkbox(&mut self.show_password, "Afficher");
                     });
                     if ui.button("Se (re)connecter").clicked() {
@@ -2739,7 +3031,10 @@ impl MnemoApp {
                     ui.label(format!("Live (LISTEN/NOTIFY) : {}", if self.live { "actif" } else { "inactif" }));
                     ui.weak(format!("Identifiant de cette instance : {}", self.client_id));
                     ui.add_space(8.0);
-                    ui.weak(format!("Fichier de configuration : {}", crate::config::config_dir().join("config.toml").display()));
+                    ui.weak(format!(
+                        "Fichier de configuration : {}",
+                        crate::config::config_dir().join("config.toml").display()
+                    ));
                     ui.weak("La variable d'environnement MNEMO_DATABASE_URL a priorité sur ce réglage.");
                 }
                 SettingsTab::Appearance => self.appearance_settings(ui, now),
@@ -2789,7 +3084,12 @@ impl MnemoApp {
                         st.enabled = enabled;
                         to_save.push((m.id.clone(), st));
                     }
-                    ui.weak(format!("v{}  ·  {}{}", m.version, m.id, if m.author.is_empty() { String::new() } else { format!("  ·  par {}", m.author) }));
+                    ui.weak(format!(
+                        "v{}  ·  {}{}",
+                        m.version,
+                        m.id,
+                        if m.author.is_empty() { String::new() } else { format!("  ·  par {}", m.author) }
+                    ));
                 });
                 if !m.description.is_empty() {
                     ui.label(&m.description);
@@ -2826,14 +3126,23 @@ impl MnemoApp {
                                 serde_json::Value::Number(num) => {
                                     let mut x = num.as_f64().unwrap_or(0.0);
                                     if ui.add(egui::DragValue::new(&mut x)).changed() {
-                                        *v = if x.fract() == 0.0 { serde_json::json!(x as i64) } else { serde_json::json!(x) };
+                                        *v = if x.fract() == 0.0 {
+                                            serde_json::json!(x as i64)
+                                        } else {
+                                            serde_json::json!(x)
+                                        };
                                     }
                                 }
                                 other => {
                                     let mut s = other.as_str().map(str::to_string).unwrap_or_default();
                                     let multiline = d.kind.as_deref() == Some("multiline");
                                     let r = if multiline {
-                                        ui.add(egui::TextEdit::multiline(&mut s).desired_rows(4).desired_width(f32::INFINITY).code_editor())
+                                        ui.add(
+                                            egui::TextEdit::multiline(&mut s)
+                                                .desired_rows(4)
+                                                .desired_width(f32::INFINITY)
+                                                .code_editor(),
+                                        )
                                     } else {
                                         ui.add(egui::TextEdit::singleline(&mut s).desired_width(f32::INFINITY))
                                     };
@@ -2859,8 +3168,12 @@ impl MnemoApp {
         }
         for (id, st) in to_save {
             // optimistic local apply, then persist (the DB broadcasts to other devices)
-            let mut states: HashMap<String, PluginState> =
-                self.plugins.plugins.iter().map(|p| (p.manifest.id.clone(), self.plugins.state_of(&p.manifest.id))).collect();
+            let mut states: HashMap<String, PluginState> = self
+                .plugins
+                .plugins
+                .iter()
+                .map(|p| (p.manifest.id.clone(), self.plugins.state_of(&p.manifest.id)))
+                .collect();
             states.insert(id.clone(), st.clone());
             self.plugins.apply_states(states);
             self.plugin_changed();
@@ -2930,8 +3243,16 @@ fn nav_keys(ui: &mut egui::Ui, sel: &mut usize, len: usize) {
 
 fn highlight_job(snippet: &str, ui: &egui::Ui) -> LayoutJob {
     let mut job = LayoutJob::default();
-    let normal = TextFormat { font_id: FontId::proportional(ui.style().text_styles[&egui::TextStyle::Small].size + 1.0), color: ui.visuals().weak_text_color(), ..Default::default() };
-    let hl = TextFormat { color: ui.visuals().strong_text_color(), background: ui.visuals().selection.bg_fill.gamma_multiply(0.45), ..normal.clone() };
+    let normal = TextFormat {
+        font_id: FontId::proportional(ui.style().text_styles[&egui::TextStyle::Small].size + 1.0),
+        color: ui.visuals().weak_text_color(),
+        ..Default::default()
+    };
+    let hl = TextFormat {
+        color: ui.visuals().strong_text_color(),
+        background: ui.visuals().selection.bg_fill.gamma_multiply(0.45),
+        ..normal.clone()
+    };
     let mut on = false;
     for part in snippet.split(['\u{1}', '\u{2}']) {
         job.append(part, 0.0, if on { hl.clone() } else { normal.clone() });
@@ -3082,7 +3403,11 @@ impl eframe::App for MnemoApp {
         self.update_plugin_outputs(&ctx, now);
 
         let p = self.pal();
-        egui::Panel::left("ribbon").exact_size(44.0).resizable(false).frame(egui::Frame::new().fill(p.bg2)).show(ui, |ui| self.ribbon(ui));
+        egui::Panel::left("ribbon")
+            .exact_size(44.0)
+            .resizable(false)
+            .frame(egui::Frame::new().fill(p.bg2))
+            .show(ui, |ui| self.ribbon(ui));
         if self.left_visible(&ctx) {
             egui::Panel::left("sidebar")
                 .default_size(260.0)
@@ -3180,7 +3505,10 @@ const INS_BG: Color32 = Color32::from_rgba_premultiplied(14, 52, 24, 90);
 const THEIRS_BG: Color32 = Color32::from_rgba_premultiplied(16, 36, 66, 90);
 
 fn code_block(ui: &mut egui::Ui, text: &str, bg: Option<Color32>) {
-    let frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 4)).corner_radius(4.0).fill(bg.unwrap_or(ui.visuals().extreme_bg_color));
+    let frame = egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .corner_radius(4.0)
+        .fill(bg.unwrap_or(ui.visuals().extreme_bg_color));
     frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
         if text.is_empty() {
@@ -3222,43 +3550,61 @@ fn resolve_ui(ui: &mut egui::Ui, blocks: &mut [Block]) {
                 k += 1;
                 let resolved = *choice != Choice::Unresolved;
                 let stroke = if resolved { Color32::from_rgb(70, 170, 100) } else { Color32::from_rgb(230, 140, 40) };
-                egui::Frame::new().stroke(egui::Stroke::new(1.5, stroke)).corner_radius(6.0).inner_margin(8.0).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("Conflit {k}")).strong());
-                        ui.label(RichText::new(if resolved { "✔ résolu" } else { "à résoudre" }).color(stroke).small());
-                    });
-                    ui.columns(2, |cols| {
-                        cols[0].label(RichText::new("Votre version").strong().color(Color32::from_rgb(90, 200, 120)));
-                        code_block(&mut cols[0], mine, Some(INS_BG));
-                        cols[1].label(RichText::new("Version distante").strong().color(Color32::from_rgb(110, 160, 240)));
-                        code_block(&mut cols[1], theirs, Some(THEIRS_BG));
-                    });
-                    if !base.is_empty() {
-                        egui::CollapsingHeader::new(RichText::new("Version d'origine (avant les deux modifications)").small())
+                egui::Frame::new().stroke(egui::Stroke::new(1.5, stroke)).corner_radius(6.0).inner_margin(8.0).show(
+                    ui,
+                    |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!("Conflit {k}")).strong());
+                            ui.label(
+                                RichText::new(if resolved { "✔ résolu" } else { "à résoudre" }).color(stroke).small(),
+                            );
+                        });
+                        ui.columns(2, |cols| {
+                            cols[0]
+                                .label(RichText::new("Votre version").strong().color(Color32::from_rgb(90, 200, 120)));
+                            code_block(&mut cols[0], mine, Some(INS_BG));
+                            cols[1].label(
+                                RichText::new("Version distante").strong().color(Color32::from_rgb(110, 160, 240)),
+                            );
+                            code_block(&mut cols[1], theirs, Some(THEIRS_BG));
+                        });
+                        if !base.is_empty() {
+                            egui::CollapsingHeader::new(
+                                RichText::new("Version d'origine (avant les deux modifications)").small(),
+                            )
                             .id_salt(("base", k))
                             .show(ui, |ui| code_block(ui, base, None));
-                    }
-                    ui.horizontal_wrapped(|ui| {
-                        ui.selectable_value(choice, Choice::Mine, "Garder la mienne");
-                        ui.selectable_value(choice, Choice::Theirs, "Garder la distante");
-                        ui.selectable_value(choice, Choice::MineThenTheirs, "Les deux (la mienne d'abord)");
-                        ui.selectable_value(choice, Choice::TheirsThenMine, "Les deux (distante d'abord)");
-                        if ui.selectable_label(*choice == Choice::Custom, "Éditer à la main…").clicked() && *choice != Choice::Custom {
-                            *custom = merge::resolved_text(mine, theirs, choice, custom).unwrap_or_else(|| merge::concat(mine, theirs));
-                            *choice = Choice::Custom;
                         }
-                        if resolved && ui.small_button("Annuler le choix").clicked() {
-                            *choice = Choice::Unresolved;
+                        ui.horizontal_wrapped(|ui| {
+                            ui.selectable_value(choice, Choice::Mine, "Garder la mienne");
+                            ui.selectable_value(choice, Choice::Theirs, "Garder la distante");
+                            ui.selectable_value(choice, Choice::MineThenTheirs, "Les deux (la mienne d'abord)");
+                            ui.selectable_value(choice, Choice::TheirsThenMine, "Les deux (distante d'abord)");
+                            if ui.selectable_label(*choice == Choice::Custom, "Éditer à la main…").clicked()
+                                && *choice != Choice::Custom
+                            {
+                                *custom = merge::resolved_text(mine, theirs, choice, custom)
+                                    .unwrap_or_else(|| merge::concat(mine, theirs));
+                                *choice = Choice::Custom;
+                            }
+                            if resolved && ui.small_button("Annuler le choix").clicked() {
+                                *choice = Choice::Unresolved;
+                            }
+                        });
+                        if *choice == Choice::Custom {
+                            ui.add(
+                                egui::TextEdit::multiline(custom)
+                                    .code_editor()
+                                    .desired_rows(4)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        } else if let Some(r) = merge::resolved_text(mine, theirs, choice, custom) {
+                            ui.label(RichText::new("Résultat :").small());
+                            code_block(ui, &r, None);
                         }
-                    });
-                    if *choice == Choice::Custom {
-                        ui.add(egui::TextEdit::multiline(custom).code_editor().desired_rows(4).desired_width(f32::INFINITY));
-                    } else if let Some(r) = merge::resolved_text(mine, theirs, choice, custom) {
-                        ui.label(RichText::new("Résultat :").small());
-                        code_block(ui, &r, None);
-                    }
-                });
+                    },
+                );
             }
         }
         ui.add_space(4.0);
@@ -3282,7 +3628,9 @@ fn diff_ui(ui: &mut egui::Ui, old: &str, new: &str, new_label: &str) {
             ui.spacing_mut().item_spacing.y = 0.0;
             let first = &hunk[0];
             ui.label(
-                RichText::new(format!(" @@ -{} +{} @@", first.old_no.unwrap_or(0), first.new_no.unwrap_or(0))).monospace().weak(),
+                RichText::new(format!(" @@ -{} +{} @@", first.old_no.unwrap_or(0), first.new_no.unwrap_or(0)))
+                    .monospace()
+                    .weak(),
             );
             for line in &hunk {
                 let (bg, sign) = match line.tag {
@@ -3294,7 +3642,11 @@ fn diff_ui(ui: &mut egui::Ui, old: &str, new: &str, new_label: &str) {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         let num = |n: Option<usize>| n.map(|n| format!("{n:>4}")).unwrap_or_else(|| "    ".into());
-                        ui.label(RichText::new(format!("{} {} {sign} ", num(line.old_no), num(line.new_no))).monospace().weak());
+                        ui.label(
+                            RichText::new(format!("{} {} {sign} ", num(line.old_no), num(line.new_no)))
+                                .monospace()
+                                .weak(),
+                        );
                         ui.add(egui::Label::new(RichText::new(&line.text).monospace()).wrap());
                     });
                 });
@@ -3316,56 +3668,70 @@ impl MnemoApp {
         let mut open = true;
         let mut apply: Option<String> = None;
         let mut close = false;
-        egui::Window::new("Résoudre le conflit").open(&mut open).default_size([980.0, 640.0]).collapsible(false).show(ctx, |ui| {
-            let (total, left) = merge::conflict_count(&c.blocks);
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut c.tab, ConflictTab::Resolve, format!("Résolution ({}/{total})", total - left));
-                ui.selectable_value(&mut c.tab, ConflictTab::Diff, "Diff complet");
-            });
-            ui.weak(format!(
-                "« {path} » a été modifiée ailleurs (version {}) pendant que vous l'éditiez. \
+        egui::Window::new("Résoudre le conflit").open(&mut open).default_size([980.0, 640.0]).collapsible(false).show(
+            ctx,
+            |ui| {
+                let (total, left) = merge::conflict_count(&c.blocks);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(
+                        &mut c.tab,
+                        ConflictTab::Resolve,
+                        format!("Résolution ({}/{total})", total - left),
+                    );
+                    ui.selectable_value(&mut c.tab, ConflictTab::Diff, "Diff complet");
+                });
+                ui.weak(format!(
+                    "« {path} » a été modifiée ailleurs (version {}) pendant que vous l'éditiez. \
                  Les changements qui ne se chevauchent pas sont déjà fusionnés ; choisissez pour chaque conflit.",
-                c.remote.version
-            ));
-            ui.separator();
-            let h = (ui.available_height() - 44.0).max(160.0);
-            egui::ScrollArea::vertical().max_height(h).auto_shrink([false, false]).show(ui, |ui| match c.tab {
-                ConflictTab::Resolve => resolve_ui(ui, &mut c.blocks),
-                ConflictTab::Diff => {
-                    ui.checkbox(&mut c.diff_against_result, "Comparer au résultat de la fusion (au lieu de votre version)");
-                    let merged = merge::assemble(&c.blocks);
-                    let (new, label) = match (&merged, c.diff_against_result) {
-                        (Some(m), true) => (m.clone(), "résultat de la fusion"),
-                        _ => (mine_full.clone(), "votre version"),
-                    };
-                    diff_ui(ui, &c.remote.content, &new, label);
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                let merged = merge::assemble(&c.blocks);
-                let btn = egui::Button::new(RichText::new("✔ Appliquer la fusion").strong());
-                if ui.add_enabled(merged.is_some(), btn).on_disabled_hover_text(format!("{left} conflit(s) restant(s)")).clicked() {
-                    apply = merged;
-                }
-                let set_all = |c: &mut Conflict, ch: Choice| {
-                    for b in &mut c.blocks {
-                        if let Block::Conflict { choice, .. } = b {
-                            *choice = ch.clone();
-                        }
+                    c.remote.version
+                ));
+                ui.separator();
+                let h = (ui.available_height() - 44.0).max(160.0);
+                egui::ScrollArea::vertical().max_height(h).auto_shrink([false, false]).show(ui, |ui| match c.tab {
+                    ConflictTab::Resolve => resolve_ui(ui, &mut c.blocks),
+                    ConflictTab::Diff => {
+                        ui.checkbox(
+                            &mut c.diff_against_result,
+                            "Comparer au résultat de la fusion (au lieu de votre version)",
+                        );
+                        let merged = merge::assemble(&c.blocks);
+                        let (new, label) = match (&merged, c.diff_against_result) {
+                            (Some(m), true) => (m.clone(), "résultat de la fusion"),
+                            _ => (mine_full.clone(), "votre version"),
+                        };
+                        diff_ui(ui, &c.remote.content, &new, label);
                     }
-                };
-                if ui.button("Tout : la mienne").clicked() {
-                    set_all(c, Choice::Mine);
-                }
-                if ui.button("Tout : la distante").clicked() {
-                    set_all(c, Choice::Theirs);
-                }
-                if ui.button("Résoudre plus tard").clicked() {
-                    close = true;
-                }
-            });
-        });
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let merged = merge::assemble(&c.blocks);
+                    let btn = egui::Button::new(RichText::new("✔ Appliquer la fusion").strong());
+                    if ui
+                        .add_enabled(merged.is_some(), btn)
+                        .on_disabled_hover_text(format!("{left} conflit(s) restant(s)"))
+                        .clicked()
+                    {
+                        apply = merged;
+                    }
+                    let set_all = |c: &mut Conflict, ch: Choice| {
+                        for b in &mut c.blocks {
+                            if let Block::Conflict { choice, .. } = b {
+                                *choice = ch.clone();
+                            }
+                        }
+                    };
+                    if ui.button("Tout : la mienne").clicked() {
+                        set_all(c, Choice::Mine);
+                    }
+                    if ui.button("Tout : la distante").clicked() {
+                        set_all(c, Choice::Theirs);
+                    }
+                    if ui.button("Résoudre plus tard").clicked() {
+                        close = true;
+                    }
+                });
+            },
+        );
         if !open || close {
             c.window_open = false;
         }

@@ -81,7 +81,12 @@ fn transform_line(line: &str, out: &mut String) {
                         let start = if embed { i - 1 } else { i };
                         out.push_str(&line[last..start]);
                         let (target, display) = parse_wikilink(inner);
-                        out.push_str(&format!("[{}](<{}{}>)", display.replace('[', "\\[").replace(']', "\\]"), NOTE_SCHEME, encode(&target)));
+                        out.push_str(&format!(
+                            "[{}](<{}{}>)",
+                            display.replace('[', "\\[").replace(']', "\\]"),
+                            NOTE_SCHEME,
+                            encode(&target)
+                        ));
                         i += 2 + end + 2;
                         last = i;
                         continue;
