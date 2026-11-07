@@ -24,6 +24,7 @@ pub(super) enum LeftTab {
 #[derive(PartialEq, Clone, Copy)]
 pub(super) enum SettingsTab {
     Connection,
+    Vault,
     Appearance,
     Plugins,
     Github,
@@ -123,6 +124,25 @@ pub(super) enum UiAction {
     SetSort(SortOrder),
     Back,
     Forward,
+    /// glisser-déposer dans l'explorateur : élément déplacé, dossier de destination ("" = racine)
+    Move(DragItem, String),
+    /// fichiers / dossiers déposés depuis le système : chemins, dossier de destination
+    ImportFiles(Vec<std::path::PathBuf>, String),
+}
+
+/// Ce que l'on fait glisser dans l'explorateur.
+#[derive(Clone, Debug)]
+pub(super) enum DragItem {
+    Note(Uuid, String),
+    Folder(String),
+}
+
+impl DragItem {
+    pub(super) fn path(&self) -> &str {
+        match self {
+            DragItem::Note(_, p) | DragItem::Folder(p) => p,
+        }
+    }
 }
 
 #[derive(Default)]

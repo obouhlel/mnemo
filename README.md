@@ -9,13 +9,17 @@ connectées à la même base. Un seul binaire pour Windows, macOS et Linux.
 - Éditeur Markdown avec **aperçu en direct** (modes Édition / Divisé / Lecture), coloration du code, cases à cocher cliquables
 - `[[Liens wiki]]` avec **autocomplétion** (`[[` + nom), `[[Note|alias]]`, `[[Note#titre]]`, création au clic si la note n'existe pas
 - **Rétroliens**, `#tags`, recherche plein texte (Postgres `tsvector`), arborescence de dossiers
-- Renommer / déplacer une note **met à jour les liens** dans les autres notes
+- Renommer / déplacer une note **met à jour les liens** dans les autres notes ; **glisser-déposer** des notes et dossiers
+  dans l'explorateur, et import de fichiers `.md` / dossiers déposés depuis le système
+- **Coffre Obsidian** (Paramètres → Coffre Obsidian) : toutes les notes du dossier sont importées, puis le dossier reste
+  synchronisé dans les deux sens (création, modification, renommage, suppression vers `.trash/`)
 - **Live refresh** : chaque modification (depuis une autre machine, une autre fenêtre ou même un `UPDATE` SQL) apparaît instantanément
 - **Résolution de conflits façon GitHub** : fusion à 3 voies, les changements qui ne se chevauchent pas sont fusionnés automatiquement ; les autres s'affichent côte à côte avec un diff unifié et un choix par bloc
 - **Plugins** en [Rhai](https://rhai.rs) (scripting embarqué en Rust, sandboxé), activables et configurables, avec réglages synchronisés via la base
 - Palette de commandes (Ctrl+P), sélecteur de notes (Ctrl+O), graphe des liens (Ctrl+G, optionnel), thème clair/sombre
 - Interface calquée sur le thème par défaut d'Obsidian : ruban, explorateur avec chevrons et guides, onglets avec historique
-  (← →), fil d'Ariane, titre intégré éditable (renomme la note), colonne de lecture de 700 px, barre d'état flottante
+  (← →), fil d'Ariane, titre intégré éditable (renomme la note), colonne de lecture de 700 px ; aide, paramètres et état de la
+  synchronisation en bas du ruban
 - **Live preview** dans l'éditeur : la syntaxe markdown (`**`, `##`, `[[ ]]`…) n'apparaît que sur la ligne du curseur ;
   puces, cases à cocher cliquables, citations et blocs de code dessinés ; Ctrl+clic sur un lien pour l'ouvrir
 
@@ -130,6 +134,10 @@ Ouvrez-le avec l'icône du ruban ou **Ctrl+Shift+D**. Tout est stocké dans Post
 - Si la note a changé ailleurs pendant que vous écriviez : fusion à 3 voies (`src/merge.rs`) avec comme base la dernière version
   enregistrée connue. Rien n'est jamais écrasé sans votre accord ; si vous quittez avec un conflit non résolu, votre version
   est conservée dans une note `… (conflit <date>)`.
+- **Dossier du coffre** (facultatif) : toutes les 2 s, le worker compare le dossier lié à la base (`src/db/vault_sync.rs`)
+  et recopie les changements dans les deux sens. Si une note a changé des deux côtés entre deux passages, la base
+  l'emporte et le texte du disque est gardé dans une note `… (conflit disque)`. Les dossiers cachés (`.obsidian`,
+  `.trash`, `.git`) et les pièces jointes ne sont pas importés.
 
 ## Structure
 

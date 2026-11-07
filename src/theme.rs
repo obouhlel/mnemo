@@ -389,6 +389,30 @@ pub fn tree_row(ui: &mut Ui, label: &str, depth: usize, active: bool, folder: Op
     if elided { resp.on_hover_text(label) } else { resp }
 }
 
+/// Ligne compacte d'un panneau latéral (tags…) : libellé à gauche, compteur discret à droite,
+/// même hauteur et mêmes retraits que l'explorateur.
+pub fn count_row(ui: &mut Ui, label: &str, count: &str) -> Response {
+    let p = palette(ui.visuals().dark_mode);
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+    let row = rect.shrink2(vec2(2.0, 1.0));
+    if resp.hovered() {
+        ui.painter().rect_filled(row, 5.0, p.hover);
+    }
+    let size = ui.style().text_styles[&egui::TextStyle::Body].size - 1.0;
+    let color = if resp.hovered() { p.text } else { p.muted };
+    let c = ui.painter().layout_no_wrap(count.to_string(), FontId::proportional(size - 1.5), p.faint);
+    let cx = row.right() - 8.0 - c.size().x;
+    let mut job = LayoutJob::single_section(
+        label.to_string(),
+        TextFormat { font_id: FontId::proportional(size), color, ..Default::default() },
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width((cx - row.left() - 16.0).max(10.0));
+    let g = ui.painter().layout_job(job);
+    ui.painter().galley(egui::pos2(row.left() + 8.0, rect.center().y - g.size().y / 2.0), g, color);
+    ui.painter().galley(egui::pos2(cx, rect.center().y - c.size().y / 2.0), c, p.faint);
+    resp
+}
+
 /// A suggestion row in the quick switcher / command palette.
 pub fn suggestion_row(ui: &mut Ui, title: &str, detail: &str, selected: bool) -> Response {
     let p = palette(ui.visuals().dark_mode);

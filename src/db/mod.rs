@@ -21,10 +21,18 @@ mod board;
 mod connection;
 mod github_sync;
 mod notes;
+mod vault_sync;
 
 use board::*;
 use connection::*;
 use notes::*;
+pub use vault_sync::VaultStats;
+
+/// Notes Markdown d'un dossier du disque : (chemin relatif sans `.md`, fichier), sous-dossiers, entrées ignorées.
+pub fn walk_markdown(root: &std::path::Path) -> (Vec<(String, std::path::PathBuf)>, Vec<String>, usize) {
+    let (files, dirs, skipped) = vault_sync::walk(root);
+    (files.into_values().map(|f| (f.rel, f.abs)).collect(), dirs, skipped)
+}
 
 const SCHEMA: &str = include_str!("../schema.sql");
 
@@ -119,6 +127,11 @@ pub enum Cmd {
     },
     GithubSync(Uuid),
     GithubPublish(Uuid),
+    // ---- dossier du coffre sur le disque (voir vault_sync.rs)
+    /// Lie (ou délie avec `None`) un dossier de coffre ; la synchronisation repart de zéro.
+    SetVault(Option<std::path::PathBuf>),
+    /// Compare le dossier lié à la base et recopie les changements dans les deux sens.
+    VaultScan,
 }
 
 #[derive(Debug)]
@@ -163,6 +176,11 @@ pub enum Msg {
     GithubFailed(Option<Uuid>, String),
     GithubUser(Result<String, String>),
     Event(VaultEvent),
+    /// Passage de synchronisation du dossier du coffre (envoyé au premier passage et quand il y a eu des changements).
+    VaultSynced {
+        stats: VaultStats,
+        first: bool,
+    },
     /// The live connection was re-established: state must be re-fetched.
     Resync,
     Error(String),
@@ -196,8 +214,17 @@ pub fn spawn(
                 .build()
                 .expect("tokio runtime");
             rt.block_on(
-                Worker { client_id, out, notify, client: None, url: String::new(), listener: None, github: None }
-                    .run(rx),
+                Worker {
+                    client_id,
+                    out,
+                    notify,
+                    client: None,
+                    url: String::new(),
+                    listener: None,
+                    github: None,
+                    vault: None,
+                }
+                .run(rx),
             );
         })
         .expect("spawn db thread");
@@ -212,6 +239,7 @@ struct Worker {
     url: String,
     listener: Option<tokio::task::JoinHandle<()>>,
     github: Option<GhConfig>,
+    vault: Option<vault_sync::Vault>,
 }
 
 type Res<T> = Result<T, tokio_postgres::Error>;
@@ -226,6 +254,13 @@ impl Worker {
         while let Some(cmd) = rx.recv().await {
             if let Cmd::Connect(url) = cmd {
                 self.connect(url).await;
+                continue;
+            }
+            if let Cmd::SetVault(dir) = cmd {
+                self.vault = dir.map(vault_sync::Vault::new);
+                continue;
+            }
+            if matches!(cmd, Cmd::VaultScan) && self.vault.is_none() {
                 continue;
             }
             if let Cmd::SetGithub(cfg) = cmd {
@@ -272,7 +307,8 @@ impl Worker {
         let em = Emitter { out: self.out.clone(), notify: self.notify.clone() };
         match cmd {
             // traitées directement dans `run`
-            Cmd::Connect(_) | Cmd::SetGithub(_) | Cmd::GithubTest => unreachable!(),
+            Cmd::Connect(_) | Cmd::SetGithub(_) | Cmd::GithubTest | Cmd::SetVault(_) => unreachable!(),
+            Cmd::VaultScan => self.vault_scan(&em).await,
             Cmd::LoadBoard
             | Cmd::CreateProject { .. }
             | Cmd::UpdateProject { .. }

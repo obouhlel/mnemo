@@ -10,6 +10,7 @@ mod settings;
 mod sidebar;
 mod state;
 mod sync;
+mod vault;
 
 use commands::{CORE_COMMANDS, CoreCmd};
 use editor::{char_to_byte, editor_id};
@@ -96,6 +97,11 @@ pub struct MnemoApp {
     board: Board,
     dash: dashboard::DashState,
     github_input: String,
+    vault_input: String,
+    /// dossier de l'explorateur survolé pendant un glisser depuis le système
+    os_drop_target: Option<(String, f64)>,
+    vault_next_scan: f64,
+    vault_last: Option<(crate::db::VaultStats, chrono::DateTime<chrono::Local>)>,
 }
 
 /// Lowercase and strip French accents, for fuzzy matching ("theme" finds "Thème").
@@ -181,9 +187,14 @@ impl MnemoApp {
             board: Board::default(),
             dash: dashboard::DashState::default(),
             github_input: String::new(),
+            vault_input: String::new(),
+            os_drop_target: None,
+            vault_next_scan: 0.0,
+            vault_last: None,
             cfg,
         };
         app.css.obsidian_input = app.cfg.obsidian_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+        app.vault_input = app.cfg.vault_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         app.install_example_snippet();
         app.reload_css();
         if !app.cfg.database_url.trim().is_empty() {
@@ -252,6 +263,7 @@ impl eframe::App for MnemoApp {
         self.handle_messages(now);
         self.apply_plugin_actions(&ctx, now);
         self.tick_autosave(&ctx, now);
+        self.vault_tick(&ctx, now);
         if let Some(t) = self.search_due {
             if now >= t {
                 self.search_due = None;
@@ -306,7 +318,6 @@ impl eframe::App for MnemoApp {
                 .show(ui, |ui| self.right_sidebar(ui));
         }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(p.bg)).show(ui, |ui| self.editor_area(ui, now));
-        self.status_bar(&ctx);
 
         if self.graph.open {
             let mut open = true;
@@ -347,6 +358,15 @@ impl eframe::App for MnemoApp {
             } else if let Some(t) = url.strip_prefix(markdown::TAG_SCHEME) {
                 self.actions.push(UiAction::OpenTag(markdown::decode(t)));
             }
+        }
+        // fichiers / dossiers déposés depuis le système : dans le dossier survolé de l'explorateur, sinon à la racine
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| p.is_absolute()).collect()
+        });
+        if !dropped.is_empty() {
+            // la cible n'est valable que si le survol vient de se terminer (glisser annulé sinon)
+            let target = self.os_drop_target.take().filter(|t| now - t.1 < 0.5).map(|t| t.0).unwrap_or_default();
+            self.actions.push(UiAction::ImportFiles(dropped, target));
         }
         self.process_actions(&ctx, now);
         self.apply_plugin_actions(&ctx, now);

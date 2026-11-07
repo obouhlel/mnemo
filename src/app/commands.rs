@@ -121,6 +121,8 @@ impl MnemoApp {
                 UiAction::SetSort(o) => self.sort = o,
                 UiAction::Back => self.navigate(false),
                 UiAction::Forward => self.navigate(true),
+                UiAction::Move(item, target) => self.move_item(item, &target, now),
+                UiAction::ImportFiles(files, target) => self.import_dropped(files, &target, now),
             }
         }
     }

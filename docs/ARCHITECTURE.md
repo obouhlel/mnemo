@@ -35,6 +35,7 @@ Commencez par lire [Les deux threads](#les-deux-threads), le reste en découle.
 | `db/connection.rs` | ouverture (TLS si `sslmode=require`), migration sous verrou consultatif, boucle `LISTEN` avec backoff |
 | `db/notes.rs` | commandes notes / dossiers / recherche / graphe / plugins, réécriture des `[[liens]]` au renommage |
 | `db/board.rs` | commandes projets / tickets / rapports, chargement du tableau de bord |
+| `db/vault_sync.rs` | miroir d'un dossier de coffre (Obsidian) sur le disque : import, export, renommages, suppressions |
 | `db/github_sync.rs` | publication et synchronisation des tickets avec les issues GitHub |
 | `board.rs` | domaine du tableau de bord et **plan** de synchronisation GitHub (fonctions pures, testées) |
 | `github.rs` | client REST GitHub bloquant (appelé via `spawn_blocking`) |
@@ -56,13 +57,14 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `state.rs` | petits types d'état : onglets, dialogues, conflits, `UiAction`, `Needs`… |
 | `sync.rs` | connexion, traitement des `Msg`, événements live, rechargements groupés (`flush_needs`) |
 | `notes.rs` | ouverture / onglets / historique de navigation, sauvegarde automatique |
-| `layout.rs` | écran de connexion, barre d'onglets, en-tête de vue, barre d'état, notifications |
-| `sidebar.rs` | ruban, explorateur (arbre de dossiers), panneau de droite |
+| `layout.rs` | écran de connexion, barre d'onglets, en-tête de vue, indicateur de synchronisation, notifications |
+| `sidebar.rs` | ruban, explorateur (arbre de dossiers, glisser-déposer), panneau de droite |
 | `editor.rs` | éditeur, titre intégré, autocomplétion `[[`, aperçu |
 | `commands.rs` | `CoreCmd` (palette Ctrl+P), raccourcis, `UiAction`, actions des plugins |
 | `dialogs.rs` | palette, sélecteur de notes, saisie de nom, confirmations |
 | `conflict.rs` | fenêtre de résolution de conflit (choix par bloc, diff) |
 | `settings.rs` | fenêtre des paramètres (général, plugins, GitHub) |
+| `vault.rs` | onglet Coffre Obsidian, passage de synchronisation périodique, import des fichiers déposés, `settings_row` |
 | `appearance.rs` | onglet Apparence, chargement et surveillance des fichiers CSS |
 | `dashboard/` | tableau de bord : `mod.rs` (état, vue principale), `rows.rs`, `columns.rs`, `ticket.rs`, `actions.rs` |
 

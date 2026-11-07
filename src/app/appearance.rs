@@ -154,20 +154,7 @@ impl MnemoApp {
         let p = self.palette();
         let following = self.cfg.follow_appearance && self.cfg.obsidian_dir.is_some();
         let row = |ui: &mut egui::Ui, title: &str, desc: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width((ui.available_width() - 260.0).max(200.0));
-                    ui.label(RichText::new(title).color(p.text));
-                    if !desc.is_empty() {
-                        ui.add(egui::Label::new(RichText::new(desc).size(12.5).color(p.muted)).wrap());
-                    }
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| add(ui));
-            });
-            ui.add_space(6.0);
-            let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-            ui.painter().hline(r.x_range(), r.center().y, egui::Stroke::new(1.0, p.border));
-            ui.add_space(8.0);
+            super::vault::settings_row(ui, &p, title, desc, |ui| add(ui));
         };
         let mut changed = false;
         let mut dark = self.cfg.dark_mode;
