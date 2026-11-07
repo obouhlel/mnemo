@@ -91,6 +91,8 @@ Tout passe par le `Makefile` (`make` seul liste les cibles). Les binaires et paq
 
 Le workflow `.github/workflows/release.yml` appelle les mêmes cibles sur des machines natives, y compris macOS
 (Actions › Run workflow, ou en poussant un tag `v*`).
+Le workflow `.github/workflows/macos-smoke.yml` (lancé à la main) compile `Mnemo.app`, l'ouvre sur un vrai Mac avec
+PostgreSQL, vérifie qu'elle se connecte et joint une capture d'écran en artefact.
 
 ## Tableau de bord : projets, tickets et GitHub
 

@@ -1,0 +1,47 @@
+# Lance réellement Mnemo sur un Mac (runner GitHub) : compile Mnemo.app + .dmg comme pour une
+# livraison, démarre PostgreSQL, ouvre l'application, vérifie qu'elle tourne toujours au bout de
+# 20 s et prend une capture d'écran (artefact « mnemo-macos-smoke »).
+# Se lance à la main : Actions › macos-smoke › Run workflow.
+name: macos-smoke
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compilation (Mnemo.app universelle + .dmg)
+        run: make macos
+      - name: Vérifie la signature et le .dmg
+        run: |
+          codesign --verify --deep --verbose=2 dist/Mnemo.app
+          lipo -archs dist/Mnemo.app/Contents/MacOS/mnemo
+          hdiutil attach dist/Mnemo-macos.dmg -nobrowse -mountpoint /tmp/mnemo-dmg
+          test -x /tmp/mnemo-dmg/Mnemo.app/Contents/MacOS/mnemo
+          hdiutil detach /tmp/mnemo-dmg
+      - name: PostgreSQL
+        run: |
+          brew install postgresql@16
+          brew services start postgresql@16
+          for i in $(seq 1 30); do /opt/homebrew/opt/postgresql@16/bin/pg_isready -h localhost && break; sleep 1; done
+          /opt/homebrew/opt/postgresql@16/bin/createdb -h localhost vault
+      - name: Lance l'application
+        env:
+          MNEMO_DATABASE_URL: postgres://runner@localhost:5432/vault
+          MNEMO_CONFIG_DIR: ${{ runner.temp }}/mnemo-config
+        run: |
+          mkdir -p smoke
+          dist/Mnemo.app/Contents/MacOS/mnemo > smoke/mnemo.log 2>&1 &
+          PID=$!
+          sleep 20
+          screencapture -x smoke/mnemo.png || true
+          if ! kill -0 $PID; then echo "Mnemo s'est arrêté :"; cat smoke/mnemo.log; exit 1; fi
+          # la connexion a créé le schéma et la note de bienvenue
+          /opt/homebrew/opt/postgresql@16/bin/psql -h localhost -d vault -Atc "select path from notes" | tee smoke/notes.txt
+          grep -q Bienvenue smoke/notes.txt
+          kill $PID
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: mnemo-macos-smoke, path: smoke/ }
