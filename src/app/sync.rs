@@ -27,6 +27,7 @@ impl MnemoApp {
                         ..Default::default()
                     };
                     self.send_github_config();
+                    self.send_vault();
                 }
                 Msg::ConnectionFailed(e) => self.conn = ConnState::Disconnected(Some(e)),
                 Msg::Live(v) => self.live = v,
@@ -60,7 +61,7 @@ impl MnemoApp {
                                 .map(|n| n.id);
                             if let Some(id) = target {
                                 self.open_id(id);
-                            } else if self.notes.is_empty() {
+                            } else if self.notes.is_empty() && self.cfg.vault_dir.is_none() {
                                 self.db.send(Cmd::Create {
                                     path: "Bienvenue".into(),
                                     content: WELCOME.into(),
@@ -159,6 +160,7 @@ impl MnemoApp {
                     self.notice(format!("GitHub : {msg}"), true, now);
                 }
                 Msg::GithubUser(r) => self.dash.github_user = Some(r),
+                Msg::VaultSynced { stats, first } => self.on_vault_synced(stats, first, now),
                 Msg::Error(e) => self.notice(e, true, now),
             }
         }

@@ -1,6 +1,7 @@
 //! Fenêtre des paramètres et ses onglets Connexion, Plugins, GitHub et À propos
 //! (l'onglet Apparence est dans appearance.rs).
 
+use super::vault::settings_row;
 use super::*;
 
 impl MnemoApp {
@@ -34,10 +35,14 @@ impl MnemoApp {
                         ui.set_min_height(size.y - 28.0);
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
-                            ui.label(RichText::new("Options").size(12.0).color(p.faint).strong());
+                            // aligné sur le texte des lignes ci-dessous
+                            egui::Frame::new()
+                                .inner_margin(egui::Margin { left: 8, ..Default::default() })
+                                .show(ui, |ui| ui.label(RichText::new("Options").size(12.0).color(p.faint).strong()));
                             ui.add_space(4.0);
                             for (t, label) in [
                                 (SettingsTab::Connection, "Base de données"),
+                                (SettingsTab::Vault, "Coffre Obsidian"),
                                 (SettingsTab::Appearance, "Apparence"),
                                 (SettingsTab::Github, "GitHub"),
                                 (SettingsTab::About, "À propos"),
@@ -47,7 +52,10 @@ impl MnemoApp {
                                 }
                             }
                             ui.add_space(14.0);
-                            ui.label(RichText::new("Plugins").size(12.0).color(p.faint).strong());
+                            // aligné sur le texte des lignes ci-dessous
+                            egui::Frame::new()
+                                .inner_margin(egui::Margin { left: 8, ..Default::default() })
+                                .show(ui, |ui| ui.label(RichText::new("Plugins").size(12.0).color(p.faint).strong()));
                             ui.add_space(4.0);
                             if theme::tree_row(
                                 ui,
@@ -82,8 +90,12 @@ impl MnemoApp {
                             ui,
                             |ui| {
                                 ui.set_max_width(size.x - 220.0 - 56.0);
+                                // la fenêtre a le fond de l'éditeur : champs sur le fond des panneaux pour rester visibles
+                                ui.visuals_mut().text_edit_bg_color = Some(p.bg2);
+                                ui.visuals_mut().extreme_bg_color = p.bg2;
                                 let title = match self.settings_tab {
                                     SettingsTab::Connection => "Base de données",
+                                    SettingsTab::Vault => "Coffre Obsidian",
                                     SettingsTab::Appearance => "Apparence",
                                     SettingsTab::Plugins => "Plugins",
                                     SettingsTab::Github => "GitHub",
@@ -108,29 +120,51 @@ impl MnemoApp {
         {
             match self.settings_tab {
                 SettingsTab::Connection => {
-                    ui.label("URL PostgreSQL");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.url_input)
-                                .password(!self.show_password)
-                                .desired_width(420.0),
-                        );
-                        ui.checkbox(&mut self.show_password, "Afficher");
-                    });
-                    if ui.button("Se (re)connecter").clicked() {
+                    let p = self.palette();
+                    let mut reconnect = false;
+                    let mut url = std::mem::take(&mut self.url_input);
+                    let mut show = self.show_password;
+                    settings_row(
+                        ui,
+                        &p,
+                        "URL PostgreSQL",
+                        "Ajoutez ?sslmode=require pour un serveur distant. MNEMO_DATABASE_URL a priorité sur ce réglage.",
+                        |ui| {
+                            if ui.button("Se reconnecter").clicked() {
+                                reconnect = true;
+                            }
+                            ui.checkbox(&mut show, "Afficher");
+                            ui.add(egui::TextEdit::singleline(&mut url).password(!show).desired_width(240.0));
+                        },
+                    );
+                    self.url_input = url;
+                    self.show_password = show;
+                    if reconnect {
                         self.connect();
                     }
-                    ui.add_space(8.0);
-                    ui.label(format!("Connecté à : {}", redact_url(&self.cfg.database_url)));
-                    ui.label(format!("Live (LISTEN/NOTIFY) : {}", if self.live { "actif" } else { "inactif" }));
-                    ui.weak(format!("Identifiant de cette instance : {}", self.client_id));
-                    ui.add_space(8.0);
-                    ui.weak(format!(
-                        "Fichier de configuration : {}",
-                        crate::config::config_dir().join("config.toml").display()
-                    ));
-                    ui.weak("La variable d'environnement MNEMO_DATABASE_URL a priorité sur ce réglage.");
+                    let live = if self.live { "actif" } else { "en reconnexion" };
+                    settings_row(
+                        ui,
+                        &p,
+                        "État",
+                        &format!("Connecté à {}", redact_url(&self.cfg.database_url)),
+                        |ui| {
+                            ui.label(RichText::new(format!("Temps réel : {live}")).color(p.muted));
+                        },
+                    );
+                    settings_row(
+                        ui,
+                        &p,
+                        "Cette instance",
+                        &format!(
+                            "Identifiant : {}\nConfiguration : {}",
+                            self.client_id,
+                            crate::config::config_dir().join("config.toml").display()
+                        ),
+                        |_| {},
+                    );
                 }
+                SettingsTab::Vault => self.vault_settings(ui, now),
                 SettingsTab::Appearance => self.appearance_settings(ui, now),
                 SettingsTab::Plugins => self.plugins_settings(ui, now),
                 SettingsTab::Github => self.github_settings(ui),

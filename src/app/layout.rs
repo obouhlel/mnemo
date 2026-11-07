@@ -134,6 +134,9 @@ impl MnemoApp {
         }
         job.append(basename(&path), 0.0, fmt(p.text));
         let galley = ui.painter().layout_job(job);
+        let galley_w = galley.size().x;
+        let conflict = n.conflict.is_some();
+        let flash = ui.input(|i| i.time) - n.remote_flash < 3.0;
         let crumb = egui::Rect::from_center_size(rect.center(), galley.size());
         ui.painter().with_clip_rect(rect.shrink2(egui::vec2(90.0, 0.0))).galley(crumb.min, galley, p.text);
         let crumb_resp = ui.interact(crumb, egui::Id::unique(("crumb", id)), egui::Sense::click());
@@ -192,6 +195,26 @@ impl MnemoApp {
                 self.cfg.view_mode = ViewMode::Edit;
                 self.cfg.save();
             }
+            // infos discrètes (plugins, conflit, mise à jour distante), à droite du fil d'Ariane
+            let room = ui.available_width() - (rect.width() / 2.0 + galley_w / 2.0) - 16.0;
+            if room > 40.0 {
+                ui.add_space(6.0);
+                ui.scope(|ui| {
+                    ui.set_max_width(room);
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    let small = |t: &str, c: Color32| egui::Label::new(RichText::new(t).size(12.0).color(c)).truncate();
+                    if conflict {
+                        ui.add(small("Conflit à résoudre", Color32::from_rgb(0xe9, 0x97, 0x3f)));
+                    }
+                    if flash {
+                        ui.add(small("mis à jour à distance", p.accent));
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+                    }
+                    for st in self.plugin_status.iter().rev() {
+                        ui.add(small(st, p.faint));
+                    }
+                });
+            }
         });
     }
 
@@ -218,67 +241,39 @@ impl MnemoApp {
         });
     }
 
-    /// Small floating status bar in the bottom-right corner.
-    pub(super) fn status_bar(&mut self, ctx: &egui::Context) {
+    /// Indicateur de synchronisation (bas du ruban) : couleur selon l'état, détails au survol.
+    pub(super) fn sync_indicator(&mut self, ui: &mut egui::Ui) {
         let p = self.palette();
-        egui::Area::new(egui::Id::unique("status-bar"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(0.0, 0.0))
-            .order(egui::Order::Middle)
-            .interactable(true)
-            .show(ctx, |ui| {
-                egui::Frame::new()
-                    .fill(p.bg2)
-                    .stroke(egui::Stroke::new(1.0, p.border))
-                    .corner_radius(egui::CornerRadius { nw: 8, ne: 0, sw: 0, se: 0 })
-                    .inner_margin(egui::Margin { left: 10, right: 10, top: 3, bottom: 4 })
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 14.0;
-                            let small = |t: String| RichText::new(t).size(12.0).color(p.muted);
-                            if let Some(n) = &self.open {
-                                if n.conflict.is_some() {
-                                    ui.label(
-                                        RichText::new("Conflit à résoudre")
-                                            .size(12.0)
-                                            .color(Color32::from_rgb(0xe9, 0x97, 0x3f)),
-                                    );
-                                }
-                                ui.label(small(format!(
-                                    "{} rétrolien{}",
-                                    self.backlinks.len(),
-                                    if self.backlinks.len() > 1 { "s" } else { "" }
-                                )));
-                                for s in &self.plugin_status {
-                                    ui.label(small(s.clone()));
-                                }
-                                let now = ui.input(|i| i.time);
-                                if now - n.remote_flash < 3.0 {
-                                    ui.label(RichText::new("mis à jour à distance").size(12.0).color(p.accent));
-                                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
-                                }
-                            }
-                            let (ic, color, tip) = match (&self.conn, self.live, self.open.as_ref().map(|n| n.dirty()))
-                            {
-                                (ConnState::Connected, true, Some(true)) => {
-                                    (icon::SYNC, p.faint, "Enregistrement…".to_string())
-                                }
-                                (ConnState::Connected, true, _) => (
-                                    icon::SYNC,
-                                    Color32::from_rgb(0x44, 0xcf, 0x6e),
-                                    "Synchronisé en direct".to_string(),
-                                ),
-                                (ConnState::Connected, false, _) => (
-                                    icon::SYNC,
-                                    Color32::from_rgb(0xe9, 0x97, 0x3f),
-                                    "Connecté, flux live en reconnexion…".to_string(),
-                                ),
-                                _ => (icon::OFFLINE, Color32::from_rgb(0xfb, 0x46, 0x4c), "Hors ligne".to_string()),
-                            };
-                            ui.label(theme::icon_text(ic, 13.0).color(color))
-                                .on_hover_text(format!("{tip}\n{}", redact_url(&self.cfg.database_url)));
-                        });
-                    });
-            });
+        let dirty = self.open.as_ref().is_some_and(|n| n.dirty());
+        let (ic, color, mut tip) = match (&self.conn, self.live) {
+            (ConnState::Connected, true) if dirty => (icon::SYNC, p.faint, "Enregistrement…".to_string()),
+            (ConnState::Connected, true) => {
+                (icon::SYNC, Color32::from_rgb(0x44, 0xcf, 0x6e), "Synchronisé en direct".to_string())
+            }
+            (ConnState::Connected, false) => {
+                (icon::SYNC, Color32::from_rgb(0xe9, 0x97, 0x3f), "Connecté, flux live en reconnexion…".to_string())
+            }
+            _ => (icon::OFFLINE, Color32::from_rgb(0xfb, 0x46, 0x4c), "Hors ligne".to_string()),
+        };
+        tip.push_str(&format!("\nBase : {}", redact_url(&self.cfg.database_url)));
+        if let Some(d) = &self.cfg.vault_dir {
+            tip.push_str(&format!("\nCoffre : {}", d.display()));
+        }
+        let (rect, r) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
+        if r.hovered() {
+            ui.painter().rect_filled(rect, 5.0, p.hover);
+        }
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            ic,
+            FontId::new(15.0, theme::icon_family()),
+            color,
+        );
+        if r.on_hover_text(tip).clicked() {
+            self.settings_tab = SettingsTab::Connection;
+            self.show_settings = true;
+        }
     }
 
     pub(super) fn notices_ui(&mut self, ctx: &egui::Context, now: f64) {

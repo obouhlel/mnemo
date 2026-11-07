@@ -24,6 +24,8 @@ pub struct Config {
     pub plugins_dir: Option<PathBuf>,
     /// `.obsidian` folder of an existing vault, to reuse its themes / snippets / appearance.json
     pub obsidian_dir: Option<PathBuf>,
+    /// Vault folder on disk mirrored with the database (Obsidian vault): imported, then kept in sync both ways
+    pub vault_dir: Option<PathBuf>,
     /// Follow that vault's appearance.json (theme, snippets, font size, accent, light/dark)
     pub follow_appearance: bool,
     /// Selected CSS theme (by name) when not following appearance.json
@@ -50,6 +52,7 @@ impl Default for Config {
             show_right: true,
             plugins_dir: None,
             obsidian_dir: None,
+            vault_dir: None,
             follow_appearance: true,
             css_theme: None,
             css_snippets: vec![],
