@@ -38,7 +38,7 @@ impl MnemoApp {
                         plugins: true,
                         backlinks: true,
                         tags: true,
-                        graph: self.graph.open,
+                        graph: self.graph_shown(),
                         board: true,
                     };
                     if let Some(n) = &self.open {
@@ -178,7 +178,7 @@ impl MnemoApp {
                 self.need.board = true; // report paths
                 self.need.backlinks = true;
                 self.need.tags = true;
-                self.need.graph |= self.graph.open;
+                self.need.graph |= self.graph_shown();
                 if !self.search_q.trim().is_empty() {
                     self.search_due.get_or_insert(now + 0.3);
                 }

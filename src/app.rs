@@ -325,21 +325,6 @@ impl eframe::App for MnemoApp {
             ctx.memory_mut(|m| m.request_focus(id));
         }
 
-        if self.graph.open {
-            let mut open = true;
-            let current = self.open.as_ref().map(|n| n.id.to_string());
-            let mut clicked = None;
-            egui::Window::new("Graphe").open(&mut open).default_size([720.0, 520.0]).show(&ctx, |ui| {
-                if !self.graph.loaded {
-                    ui.spinner();
-                }
-                clicked = self.graph.ui(ui, current.as_deref());
-            });
-            self.graph.open = open;
-            if let Some(c) = clicked {
-                self.actions.push(UiAction::OpenLink(c));
-            }
-        }
         if self.show_settings {
             self.settings_window(&ctx, now);
         }

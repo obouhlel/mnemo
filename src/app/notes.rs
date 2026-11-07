@@ -9,7 +9,8 @@ impl MnemoApp {
     pub(super) fn set_open(&mut self, note: Note, now: f64) {
         self.flush_save();
         let mut mode = std::mem::replace(&mut self.open_mode, OpenMode::Replace);
-        if mode == OpenMode::Replace && self.tabs[self.active_tab].dashboard {
+        let t = &self.tabs[self.active_tab];
+        if mode == OpenMode::Replace && (t.dashboard || t.graph) {
             mode = OpenMode::NewTab;
         }
         match mode {
@@ -136,6 +137,12 @@ impl MnemoApp {
             self.need.board = true;
             return;
         }
+        if self.tabs[self.active_tab].graph {
+            self.flush_save();
+            self.open = None;
+            self.need.graph = true;
+            return;
+        }
         match self.tabs[self.active_tab].note {
             Some(id) => self.open_in(id, OpenMode::History),
             None => {
@@ -184,9 +191,31 @@ impl MnemoApp {
         }
     }
 
+    /// Un onglet « Graphe » est ouvert (il faut alors garder les données du graphe à jour).
+    pub(super) fn graph_shown(&self) -> bool {
+        self.tabs.iter().any(|t| t.graph)
+    }
+
+    /// Ouvre la vue graphe dans un onglet (réutilise l'onglet existant s'il y en a un).
+    pub(super) fn open_graph(&mut self) {
+        self.flush_save();
+        match self.tabs.iter().position(|t| t.graph) {
+            Some(i) => self.active_tab = i,
+            None => {
+                self.tabs.push(Tab { graph: true, ..Default::default() });
+                self.active_tab = self.tabs.len() - 1;
+            }
+        }
+        self.open = None;
+        self.need.graph = true;
+    }
+
     pub(super) fn tab_title(&self, t: &Tab) -> String {
         if t.dashboard {
             return "Tableau de bord".into();
+        }
+        if t.graph {
+            return "Graphe".into();
         }
         match t.note {
             None => "Nouvel onglet".into(),

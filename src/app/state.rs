@@ -49,6 +49,8 @@ pub(super) struct OpenNote {
 pub(super) struct Tab {
     /// the dashboard tab (projects / tickets) instead of a note
     pub(super) dashboard: bool,
+    /// la vue graphe des liens
+    pub(super) graph: bool,
     pub(super) note: Option<Uuid>,
     pub(super) back: Vec<Uuid>,
     pub(super) fwd: Vec<Uuid>,

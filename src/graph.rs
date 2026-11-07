@@ -6,7 +6,6 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct GraphView {
-    pub open: bool,
     ids: Vec<String>,
     labels: Vec<String>,
     paths: Vec<String>,

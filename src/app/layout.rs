@@ -219,6 +219,37 @@ impl MnemoApp {
         });
     }
 
+    /// Onglet « Graphe » : en-tête comme une note, puis la vue sur toute la place restante.
+    pub(super) fn graph_ui(&mut self, ui: &mut egui::Ui) {
+        let p = self.palette();
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Graphe des liens",
+            FontId::proportional(14.0),
+            p.text,
+        );
+        // la note mise en évidence : la dernière ouverte
+        let current = self
+            .cfg
+            .last_note
+            .as_ref()
+            .and_then(|path| self.notes.iter().find(|n| &n.path == path))
+            .map(|n| n.id.to_string());
+        let mut clicked = None;
+        egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 16 }).show(ui, |ui| {
+            if !self.graph.loaded {
+                ui.spinner();
+                return;
+            }
+            clicked = self.graph.ui(ui, current.as_deref());
+        });
+        if let Some(c) = clicked {
+            self.actions.push(UiAction::OpenLink(c));
+        }
+    }
+
     pub(super) fn empty_tab(&mut self, ui: &mut egui::Ui) {
         let p = self.palette();
         ui.vertical_centered(|ui| {

@@ -155,12 +155,7 @@ impl MnemoApp {
                     self.cfg.save();
                 }
             }
-            CoreCmd::Graph => {
-                self.graph.open = !self.graph.open;
-                if self.graph.open {
-                    self.need.graph = true;
-                }
-            }
+            CoreCmd::Graph => self.open_graph(),
             CoreCmd::ToggleMode => {
                 self.cfg.view_mode =
                     if self.cfg.view_mode == ViewMode::Preview { ViewMode::Edit } else { ViewMode::Preview };
@@ -229,7 +224,7 @@ impl MnemoApp {
                     plugins: true,
                     backlinks: true,
                     tags: true,
-                    graph: self.graph.open,
+                    graph: self.graph_shown(),
                     board: true,
                 };
                 if let Some(n) = &self.open {
