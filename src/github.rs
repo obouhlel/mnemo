@@ -1,4 +1,4 @@
-//! Minimal GitHub REST client (issues), blocking: called through `spawn_blocking` from the DB worker.
+//! Minimal GitHub REST client (issues, pull requests, labels, repositories), blocking: called through `spawn_blocking` from the DB worker.
 
 use crate::board::RemoteIssue;
 use serde_json::{Value, json};
@@ -89,11 +89,13 @@ pub fn normalize_repo(repo: &str) -> Result<String, String> {
     valid_repo(repo).map(str::to_string)
 }
 
+/// Issue or pull request (the issues API returns both; a PR carries a `pull_request` object).
 fn parse_issue(v: &Value) -> Option<RemoteIssue> {
-    if v.get("pull_request").is_some() {
-        return None; // the issues API also returns pull requests
-    }
+    let pr = v.get("pull_request");
     Some(RemoteIssue {
+        pull: pr.is_some(),
+        draft: v.get("draft").and_then(|d| d.as_bool()).unwrap_or(false),
+        merged: pr.and_then(|p| p.get("merged_at")).is_some_and(|m| !m.is_null()),
         number: v.get("number")?.as_i64()? as i32,
         title: v.get("title")?.as_str()?.to_string(),
         body: v.get("body").and_then(|b| b.as_str()).unwrap_or("").to_string(),
@@ -119,7 +121,7 @@ pub fn whoami(cfg: &GhConfig) -> Result<String, String> {
     Ok(v.get("login").and_then(|l| l.as_str()).unwrap_or("?").to_string())
 }
 
-/// All issues (open and closed, pull requests excluded), up to 1000.
+/// All issues and pull requests (open and closed), up to 1000.
 pub fn list_issues(cfg: &GhConfig, repo: &str) -> Result<Vec<RemoteIssue>, String> {
     let repo = valid_repo(repo)?;
     let mut out = vec![];
@@ -134,6 +136,54 @@ pub fn list_issues(cfg: &GhConfig, repo: &str) -> Result<Vec<RemoteIssue>, Strin
             .map_err(|e| e.to_string())?;
         let arr = v.as_array().cloned().unwrap_or_default();
         out.extend(arr.iter().filter_map(parse_issue));
+        if arr.len() < 100 {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// Labels of a repository: (name, colour as "rrggbb").
+pub fn list_labels(cfg: &GhConfig, repo: &str) -> Result<Vec<(String, String)>, String> {
+    let repo = valid_repo(repo)?;
+    let mut out = vec![];
+    for page in 1..=5 {
+        let v: Value = request(cfg, "GET", &format!("/repos/{repo}/labels"))
+            .query("per_page", "100")
+            .query("page", &page.to_string())
+            .call()
+            .map_err(error)?
+            .into_json()
+            .map_err(|e| e.to_string())?;
+        let arr = v.as_array().cloned().unwrap_or_default();
+        out.extend(arr.iter().filter_map(|l| {
+            Some((
+                l.get("name")?.as_str()?.to_string(),
+                l.get("color").and_then(|c| c.as_str()).unwrap_or("").to_string(),
+            ))
+        }));
+        if arr.len() < 100 {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// Repositories the token can see ("owner/name"), most recently updated first.
+pub fn list_repos(cfg: &GhConfig) -> Result<Vec<String>, String> {
+    let mut out = vec![];
+    for page in 1..=5 {
+        let v: Value = request(cfg, "GET", "/user/repos")
+            .query("per_page", "100")
+            .query("page", &page.to_string())
+            .query("sort", "updated")
+            .query("affiliation", "owner,collaborator,organization_member")
+            .call()
+            .map_err(error)?
+            .into_json()
+            .map_err(|e| e.to_string())?;
+        let arr = v.as_array().cloned().unwrap_or_default();
+        out.extend(arr.iter().filter_map(|r| r.get("full_name")?.as_str().map(str::to_string)));
         if arr.len() < 100 {
             break;
         }
@@ -163,17 +213,17 @@ pub fn update_issue(
     number: i32,
     title: &str,
     body: &str,
-    open: bool,
+    open: Option<bool>,
     labels: &[String],
 ) -> Result<RemoteIssue, String> {
     let repo = valid_repo(repo)?;
+    let mut patch = json!({ "title": title, "body": body, "labels": labels });
+    // None : on ne touche pas à l'état (pull requests : ne jamais fermer une PR depuis Mnemo)
+    if let Some(open) = open {
+        patch["state"] = json!(if open { "open" } else { "closed" });
+    }
     let v: Value = request(cfg, "PATCH", &format!("/repos/{repo}/issues/{number}"))
-        .send_json(json!({
-            "title": title,
-            "body": body,
-            "state": if open { "open" } else { "closed" },
-            "labels": labels,
-        }))
+        .send_json(patch)
         .map_err(error)?
         .into_json()
         .map_err(|e| e.to_string())?;
@@ -207,7 +257,12 @@ mod tests {
         let v = json!({"number": 3, "title": "T", "body": null, "state": "closed", "labels": [{"name": "bug"}],
                        "html_url": "u", "updated_at": "2024-01-02T03:04:05Z"});
         let i = parse_issue(&v).unwrap();
-        assert_eq!((i.number, i.open, i.labels.len(), i.body.as_str()), (3, false, 1, ""));
-        assert!(parse_issue(&json!({"number": 1, "title": "PR", "pull_request": {}})).is_none());
+        assert_eq!((i.number, i.open, i.labels.len(), i.body.as_str(), i.pull), (3, false, 1, "", false));
+        let pr = parse_issue(&json!({"number": 1, "title": "PR", "state": "closed", "pull_request": {"merged_at": "2024-01-02T03:04:05Z"}})).unwrap();
+        assert!(pr.pull && pr.merged && !pr.draft);
+        let draft =
+            parse_issue(&json!({"number": 2, "title": "D", "draft": true, "pull_request": {"merged_at": null}}))
+                .unwrap();
+        assert!(draft.pull && draft.draft && !draft.merged);
     }
 }

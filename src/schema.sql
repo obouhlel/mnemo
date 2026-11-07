@@ -140,6 +140,9 @@ CREATE TABLE IF NOT EXISTS tickets (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS tickets_number_uniq ON tickets (project_id, number);
 CREATE UNIQUE INDEX IF NOT EXISTS tickets_github_uniq ON tickets (project_id, github_number) WHERE github_number IS NOT NULL;
+-- Ajouts ultérieurs (idempotents) : ticket qui suit une pull request, labels du dépôt (nom + couleur)
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS github_pr boolean NOT NULL DEFAULT false;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS github_labels jsonb NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS ticket_reports (
   ticket_id uuid NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,

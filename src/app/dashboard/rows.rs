@@ -61,19 +61,34 @@ fn group_row(
     let cw = count.size().x;
     painter.galley(egui::pos2(x, cy - count.size().y / 2.0), count, p.faint);
     x += cw + 10.0;
-    if let Some(r) = repo {
+    // mini barre de progression à droite, seulement s'il reste la place après le texte
+    let bar_w = 110.0;
+    let bar_left = rect.right() - bar_w - 20.0;
+    let show_bar = bar_left > x + 8.0;
+    let text_right = if show_bar { bar_left - 12.0 } else { rect.right() - 8.0 };
+    if let Some(r) = repo
+        && x + 40.0 < text_right
+    {
+        // dépôt GitHub, tronqué si la place manque
+        let clip = egui::Rect::from_x_y_ranges(x..=text_right, rect.y_range());
         let g = painter.layout_no_wrap("\u{e0e9}".to_string(), FontId::new(12.0, theme::icon_family()), p.faint);
-        painter.galley(egui::pos2(x, cy - g.size().y / 2.0), g, p.faint);
-        let g2 = painter.layout_no_wrap(r.to_string(), FontId::proportional(12.0), p.faint);
-        painter.galley(egui::pos2(x + 16.0, cy - g2.size().y / 2.0), g2, p.faint);
+        painter.with_clip_rect(clip).galley(egui::pos2(x, cy - g.size().y / 2.0), g, p.faint);
+        let mut job = LayoutJob::single_section(
+            r.to_string(),
+            TextFormat { font_id: FontId::proportional(12.0), color: p.faint, ..Default::default() },
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - x - 16.0).max(10.0));
+        let g2 = painter.layout_job(job);
+        painter.with_clip_rect(clip).galley(egui::pos2(x + 16.0, cy - g2.size().y / 2.0), g2, p.faint);
     }
-    // mini progress bar on the right
-    let bar = egui::Rect::from_min_size(egui::pos2(rect.right() - 130.0, cy - 3.0), egui::vec2(110.0, 6.0));
-    painter.rect_filled(bar, 3.0, p.border);
-    if total > 0 && done > 0 {
-        let mut r = bar;
-        r.set_width(bar.width() * done as f32 / total as f32);
-        painter.rect_filled(r, 3.0, if done == total { Status::Done.color() } else { p.accent });
+    if show_bar {
+        let bar = egui::Rect::from_min_size(egui::pos2(bar_left, cy - 3.0), egui::vec2(bar_w, 6.0));
+        painter.rect_filled(bar, 3.0, p.border);
+        if total > 0 && done > 0 {
+            let mut r = bar;
+            r.set_width(bar.width() * done as f32 / total as f32);
+            painter.rect_filled(r, 3.0, if done == total { Status::Done.color() } else { p.accent });
+        }
     }
     resp
 }
@@ -124,7 +139,9 @@ impl MnemoApp {
                     custom.sort();
                     custom.dedup();
                     groups.extend(custom);
-                    if groups.is_empty() {
+                    // groupes vides proposés pour ajouter vite un ticket : pas pour un projet GitHub,
+                    // dont les tags sont les labels du dépôt
+                    if groups.is_empty() && pr.github_labels.is_empty() {
                         groups.extend(["Feature".to_string(), "Bug".to_string()]);
                     }
                     let untagged: Vec<&Ticket> = tickets.iter().copied().filter(|t| t.tags.is_empty()).collect();
@@ -266,9 +283,10 @@ impl MnemoApp {
         };
         meta(t.status.label().to_string(), t.status.color(), None);
         if let Some(n) = t.github_number {
-            let closed = t.github_state.as_deref() == Some("closed");
-            meta(format!("#{n}"), if closed { p.faint } else { Status::Done.color() }, None);
-            meta("\u{e0e9}".into(), p.faint, Some(theme::icon_family()));
+            let (_, color) = super::ticket::github_state_label(t.github_state.as_deref(), t.github_pr);
+            meta(format!("{}#{n}", if t.github_pr { "PR " } else { "" }), color, None);
+            // icône git-pull-request pour une PR, github pour une issue
+            meta(if t.github_pr { "\u{e0e8}" } else { "\u{e0e9}" }.into(), p.faint, Some(theme::icon_family()));
         }
         if reports > 0 {
             meta(reports.to_string(), p.muted, None);

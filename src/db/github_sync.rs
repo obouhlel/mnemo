@@ -31,6 +31,18 @@ impl Worker {
         Ok(())
     }
 
+    /// Synchronise un projet qu'on vient de lier à un dépôt (si un token est configuré).
+    pub(super) async fn import_now(&mut self, project: Uuid, em: &Emitter) -> Res<()> {
+        if self.github.is_none() {
+            return Ok(());
+        }
+        match self.sync_project(project).await? {
+            Ok(summary) => em.emit(Msg::GithubDone(Some(project), summary)),
+            Err(e) => em.emit(Msg::GithubFailed(Some(project), e)),
+        }
+        Ok(())
+    }
+
     pub(super) async fn ticket_with_repo(&self, id: Uuid) -> Res<Option<(Ticket, String)>> {
         let row = self
             .conn()
@@ -43,7 +55,7 @@ impl Worker {
         let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
         t.execute(
             "UPDATE tickets SET github_number = $2, github_url = $3, github_state = $4, github_synced_at = now() WHERE id = $1",
-            &[&id, &issue.number, &issue.url, &if issue.open { "open" } else { "closed" }],
+            &[&id, &issue.number, &issue.url, &remote_state(issue)],
         )
         .await?;
         t.commit().await
@@ -56,8 +68,10 @@ impl Worker {
         let Some(number) = tk.github_number else { return Ok(Err("Ticket non publié sur GitHub".into())) };
         let cfg = self.github.clone().expect("github");
         let labels: Vec<String> = tk.tags.iter().map(|t| tag_to_label(t)).collect();
+        // une pull request n'est jamais fermée depuis Mnemo (on n'envoie que titre, description et labels)
+        let state = if tk.github_pr { None } else { Some(tk.status != Status::Done) };
         let r = tokio::task::spawn_blocking(move || {
-            github::update_issue(&cfg, &repo, number, &tk.title, &tk.body, tk.status != Status::Done, &labels)
+            github::update_issue(&cfg, &repo, number, &tk.title, &tk.body, state, &labels)
         })
         .await
         .unwrap_or_else(|e| Err(e.to_string()));
@@ -83,7 +97,7 @@ impl Worker {
         let r = tokio::task::spawn_blocking(move || {
             let issue = github::create_issue(&cfg, &repo, &tk.title, &tk.body, &labels)?;
             if done {
-                github::update_issue(&cfg, &repo, issue.number, &tk.title, &tk.body, false, &labels)
+                github::update_issue(&cfg, &repo, issue.number, &tk.title, &tk.body, Some(false), &labels)
             } else {
                 Ok(issue)
             }
@@ -109,13 +123,26 @@ impl Worker {
         let Some(repo) = repo else { return Ok(Err(format!("Le projet « {name} » n'a pas de dépôt GitHub"))) };
         let cfg = self.github.clone().expect("github");
         let r2 = repo.clone();
-        let issues = match tokio::task::spawn_blocking(move || github::list_issues(&cfg, &r2))
-            .await
-            .unwrap_or_else(|e| Err(e.to_string()))
-        {
-            Ok(i) => i,
+        let fetched = tokio::task::spawn_blocking(move || {
+            Ok::<_, String>((github::list_issues(&cfg, &r2)?, github::list_labels(&cfg, &r2)?))
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+        let (issues, labels) = match fetched {
+            Ok(x) => x,
             Err(e) => return Ok(Err(e)),
         };
+        // labels du dépôt (nom + couleur) : les tags reprennent les mêmes, avec la même couleur
+        let labels_json = serde_json::Value::from(
+            labels.iter().map(|(n, c)| serde_json::json!([n, c])).collect::<Vec<serde_json::Value>>(),
+        );
+        self.conn()
+            .execute(
+                "UPDATE projects SET github_labels = $2 WHERE id = $1 AND github_labels IS DISTINCT FROM $2",
+                &[&project, &labels_json],
+            )
+            .await?;
+        let prs = issues.iter().filter(|i| i.pull).count();
         let rows = self
             .conn()
             .query(&format!("SELECT {TICKET_COLS} FROM tickets t WHERE t.project_id = $1"), &[&project])
@@ -127,12 +154,12 @@ impl Worker {
             match action {
                 SyncAction::Import(issue) => {
                     let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
-                    let status = if issue.open { Status::Todo } else { Status::Done };
+                    let status = status_from_remote(Status::Todo, &issue);
                     t.execute(
-                        "INSERT INTO tickets (project_id, title, body, tags, status, github_number, github_url, github_state, github_synced_at, position)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), COALESCE((SELECT max(position) FROM tickets WHERE project_id = $1), 0) + 1)",
+                        "INSERT INTO tickets (project_id, title, body, tags, status, github_number, github_url, github_state, github_pr, github_synced_at, position)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), COALESCE((SELECT max(position) FROM tickets WHERE project_id = $1), 0) + 1)",
                         &[&project, &issue.title, &issue.body, &tags_from_labels(&issue.labels), &status.as_str(), &issue.number, &issue.url,
-                          &if issue.open { "open" } else { "closed" }],
+                          &remote_state(&issue), &issue.pull],
                     )
                     .await?;
                     t.commit().await?;
@@ -142,10 +169,11 @@ impl Worker {
                     let current = tickets.iter().find(|t| t.id == ticket).map(|t| t.status).unwrap_or(Status::Todo);
                     let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
                     t.execute(
-                        "UPDATE tickets SET title = $2, body = $3, tags = $4, status = $5, github_url = $6, github_state = $7, github_synced_at = now()
+                        "UPDATE tickets SET title = $2, body = $3, tags = $4, status = $5, github_url = $6, github_state = $7, github_pr = $8,
+                           github_synced_at = now()
                          WHERE id = $1",
-                        &[&ticket, &issue.title, &issue.body, &tags_from_labels(&issue.labels), &status_from_issue(current, issue.open).as_str(),
-                          &issue.url, &if issue.open { "open" } else { "closed" }],
+                        &[&ticket, &issue.title, &issue.body, &tags_from_labels(&issue.labels), &status_from_remote(current, &issue).as_str(),
+                          &issue.url, &remote_state(&issue), &issue.pull],
                     )
                     .await?;
                     t.commit().await?;
@@ -158,7 +186,8 @@ impl Worker {
             }
         }
         let mut summary = format!(
-            "{name} ↔ {repo} : {imported} importé(s), {pulled} mis à jour depuis GitHub, {pushed} envoyé(s) vers GitHub"
+            "{name} ↔ {repo} : {} issue(s) et {prs} pull request(s) sur GitHub — {imported} importé(s), {pulled} mis à jour, {pushed} envoyé(s)",
+            issues.len() - prs
         );
         if !errors.is_empty() {
             summary.push_str(&format!(" — {} erreur(s) : {}", errors.len(), errors[0]));

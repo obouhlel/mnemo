@@ -100,7 +100,12 @@ impl MnemoApp {
             ui.add_space(2.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                let mut all: Vec<String> = TAGS.iter().map(|t| t.0.to_string()).collect();
+                // projet lié à GitHub : les labels du dépôt ; sinon les tags intégrés
+                let labels = project.as_ref().map(|pr| &pr.github_labels).filter(|l| !l.is_empty());
+                let mut all: Vec<String> = match labels {
+                    Some(l) => l.iter().map(|(n, _)| n.clone()).collect(),
+                    None => TAGS.iter().map(|t| t.0.to_string()).collect(),
+                };
                 for g in &t.tags {
                     if !all.contains(g) {
                         all.push(g.clone());
@@ -194,10 +199,10 @@ impl MnemoApp {
             ui.add_space(2.0);
             match (t.github_number, project.as_ref().and_then(|pr| pr.github_repo.clone())) {
                 (Some(n), repo) => {
-                    let open = t.github_state.as_deref() != Some("closed");
+                    let (state, color) = github_state_label(t.github_state.as_deref(), t.github_pr);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("Issue #{n}")).color(p.text));
-                        pill(ui, if open { "ouverte" } else { "fermée" }, if open { Status::Done.color() } else { Color32::from_rgb(0x8b, 0x6c, 0xef) }, false);
+                        ui.label(RichText::new(format!("{} #{n}", if t.github_pr { "Pull request" } else { "Issue" })).color(p.text));
+                        pill(ui, state, color, false);
                         if let Some(r) = &repo {
                             ui.label(RichText::new(r).color(p.faint).small());
                         }
@@ -338,5 +343,16 @@ impl MnemoApp {
         if let Some(t) = open_ticket {
             self.open_dashboard(Some(t));
         }
+    }
+}
+
+/// Libellé et couleur de l'état GitHub (issue ou pull request), couleurs de GitHub.
+pub(super) fn github_state_label(state: Option<&str>, pr: bool) -> (&'static str, Color32) {
+    match (state.unwrap_or("open"), pr) {
+        ("merged", _) => ("fusionnée", Color32::from_rgb(0x8b, 0x6c, 0xef)),
+        ("draft", _) => ("brouillon", Color32::from_rgb(0x9a, 0x9a, 0x9a)),
+        ("closed", true) => ("fermée", Color32::from_rgb(0xfb, 0x46, 0x4c)),
+        ("closed", false) => ("fermée", Color32::from_rgb(0x8b, 0x6c, 0xef)),
+        _ => ("ouverte", Status::Done.color()),
     }
 }

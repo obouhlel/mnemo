@@ -87,6 +87,8 @@ pub enum Cmd {
     // ---- dashboard
     SetGithub(Option<GhConfig>),
     GithubTest,
+    /// Dépôts visibles avec le token (choix du dépôt d'un projet)
+    GithubRepos,
     LoadBoard,
     CreateProject {
         name: String,
@@ -175,6 +177,7 @@ pub enum Msg {
     GithubDone(Option<Uuid>, String),
     GithubFailed(Option<Uuid>, String),
     GithubUser(Result<String, String>),
+    GithubRepos(Result<Vec<String>, String>),
     Event(VaultEvent),
     /// Passage de synchronisation du dossier du coffre (envoyé au premier passage et quand il y a eu des changements).
     VaultSynced {
@@ -278,6 +281,16 @@ impl Worker {
                 self.emit(Msg::GithubUser(r));
                 continue;
             }
+            if let Cmd::GithubRepos = cmd {
+                let r = match self.github.clone() {
+                    Some(c) => tokio::task::spawn_blocking(move || github::list_repos(&c))
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string())),
+                    None => Err("Aucun token GitHub configuré".into()),
+                };
+                self.emit(Msg::GithubRepos(r));
+                continue;
+            }
             // Transparent reconnection of the query connection
             if self.client.as_ref().is_none_or(|c| c.is_closed()) {
                 if self.url.is_empty() {
@@ -307,7 +320,9 @@ impl Worker {
         let em = Emitter { out: self.out.clone(), notify: self.notify.clone() };
         match cmd {
             // traitées directement dans `run`
-            Cmd::Connect(_) | Cmd::SetGithub(_) | Cmd::GithubTest | Cmd::SetVault(_) => unreachable!(),
+            Cmd::Connect(_) | Cmd::SetGithub(_) | Cmd::GithubTest | Cmd::GithubRepos | Cmd::SetVault(_) => {
+                unreachable!()
+            }
             Cmd::VaultScan => self.vault_scan(&em).await,
             Cmd::LoadBoard
             | Cmd::CreateProject { .. }

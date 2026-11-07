@@ -147,7 +147,10 @@ impl MnemoApp {
                     self.plugin_changed();
                 }
                 Msg::Event(ev) => self.handle_event(ev, now),
-                Msg::Board(b) => self.board = b,
+                Msg::Board(b) => {
+                    crate::board::set_label_colors(&b.projects);
+                    self.board = b;
+                }
                 Msg::TicketCreated(_) => {} // keep the focus in the inline input for fast entry
                 Msg::GithubDone(project, msg) => {
                     if let Some(pid) = project {
@@ -164,6 +167,7 @@ impl MnemoApp {
                     self.notice(format!("GitHub : {msg}"), true, now);
                 }
                 Msg::GithubUser(r) => self.dash.github_user = Some(r),
+                Msg::GithubRepos(r) => self.dash.repos = Some(r),
                 Msg::VaultSynced { stats, first } => self.on_vault_synced(stats, first, now),
                 Msg::Error(e) => self.notice(e, true, now),
             }
