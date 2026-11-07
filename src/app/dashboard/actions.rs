@@ -97,6 +97,11 @@ impl MnemoApp {
                     }
                 }
                 DashAction::EditProject(id) => {
+                    // liste des dépôts du compte pour les proposer (une fois, ou après une erreur)
+                    if self.cfg.github_token.is_some() && !matches!(self.dash.repos, Some(Ok(_))) {
+                        self.dash.repos = None;
+                        self.db.send(Cmd::GithubRepos);
+                    }
                     let pr = id.and_then(|id| self.board.projects.iter().find(|pr| pr.id == id));
                     self.dash.project_form = Some(ProjectForm {
                         id,
@@ -150,10 +155,53 @@ impl MnemoApp {
                         .hint_text("propriétaire/dépôt ou https://github.com/…")
                         .desired_width(f32::INFINITY),
                 );
-                if self.cfg.github_token.is_none() && !form.repo.trim().is_empty() {
+                if self.cfg.github_token.is_none() {
                     ui.label(
-                        RichText::new("Pensez à renseigner un token dans Paramètres › GitHub.").small().color(p.faint),
+                        RichText::new("Renseignez un token dans Paramètres › GitHub pour choisir parmi vos dépôts.")
+                            .small()
+                            .color(p.faint),
                     );
+                } else {
+                    // dépôts du compte, filtrés par ce qui est tapé
+                    match &self.dash.repos {
+                        None => {
+                            ui.label(RichText::new("Chargement de vos dépôts…").small().color(p.faint));
+                        }
+                        Some(Err(e)) => {
+                            ui.label(RichText::new(format!("Dépôts indisponibles : {e}")).small().color(p.faint));
+                        }
+                        Some(Ok(repos)) => {
+                            let q = form.repo.trim().to_lowercase();
+                            let matches: Vec<&String> = repos
+                                .iter()
+                                .filter(|r| q.is_empty() || (r.to_lowercase().contains(&q) && r.to_lowercase() != q))
+                                .take(6)
+                                .collect();
+                            if !matches.is_empty() {
+                                ui.add_space(4.0);
+                                egui::Frame::new().fill(p.bg).corner_radius(6.0).inner_margin(4.0).show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    for r in matches {
+                                        if theme::tree_row(ui, r, 0, false, None).clicked() {
+                                            if form.name.trim().is_empty() {
+                                                form.name = r.rsplit('/').next().unwrap_or(r).to_string();
+                                            }
+                                            form.repo = r.clone();
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    if !form.repo.trim().is_empty() {
+                        ui.label(
+                            RichText::new(
+                                "À l'enregistrement, les issues et pull requests existantes sont importées avec leurs labels.",
+                            )
+                            .small()
+                            .color(p.faint),
+                        );
+                    }
                 }
                 if let Some(e) = &form.error {
                     ui.colored_label(Color32::from_rgb(0xfb, 0x46, 0x4c), e);

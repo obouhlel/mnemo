@@ -89,11 +89,15 @@ impl MnemoApp {
                                                             pill(ui, g, tag_color(g), false);
                                                         }
                                                         if let Some(n) = t.github_number {
-                                                            ui.label(theme::icon_text("\u{e0e9}", 12.0).color(p.faint));
+                                                            let ic = if t.github_pr { "\u{e0e8}" } else { "\u{e0e9}" };
+                                                            ui.label(theme::icon_text(ic, 12.0).color(p.faint));
                                                             ui.label(
-                                                                RichText::new(format!("#{n}"))
-                                                                    .size(11.5)
-                                                                    .color(p.faint),
+                                                                RichText::new(format!(
+                                                                    "{}#{n}",
+                                                                    if t.github_pr { "PR " } else { "" }
+                                                                ))
+                                                                .size(11.5)
+                                                                .color(p.faint),
                                                             );
                                                         }
                                                         if reports > 0 {

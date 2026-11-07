@@ -108,7 +108,7 @@ Ouvrez-le avec l'icône du ruban ou **Ctrl+Shift+D**. Tout est stocké dans Post
 
 - **Projets** contenant des **tickets** numérotés (T-1, T-2…), avec statut (À faire, En cours, Bloqué, En revue, Terminé),
   priorité (Basse → Urgente), description Markdown et **tags** : Feature, Bug, Amélioration, Documentation,
-  Tâche technique, Sécurité, Performance, Recherche, ou vos propres tags.
+  Tâche technique, Sécurité, Performance, Recherche, vos propres tags, ou les labels du dépôt GitHub lié.
 - **Vue « Lignes »** : todo list par projet ; chaque projet se déplie en lignes de tags, qui se déplient en tickets
   (case à cocher pour terminer, ajout rapide d'un ticket dans chaque tag). Un ticket avec plusieurs tags apparaît dans chacun.
 - **Vue « Colonnes »** : kanban par statut, glisser-déposer des cartes.
@@ -116,10 +116,14 @@ Ouvrez-le avec l'icône du ruban ou **Ctrl+Shift+D**. Tout est stocké dans Post
 - **Rapports** : des notes liées aux tickets. « Nouveau rapport » crée une note pré-remplie dans `Rapports/<Projet>/`,
   ou liez une note existante ; dans une note, l'onglet *Tickets liés* du panneau de droite montre et gère ses tickets.
 - **GitHub** (Paramètres › GitHub : token personnel, URL d'API pour GitHub Enterprise) puis, par projet, un dépôt
-  `propriétaire/nom` :
-  - **Synchroniser** importe les issues (hors pull requests) et applique les changements des deux côtés :
-    titre, description, labels ↔ tags (`bug` ↔ Bug, `feature` ↔ Feature, `enhancement` ↔ Amélioration…),
-    ouverte/fermée ↔ statut. Le côté modifié depuis la dernière synchro gagne ; si les deux ont changé, le plus récent.
+  choisi dans la liste de vos dépôts (ou saisi en `propriétaire/nom`) :
+  - À l'enregistrement, toutes les **issues et pull requests** existantes (ouvertes, fermées, fusionnées) sont
+    importées. Une PR ouverte est « En revue », un brouillon « En cours », une PR fusionnée ou fermée « Terminé ».
+  - Les **tags sont les labels du dépôt**, avec le même nom et la même couleur ; le choix des tags d'un ticket
+    propose ces labels.
+  - **Synchroniser** applique les changements des deux côtés : titre, description, labels, ouverte/fermée ↔ statut.
+    Le côté modifié depuis la dernière synchro gagne ; si les deux ont changé, le plus récent. Une pull request n'est
+    jamais fermée depuis Mnemo : seuls son titre, sa description et ses labels sont envoyés.
   - **Publier sur GitHub** crée l'issue d'un ticket local ; ensuite chaque modification (statut, titre, tags…) est
     poussée automatiquement. Synchronisation automatique toutes les 5 minutes (désactivable).
   - Le token reste dans le fichier de configuration local (ou `MNEMO_GITHUB_TOKEN`), jamais dans la base.

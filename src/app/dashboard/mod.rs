@@ -33,6 +33,8 @@ pub(super) struct DashState {
     pub publishing: HashSet<Uuid>,
     pub confirm_delete: Option<Uuid>,
     pub github_user: Option<Result<String, String>>,
+    /// dépôts visibles avec le token (None : pas encore demandés / en cours)
+    pub repos: Option<Result<Vec<String>, String>>,
     pub last_auto_sync: f64,
 }
 
@@ -54,6 +56,7 @@ impl Default for DashState {
             publishing: HashSet::new(),
             confirm_delete: None,
             github_user: None,
+            repos: None,
             last_auto_sync: 0.0,
         }
     }

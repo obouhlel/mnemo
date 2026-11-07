@@ -77,7 +77,30 @@ pub const TAGS: &[(&str, Color32, &str, &str)] = &[
     ("Recherche", Color32::from_rgb(0x44, 0xcf, 0x6e), "research", "\u{e0da}"),
 ];
 
+/// Couleurs des labels des dépôts GitHub liés (nom en minuscules → couleur), mises à jour au chargement du tableau
+/// de bord : un tag porte la même couleur que le label du dépôt.
+static LABEL_COLORS: std::sync::RwLock<Option<std::collections::HashMap<String, Color32>>> =
+    std::sync::RwLock::new(None);
+
+pub fn set_label_colors(projects: &[Project]) {
+    let map = projects
+        .iter()
+        .flat_map(|p| &p.github_labels)
+        .filter_map(|(name, hex)| {
+            let v = u32::from_str_radix(hex.trim_start_matches('#'), 16).ok().filter(|_| hex.len() >= 6)?;
+            Some((name.to_lowercase(), Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)))
+        })
+        .collect();
+    if let Ok(mut w) = LABEL_COLORS.write() {
+        *w = Some(map);
+    }
+}
+
 pub fn tag_color(tag: &str) -> Color32 {
+    if let Some(c) = LABEL_COLORS.read().ok().and_then(|m| m.as_ref().and_then(|m| m.get(&tag.to_lowercase()).copied()))
+    {
+        return c;
+    }
     if let Some(t) = TAGS.iter().find(|t| t.0.eq_ignore_ascii_case(tag)) {
         return t.1;
     }
@@ -103,33 +126,14 @@ pub fn tag_to_label(tag: &str) -> String {
     TAGS.iter().find(|t| t.0.eq_ignore_ascii_case(tag)).map(|t| t.2.to_string()).unwrap_or_else(|| tag.to_string())
 }
 
-/// GitHub label -> ticket tag
-pub fn label_to_tag(label: &str) -> String {
-    let l = label.to_lowercase();
-    let l = l.trim_start_matches("type:").trim_start_matches("kind/").trim();
-    match l {
-        "bug" | "defect" => "Bug".into(),
-        "feature" | "feature request" | "new feature" => "Feature".into(),
-        "enhancement" | "improvement" => "Amélioration".into(),
-        "documentation" | "docs" => "Documentation".into(),
-        "chore" | "maintenance" | "refactor" | "tech debt" => "Tâche technique".into(),
-        "security" => "Sécurité".into(),
-        "performance" | "perf" => "Performance".into(),
-        "research" | "spike" | "investigation" => "Recherche".into(),
-        _ => TAGS
-            .iter()
-            .find(|t| t.0.eq_ignore_ascii_case(label))
-            .map(|t| t.0.to_string())
-            .unwrap_or_else(|| label.to_string()),
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Project {
     pub id: Uuid,
     pub name: String,
     pub description: String,
     pub github_repo: Option<String>,
+    /// labels du dépôt GitHub : (nom, couleur "rrggbb"), mis à jour à chaque synchronisation
+    pub github_labels: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +150,8 @@ pub struct Ticket {
     pub github_url: Option<String>,
     pub github_state: Option<String>,
     pub github_synced_at: Option<DateTime<Utc>>,
+    /// le ticket suit une pull request (et non une issue)
+    pub github_pr: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub done_at: Option<DateTime<Utc>>,
@@ -185,6 +191,10 @@ pub fn progress<'a>(tickets: impl Iterator<Item = &'a Ticket>) -> (usize, usize)
 
 #[derive(Debug, Clone)]
 pub struct RemoteIssue {
+    /// pull request (l'API des issues renvoie aussi les PR)
+    pub pull: bool,
+    pub draft: bool,
+    pub merged: bool,
     pub number: i32,
     pub title: String,
     pub body: String,
@@ -248,12 +258,40 @@ pub fn status_from_issue(current: Status, open: bool) -> Status {
     }
 }
 
+/// Statut d'un ticket d'après sa pull request : fusionnée / fermée → Terminé, brouillon → En cours,
+/// ouverte → En revue (sauf si le ticket est déjà En cours ou Bloqué).
+pub fn status_from_pr(current: Status, issue: &RemoteIssue) -> Status {
+    if !issue.open {
+        return Status::Done;
+    }
+    match (issue.draft, current) {
+        (true, _) => Status::Doing,
+        (false, Status::Doing | Status::Blocked) => current,
+        (false, _) => Status::Review,
+    }
+}
+
+/// Statut d'un ticket d'après son issue ou sa pull request.
+pub fn status_from_remote(current: Status, issue: &RemoteIssue) -> Status {
+    if issue.pull { status_from_pr(current, issue) } else { status_from_issue(current, issue.open) }
+}
+
+/// État GitHub affiché : open / closed, et merged / draft pour les pull requests.
+pub fn remote_state(issue: &RemoteIssue) -> &'static str {
+    match (issue.pull, issue.open, issue.merged, issue.draft) {
+        (true, false, true, _) => "merged",
+        (true, true, _, true) => "draft",
+        (_, true, _, _) => "open",
+        _ => "closed",
+    }
+}
+
+/// Labels GitHub → tags du ticket : le même nom que sur le dépôt (sans doublon).
 pub fn tags_from_labels(labels: &[String]) -> Vec<String> {
     let mut tags: Vec<String> = vec![];
     for l in labels {
-        let t = label_to_tag(l);
-        if !tags.contains(&t) {
-            tags.push(t);
+        if !tags.iter().any(|t| t.eq_ignore_ascii_case(l)) {
+            tags.push(l.clone());
         }
     }
     tags
@@ -278,6 +316,7 @@ mod tests {
             github_url: None,
             github_state: None,
             github_synced_at: synced.map(at),
+            github_pr: false,
             created_at: at(0),
             updated_at: at(updated),
             done_at: None,
@@ -285,6 +324,9 @@ mod tests {
     }
     fn issue(n: i32, updated: i64) -> RemoteIssue {
         RemoteIssue {
+            pull: false,
+            draft: false,
+            merged: false,
             number: n,
             title: "i".into(),
             body: String::new(),
@@ -312,18 +354,29 @@ mod tests {
 
     #[test]
     fn labels_and_status() {
-        assert_eq!(label_to_tag("bug"), "Bug");
-        assert_eq!(label_to_tag("type: feature"), "Feature");
-        assert_eq!(label_to_tag("enhancement"), "Amélioration");
-        assert_eq!(label_to_tag("wontfix"), "wontfix");
         assert_eq!(tag_to_label("Bug"), "bug");
         assert_eq!(tag_to_label("Mon tag"), "Mon tag");
-        for (tag, _, label, _) in TAGS {
-            assert_eq!(label_to_tag(label), *tag, "round-trip {tag}");
-        }
+        assert_eq!(tag_to_label("good first issue"), "good first issue");
         assert_eq!(status_from_issue(Status::Doing, true), Status::Doing);
         assert_eq!(status_from_issue(Status::Doing, false), Status::Done);
         assert_eq!(status_from_issue(Status::Done, true), Status::Todo);
-        assert_eq!(tags_from_labels(&["bug".into(), "defect".into(), "x".into()]), vec!["Bug", "x"]);
+        // les tags gardent exactement le nom des labels du dépôt
+        assert_eq!(
+            tags_from_labels(&["bug".into(), "Bug".into(), "good first issue".into()]),
+            vec!["bug", "good first issue"]
+        );
+    }
+
+    #[test]
+    fn pull_requests() {
+        let pr = |open, draft, merged| RemoteIssue { pull: true, open, draft, merged, ..issue(1, 0) };
+        assert_eq!(status_from_remote(Status::Todo, &pr(true, false, false)), Status::Review);
+        assert_eq!(status_from_remote(Status::Doing, &pr(true, false, false)), Status::Doing);
+        assert_eq!(status_from_remote(Status::Todo, &pr(true, true, false)), Status::Doing);
+        assert_eq!(status_from_remote(Status::Review, &pr(false, false, true)), Status::Done);
+        assert_eq!(remote_state(&pr(false, false, true)), "merged");
+        assert_eq!(remote_state(&pr(false, false, false)), "closed");
+        assert_eq!(remote_state(&pr(true, true, false)), "draft");
+        assert_eq!(remote_state(&issue(1, 0)), "open");
     }
 }

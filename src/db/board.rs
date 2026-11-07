@@ -13,14 +13,19 @@ impl Worker {
             Cmd::CreateProject { name, description, repo } => {
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
                 match t
-                    .execute(
+                    .query_one(
                         "INSERT INTO projects (name, description, github_repo, position)
-                         VALUES ($1, $2, $3, COALESCE((SELECT max(position) FROM projects), 0) + 1)",
+                         VALUES ($1, $2, $3, COALESCE((SELECT max(position) FROM projects), 0) + 1) RETURNING id",
                         &[&name.trim(), &description, &repo],
                     )
                     .await
                 {
-                    Ok(_) => t.commit().await?,
+                    Ok(row) => {
+                        t.commit().await?;
+                        if repo.is_some() {
+                            self.import_now(row.get(0), em).await?;
+                        }
+                    }
                     Err(e) if is_unique_violation(&e) => {
                         em.emit(Msg::Error(format!("Le projet « {name} » existe déjà")))
                     }
@@ -30,13 +35,22 @@ impl Worker {
             Cmd::UpdateProject { id, name, description, repo } => {
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
                 match t
-                    .execute(
-                        "UPDATE projects SET name = $2, description = $3, github_repo = $4 WHERE id = $1",
+                    .query_opt(
+                        "UPDATE projects p SET name = $2, description = $3, github_repo = $4
+                         FROM (SELECT github_repo AS old FROM projects WHERE id = $1) o
+                         WHERE p.id = $1 RETURNING o.old",
                         &[&id, &name.trim(), &description, &repo],
                     )
                     .await
                 {
-                    Ok(_) => t.commit().await?,
+                    Ok(row) => {
+                        t.commit().await?;
+                        // nouveau dépôt lié : on importe tout de suite ses issues et pull requests
+                        let old: Option<String> = row.and_then(|r| r.get(0));
+                        if repo.is_some() && repo != old {
+                            self.import_now(id, em).await?;
+                        }
+                    }
                     Err(e) if is_unique_violation(&e) => {
                         em.emit(Msg::Error(format!("Le projet « {name} » existe déjà")))
                     }
@@ -139,9 +153,9 @@ impl Worker {
 
 pub(super) const TICKET_COLS: &str =
     "t.id, t.project_id, t.number, t.title, t.body, t.status, t.tags, t.priority, t.github_number, t.github_url,
-  t.github_state, t.github_synced_at, t.created_at, t.updated_at, t.done_at";
+  t.github_state, t.github_synced_at, t.created_at, t.updated_at, t.done_at, t.github_pr";
 
-pub(super) const TICKET_COLS_N: usize = 15;
+pub(super) const TICKET_COLS_N: usize = 16;
 
 pub(super) fn ticket_from(r: &Row) -> Ticket {
     Ticket {
@@ -160,15 +174,36 @@ pub(super) fn ticket_from(r: &Row) -> Ticket {
         created_at: r.get(12),
         updated_at: r.get(13),
         done_at: r.get(14),
+        github_pr: r.get(15),
     }
+}
+
+/// `[["bug", "d73a4a"], …]` → [(nom, couleur)]
+pub(super) fn labels_from_json(v: &serde_json::Value) -> Vec<(String, String)> {
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| Some((l.get(0)?.as_str()?.to_string(), l.get(1)?.as_str().unwrap_or("").to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(super) async fn load_board(c: &Client) -> Res<Board> {
     let projects = c
-        .query("SELECT id, name, description, github_repo FROM projects ORDER BY position, lower(name)", &[])
+        .query(
+            "SELECT id, name, description, github_repo, github_labels FROM projects ORDER BY position, lower(name)",
+            &[],
+        )
         .await?
         .iter()
-        .map(|r| Project { id: r.get(0), name: r.get(1), description: r.get(2), github_repo: r.get(3) })
+        .map(|r| Project {
+            id: r.get(0),
+            name: r.get(1),
+            description: r.get(2),
+            github_repo: r.get(3),
+            github_labels: labels_from_json(&r.get::<_, serde_json::Value>(4)),
+        })
         .collect();
     let tickets = c
         .query(
