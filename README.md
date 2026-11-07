@@ -58,6 +58,13 @@ Variables d'environnement utiles :
 
 ## Installation
 
+Téléchargez le fichier de votre système sur la page [Releases](https://github.com/obouhlel/mnemo/releases/latest).
+Linux (Arch, Fedora, Debian…), sans rien installer d'autre :
+
+```bash
+curl -LO https://github.com/obouhlel/mnemo/releases/latest/download/mnemo-linux-x86_64 && chmod +x mnemo-linux-x86_64 && ./mnemo-linux-x86_64
+```
+
 | OS | Installer |
 |---|---|
 | **Debian / Ubuntu** | `sudo apt install ./mnemo_0.1.0-1_amd64.deb` |
