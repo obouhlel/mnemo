@@ -27,6 +27,9 @@ fn main() -> eframe::Result {
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/icons/mnemo-256.png")).unwrap_or_default(),
             )),
         persist_window: true,
+        // OpenGL 2.0+ manque souvent sous Windows (VM, bureau à distance, pilotes absents) : Direct3D 12 via wgpu
+        #[cfg(windows)]
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
     let result = eframe::run_native("Mnemo", options, Box::new(|cc| Ok(Box::new(app::MnemoApp::new(cc, cfg)))));
