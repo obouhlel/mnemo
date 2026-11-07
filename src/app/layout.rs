@@ -92,12 +92,13 @@ impl MnemoApp {
                 }
             });
         }
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        // les icônes sont collées en bas comme les onglets : même ligne médiane que leur titre
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
             ui.add_space(4.0);
             if theme::icon_button_sized(ui, icon::PLUS, "Nouvel onglet", false, true, 16.0).clicked() {
                 self.actions.push(UiAction::Core(CoreCmd::NewTab));
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
                 ui.add_space(6.0);
                 if !self.right_visible(ui.ctx())
                     && theme::icon_button_sized(

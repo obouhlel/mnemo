@@ -76,8 +76,12 @@ impl MnemoApp {
                     self.folders = f;
                     self.rebuild_tree();
                 }
-                Msg::Loaded { note, purpose: LoadPurpose::Open } | Msg::Created { note, open: true } => {
-                    self.set_open(note, now)
+                Msg::Loaded { note, purpose: LoadPurpose::Open } => self.set_open(note, now),
+                Msg::Created { note, open: true } => {
+                    // nouvelle note : on peut écrire tout de suite (l'éditeur est dessiné plus loin dans cette frame)
+                    let id = editor_id(note.id);
+                    self.set_open(note, now);
+                    self.focus_editor = Some(id);
                 }
                 Msg::Loaded { note, purpose: LoadPurpose::Refresh } => self.apply_refresh(note, now),
                 Msg::Created { .. } => {}
