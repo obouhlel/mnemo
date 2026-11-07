@@ -131,17 +131,18 @@ impl MnemoApp {
                 ui.add_space(2.0);
             }
         });
-    }
-
-    /// Name shown in the vault footer: the database name.
-    pub(super) fn vault_name(&self) -> String {
-        let url = &self.cfg.database_url;
-        url.rsplit('/')
-            .next()
-            .and_then(|s| s.split('?').next())
-            .filter(|s| !s.is_empty() && !s.contains('@'))
-            .unwrap_or("Mnemo")
-            .to_string()
+        // bas du ruban : aide et paramètres
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+            ui.add_space(2.0); // centré sur la barre d'état flottante
+            if theme::icon_button(ui, icon::SETTINGS, "Paramètres (Ctrl+,)", self.show_settings).clicked() {
+                self.actions.push(UiAction::Core(CoreCmd::Settings));
+            }
+            ui.add_space(2.0);
+            if theme::icon_button(ui, icon::HELP, "Aide et raccourcis", false).clicked() {
+                self.settings_tab = SettingsTab::About;
+                self.show_settings = true;
+            }
+        });
     }
 
     pub(super) fn left_sidebar(&mut self, ui: &mut egui::Ui, now: f64) {
@@ -166,13 +167,14 @@ impl MnemoApp {
                 }
             },
         );
-        let footer_h = 42.0;
-        let body_h = (ui.available_height() - footer_h).max(50.0);
+        let body_h = ui.available_height().max(50.0);
         ui.allocate_ui(egui::vec2(ui.available_width(), body_h), |ui| {
             ui.set_min_height(body_h);
             match self.left_tab {
                 LeftTab::Files => {
-                    ui.horizontal(|ui| {
+                    // même hauteur que l'en-tête de la note (flèches, fil d'Ariane) pour aligner les rangées
+                    let row = egui::vec2(ui.available_width(), 40.0);
+                    ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         let total = 4.0 * 28.0 + 3.0 * 4.0;
                         ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
                         ui.spacing_mut().item_spacing.x = 4.0;
@@ -202,7 +204,6 @@ impl MnemoApp {
                             self.actions.push(UiAction::Core(CoreCmd::CollapseAll));
                         }
                     });
-                    ui.add_space(4.0);
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         let open_id = self.open.as_ref().map(|n| n.id);
@@ -226,7 +227,7 @@ impl MnemoApp {
                     });
                 }
                 LeftTab::Search => {
-                    ui.add_space(2.0);
+                    ui.add_space(6.0);
                     egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 0)).show(ui, |ui| {
                         let r = ui.add(
                             egui::TextEdit::singleline(&mut self.search_q)
@@ -289,37 +290,6 @@ impl MnemoApp {
                 }
             }
         });
-        // vault footer
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-        ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, p.border));
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), footer_h - 2.0),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.add_space(6.0);
-                let name = self.vault_name();
-                let r = ui
-                    .add(egui::Button::new(RichText::new(format!("{name}  ")).color(p.text).strong()).frame(false))
-                    .on_hover_text(format!("Base : {}", redact_url(&self.cfg.database_url)));
-                ui.label(theme::icon_text(icon::VAULT_SWITCH, 13.0).color(p.faint));
-                if r.clicked() {
-                    self.settings_tab = SettingsTab::Connection;
-                    self.show_settings = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(4.0);
-                    if theme::icon_button_sized(ui, icon::SETTINGS, "Paramètres", self.show_settings, true, 16.0)
-                        .clicked()
-                    {
-                        self.actions.push(UiAction::Core(CoreCmd::Settings));
-                    }
-                    if theme::icon_button_sized(ui, icon::HELP, "Aide et raccourcis", false, true, 16.0).clicked() {
-                        self.settings_tab = SettingsTab::About;
-                        self.show_settings = true;
-                    }
-                });
-            },
-        );
     }
 
     pub(super) fn right_sidebar(&mut self, ui: &mut egui::Ui) {
@@ -361,10 +331,10 @@ impl MnemoApp {
             },
         );
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Frame::new().inner_margin(egui::Margin::symmetric(12, 4)).show(ui, |ui| {
+            egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 8, bottom: 4 }).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 if self.open.is_none() {
-                    ui.label(RichText::new("Aucun fichier actif.").color(p.faint));
+                    ui.horizontal(|ui| ui.label(RichText::new("Aucun fichier actif.").color(p.faint)));
                     return;
                 }
                 if self.right_tab == 0 {

@@ -168,7 +168,6 @@ pub mod icon {
     pub const NEW_FOLDER: &str = "\u{e0de}";
     pub const SORT: &str = "\u{e050}";
     pub const COLLAPSE: &str = "\u{e228}";
-    pub const VAULT_SWITCH: &str = "\u{e211}"; // chevrons-up-down
     pub const SETTINGS: &str = "\u{e158}";
     pub const HELP: &str = "\u{e082}";
     pub const GRAPH: &str = "\u{e28d}"; // git-fork
