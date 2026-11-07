@@ -93,6 +93,7 @@ Le workflow `.github/workflows/release.yml` appelle les mêmes cibles sur des ma
 (Actions › Run workflow, ou en poussant un tag `v*`).
 Le workflow `.github/workflows/macos-smoke.yml` (lancé à la main) compile `Mnemo.app`, l'ouvre sur un vrai Mac avec
 PostgreSQL, vérifie qu'elle se connecte et joint une capture d'écran en artefact.
+`.github/workflows/windows-smoke.yml` fait de même sous Windows avec le `mnemo.exe` compilé comme pour une livraison.
 
 ## Tableau de bord : projets, tickets et GitHub
 
