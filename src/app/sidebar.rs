@@ -5,6 +5,8 @@ use super::*;
 
 /// Marge horizontale commune aux panneaux latéraux (en-têtes et contenu alignés dessus).
 pub(super) const SIDE_PAD: f32 = 8.0;
+/// Hauteur des en-têtes (onglets, panneaux) ; les icônes y sont centrées à `HEADER_H - 14` du haut.
+pub(super) const HEADER_H: f32 = 40.0;
 
 fn highlight_job(snippet: &str, ui: &egui::Ui) -> LayoutJob {
     let mut job = LayoutJob::default();
@@ -145,21 +147,25 @@ fn tree_ui(ui: &mut egui::Ui, folder: &TreeFolder, depth: usize, cx: &mut TreeCx
 impl MnemoApp {
     pub(super) fn ribbon(&mut self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
-            ui.add_space(5.0);
+            // bouton de 30 px centré à 26 px du haut, comme le titre des onglets et les icônes des panneaux
+            ui.add_space(HEADER_H - 14.0 - 15.0);
             if theme::icon_button(ui, icon::PANEL_LEFT, "Afficher / masquer le panneau latéral", false).clicked() {
                 self.actions.push(UiAction::Core(CoreCmd::ToggleLeft));
             }
             ui.add_space(10.0);
-            let items: [(&str, &str, CoreCmd); 6] = [
+            // seulement des fonctions intégrées : les commandes des plugins sont dans la palette (Ctrl+P)
+            let items: [(&str, &str, CoreCmd); 4] = [
                 (icon::DASHBOARD, "Tableau de bord : projets et tickets (Ctrl+Shift+D)", CoreCmd::Dashboard),
                 (icon::SWITCHER, "Ouvrir le sélecteur rapide", CoreCmd::Switcher),
                 (icon::GRAPH, "Ouvrir la vue graphique", CoreCmd::Graph),
-                (icon::DAILY, "Ouvrir la note du jour", CoreCmd::DailyNote),
-                (icon::TEMPLATES, "Insérer un modèle", CoreCmd::Templates),
                 (icon::PALETTE, "Ouvrir la palette de commandes", CoreCmd::Palette),
             ];
+            let tab = &self.tabs[self.active_tab];
+            let (dash, graph) = (tab.dashboard, tab.graph);
             for (ic, tip, c) in items {
-                if theme::icon_button(ui, ic, tip, false).clicked() {
+                // le bouton de la vue affichée reste en surbrillance
+                let active = matches!(c, CoreCmd::Dashboard) && dash || matches!(c, CoreCmd::Graph) && graph;
+                if theme::icon_button(ui, ic, tip, active).clicked() {
                     self.actions.push(UiAction::Core(c));
                 }
                 ui.add_space(2.0);
@@ -185,8 +191,9 @@ impl MnemoApp {
         let p = self.palette();
         // header: view tabs
         ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 40.0),
-            egui::Layout::left_to_right(egui::Align::Center),
+            egui::vec2(ui.available_width(), HEADER_H),
+            // en bas de la rangée, alignées sur le titre des onglets
+            egui::Layout::left_to_right(egui::Align::Max),
             |ui| {
                 ui.add_space(SIDE_PAD);
                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -408,8 +415,9 @@ impl MnemoApp {
             .collect();
         self.right_tab = self.right_tab.min(tabs.len() - 1);
         ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 40.0),
-            egui::Layout::left_to_right(egui::Align::Center),
+            egui::vec2(ui.available_width(), HEADER_H),
+            // en bas de la rangée, alignées sur le titre des onglets
+            egui::Layout::left_to_right(egui::Align::Max),
             |ui| {
                 ui.add_space(SIDE_PAD);
                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -418,7 +426,7 @@ impl MnemoApp {
                         self.right_tab = i;
                     }
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
                     ui.add_space(SIDE_PAD);
                     if theme::icon_button_sized(
                         ui,

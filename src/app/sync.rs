@@ -38,7 +38,7 @@ impl MnemoApp {
                         plugins: true,
                         backlinks: true,
                         tags: true,
-                        graph: self.graph.open,
+                        graph: self.graph_shown(),
                         board: true,
                     };
                     if let Some(n) = &self.open {
@@ -76,8 +76,12 @@ impl MnemoApp {
                     self.folders = f;
                     self.rebuild_tree();
                 }
-                Msg::Loaded { note, purpose: LoadPurpose::Open } | Msg::Created { note, open: true } => {
-                    self.set_open(note, now)
+                Msg::Loaded { note, purpose: LoadPurpose::Open } => self.set_open(note, now),
+                Msg::Created { note, open: true } => {
+                    // nouvelle note : on peut écrire tout de suite (l'éditeur est dessiné plus loin dans cette frame)
+                    let id = editor_id(note.id);
+                    self.set_open(note, now);
+                    self.focus_editor = Some(id);
                 }
                 Msg::Loaded { note, purpose: LoadPurpose::Refresh } => self.apply_refresh(note, now),
                 Msg::Created { .. } => {}
@@ -174,7 +178,7 @@ impl MnemoApp {
                 self.need.board = true; // report paths
                 self.need.backlinks = true;
                 self.need.tags = true;
-                self.need.graph |= self.graph.open;
+                self.need.graph |= self.graph_shown();
                 if !self.search_q.trim().is_empty() {
                     self.search_due.get_or_insert(now + 0.3);
                 }

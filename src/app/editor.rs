@@ -123,6 +123,10 @@ impl MnemoApp {
             self.dashboard_ui(ui, now);
             return;
         }
+        if self.tabs[self.active_tab].graph {
+            self.graph_ui(ui);
+            return;
+        }
         if self.open.is_none() {
             self.empty_tab(ui);
             return;

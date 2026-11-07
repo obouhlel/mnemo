@@ -25,8 +25,6 @@ pub(super) enum CoreCmd {
     NewTab,
     CloseTab,
     Dashboard,
-    DailyNote,
-    Templates,
     CollapseAll,
 }
 
@@ -48,7 +46,6 @@ pub(super) const CORE_COMMANDS: &[(CoreCmd, &str, &str)] = &[
     (CoreCmd::Dashboard, "Ouvrir le tableau de bord (projets et tickets)", "Ctrl+Shift+D"),
     (CoreCmd::NewTab, "Nouvel onglet", "Ctrl+T"),
     (CoreCmd::CloseTab, "Fermer l'onglet", "Ctrl+W"),
-    (CoreCmd::DailyNote, "Ouvrir la note du jour", ""),
     (CoreCmd::CollapseAll, "Replier tous les dossiers", ""),
     (CoreCmd::ToggleLeft, "Afficher / masquer l'explorateur", "Ctrl+Shift+L"),
     (CoreCmd::ToggleRight, "Afficher / masquer le panneau de droite", "Ctrl+Shift+R"),
@@ -155,12 +152,7 @@ impl MnemoApp {
                     self.cfg.save();
                 }
             }
-            CoreCmd::Graph => {
-                self.graph.open = !self.graph.open;
-                if self.graph.open {
-                    self.need.graph = true;
-                }
-            }
+            CoreCmd::Graph => self.open_graph(),
             CoreCmd::ToggleMode => {
                 self.cfg.view_mode =
                     if self.cfg.view_mode == ViewMode::Preview { ViewMode::Edit } else { ViewMode::Preview };
@@ -202,17 +194,6 @@ impl MnemoApp {
             }
             CoreCmd::CloseTab => self.close_tab(self.active_tab),
             CoreCmd::Dashboard => self.open_dashboard(None),
-            CoreCmd::DailyNote => match self.plugin_cmds.iter().find(|c| c.1 == "today").cloned() {
-                Some((i, id, _)) => {
-                    self.actions.push(UiAction::Plugin(i, id));
-                    self.process_actions(ctx, now);
-                }
-                None => self.notice("Activez le plugin « Notes quotidiennes » dans les paramètres", false, now),
-            },
-            CoreCmd::Templates => {
-                self.dialog = Some(Dialog::Palette { query: "Modèles".into(), sel: 0 });
-                self.focus_dialog = true;
-            }
             CoreCmd::CollapseAll => self.expanded.clear(),
             CoreCmd::ToggleLeft => {
                 self.cfg.show_left = !self.left_visible(ctx);
@@ -229,7 +210,7 @@ impl MnemoApp {
                     plugins: true,
                     backlinks: true,
                     tags: true,
-                    graph: self.graph.open,
+                    graph: self.graph_shown(),
                     board: true,
                 };
                 if let Some(n) = &self.open {

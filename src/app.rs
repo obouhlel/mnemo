@@ -98,6 +98,8 @@ pub struct MnemoApp {
     dash: dashboard::DashState,
     github_input: String,
     vault_input: String,
+    /// donne le focus à cet éditeur à la prochaine frame (note qui vient d'être créée)
+    focus_editor: Option<egui::Id>,
     /// dossier de l'explorateur survolé pendant un glisser depuis le système
     os_drop_target: Option<(String, f64)>,
     vault_next_scan: f64,
@@ -188,6 +190,7 @@ impl MnemoApp {
             dash: dashboard::DashState::default(),
             github_input: String::new(),
             vault_input: String::new(),
+            focus_editor: None,
             os_drop_target: None,
             vault_next_scan: 0.0,
             vault_last: None,
@@ -318,22 +321,10 @@ impl eframe::App for MnemoApp {
                 .show(ui, |ui| self.right_sidebar(ui));
         }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(p.bg)).show(ui, |ui| self.editor_area(ui, now));
-
-        if self.graph.open {
-            let mut open = true;
-            let current = self.open.as_ref().map(|n| n.id.to_string());
-            let mut clicked = None;
-            egui::Window::new("Graphe").open(&mut open).default_size([720.0, 520.0]).show(&ctx, |ui| {
-                if !self.graph.loaded {
-                    ui.spinner();
-                }
-                clicked = self.graph.ui(ui, current.as_deref());
-            });
-            self.graph.open = open;
-            if let Some(c) = clicked {
-                self.actions.push(UiAction::OpenLink(c));
-            }
+        if let Some(id) = self.focus_editor.take() {
+            ctx.memory_mut(|m| m.request_focus(id));
         }
+
         if self.show_settings {
             self.settings_window(&ctx, now);
         }
