@@ -171,8 +171,6 @@ pub mod icon {
     pub const SETTINGS: &str = "\u{e158}";
     pub const HELP: &str = "\u{e082}";
     pub const GRAPH: &str = "\u{e28d}"; // git-fork
-    pub const DAILY: &str = "\u{e2b9}"; // calendar-days
-    pub const TEMPLATES: &str = "\u{e0d3}"; // files
     pub const PALETTE: &str = "\u{e20a}"; // square-terminal
     pub const SWITCHER: &str = "\u{e0cf}"; // file-search
     pub const PANEL_LEFT: &str = "\u{e12e}";

@@ -153,16 +153,19 @@ impl MnemoApp {
                 self.actions.push(UiAction::Core(CoreCmd::ToggleLeft));
             }
             ui.add_space(10.0);
-            let items: [(&str, &str, CoreCmd); 6] = [
+            // seulement des fonctions intégrées : les commandes des plugins sont dans la palette (Ctrl+P)
+            let items: [(&str, &str, CoreCmd); 4] = [
                 (icon::DASHBOARD, "Tableau de bord : projets et tickets (Ctrl+Shift+D)", CoreCmd::Dashboard),
                 (icon::SWITCHER, "Ouvrir le sélecteur rapide", CoreCmd::Switcher),
                 (icon::GRAPH, "Ouvrir la vue graphique", CoreCmd::Graph),
-                (icon::DAILY, "Ouvrir la note du jour", CoreCmd::DailyNote),
-                (icon::TEMPLATES, "Insérer un modèle", CoreCmd::Templates),
                 (icon::PALETTE, "Ouvrir la palette de commandes", CoreCmd::Palette),
             ];
+            let tab = &self.tabs[self.active_tab];
+            let (dash, graph) = (tab.dashboard, tab.graph);
             for (ic, tip, c) in items {
-                if theme::icon_button(ui, ic, tip, false).clicked() {
+                // le bouton de la vue affichée reste en surbrillance
+                let active = matches!(c, CoreCmd::Dashboard) && dash || matches!(c, CoreCmd::Graph) && graph;
+                if theme::icon_button(ui, ic, tip, active).clicked() {
                     self.actions.push(UiAction::Core(c));
                 }
                 ui.add_space(2.0);
