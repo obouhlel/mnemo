@@ -1,0 +1,64 @@
+# Lance réellement Mnemo sur Windows (runner GitHub) : compile mnemo.exe exactement comme le workflow
+# « build » (compilation croisée MinGW depuis Linux), puis, sur une machine Windows, démarre
+# PostgreSQL, ouvre l'application, vérifie qu'elle tourne toujours au bout de 20 s et qu'elle a créé
+# la note de bienvenue, et prend une capture d'écran (artefact « mnemo-windows-smoke »).
+# Se lance à la main : Actions › windows-smoke › Run workflow.
+name: windows-smoke
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Outils de compilation croisée (MinGW)
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 && rustup target add x86_64-pc-windows-gnu
+      - run: make windows
+      - uses: actions/upload-artifact@v4
+        with: { name: mnemo-exe, path: dist/mnemo.exe }
+
+  smoke:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: mnemo-exe }
+      - name: PostgreSQL (préinstallé sur le runner)
+        shell: pwsh
+        run: |
+          $svc = Get-Service -Name "postgresql*"
+          Set-Service -InputObject $svc -Status Running -StartupType Automatic
+          & "$env:PGBIN\pg_isready.exe" -h localhost -t 30
+          & "$env:PGBIN\createdb.exe" -h localhost -U postgres vault
+      - name: Lance l'application
+        shell: pwsh
+        env:
+          MNEMO_DATABASE_URL: postgres://postgres:root@localhost:5432/vault
+          MNEMO_CONFIG_DIR: ${{ runner.temp }}\mnemo-config
+        run: |
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          $p = Start-Process -FilePath .\mnemo.exe -PassThru `
+            -RedirectStandardError smoke\stderr.log -RedirectStandardOutput smoke\stdout.log
+          Start-Sleep -Seconds 20
+          # capture de tout l'écran
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $img = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($img).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $img.Save("smoke\mnemo.png")
+          if ($p.HasExited) {
+            Write-Host "Mnemo s'est arrêté (code $($p.ExitCode))"
+            Get-Content smoke\stderr.log, smoke\stdout.log
+            exit 1
+          }
+          # la connexion a créé le schéma et la note de bienvenue
+          $notes = & "$env:PGBIN\psql.exe" -h localhost -U postgres -d vault -Atc "select path from notes"
+          $notes | Set-Content smoke\notes.txt
+          Write-Host "Notes : $notes"
+          Stop-Process -Id $p.Id
+          if (-not ($notes -match "Bienvenue")) { Write-Host "Note de bienvenue absente"; exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: mnemo-windows-smoke, path: smoke/ }
