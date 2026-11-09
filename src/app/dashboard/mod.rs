@@ -157,6 +157,26 @@ impl MnemoApp {
 
     pub(super) fn dashboard_ui(&mut self, ui: &mut egui::Ui, now: f64) {
         let p = self.palette();
+        // projets et tickets sont partagés (et synchronisés avec GitHub) : ils vivent dans la base
+        if self.conn != ConnState::Connected {
+            ui.vertical_centered(|ui| {
+                ui.add_space((ui.available_height() * 0.3).max(20.0));
+                ui.label(RichText::new("Tableau de bord").size(22.0).color(p.muted));
+                ui.add_space(10.0);
+                let msg = if self.cfg.database_url.is_empty() {
+                    "Les projets et tickets sont partagés entre vos appareils : ils ont besoin d'une base de synchronisation."
+                } else {
+                    "La base de synchronisation est injoignable pour le moment ; le tableau de bord revient dès la reconnexion."
+                };
+                ui.label(RichText::new(msg).color(p.faint));
+                ui.add_space(12.0);
+                if self.cfg.database_url.is_empty() && ui.button("Connecter une base…").clicked() {
+                    self.settings_tab = SettingsTab::Connection;
+                    self.show_settings = true;
+                }
+            });
+            return;
+        }
         let mut acts: Vec<DashAction> = vec![];
         // auto-sync with GitHub every 5 minutes
         if self.cfg.github_auto_sync && self.cfg.github_token.is_some() && now - self.dash.last_auto_sync > 300.0 {

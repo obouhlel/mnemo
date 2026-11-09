@@ -20,44 +20,6 @@ pub(super) fn centered<R>(ui: &mut egui::Ui, max_w: f32, add: impl FnOnce(&mut e
 }
 
 impl MnemoApp {
-    pub(super) fn connection_screen(&mut self, ui: &mut egui::Ui) {
-        ui.vertical_centered(|ui| {
-            ui.add_space(ui.available_height() * 0.15);
-            ui.heading(RichText::new("Mnemo").size(34.0).strong());
-            ui.label("Vos notes Markdown, stockées dans PostgreSQL et synchronisées en direct.");
-            ui.add_space(24.0);
-            ui.allocate_ui(egui::vec2(560.0, 300.0), |ui| {
-                ui.label("URL de connexion PostgreSQL");
-                ui.horizontal(|ui| {
-                    let r = ui.add(
-                        egui::TextEdit::singleline(&mut self.url_input)
-                            .password(!self.show_password)
-                            .desired_width(470.0)
-                            .hint_text("postgres://user:motdepasse@hôte:5432/base"),
-                    );
-                    ui.checkbox(&mut self.show_password, "👁");
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                        self.connect();
-                    }
-                });
-                ui.add_space(6.0);
-                let connecting = self.conn == ConnState::Connecting;
-                if ui.add_enabled(!connecting, egui::Button::new(if connecting { "Connexion…" } else { "Se connecter" })).clicked() {
-                    self.connect();
-                }
-                if let ConnState::Disconnected(Some(e)) = &self.conn {
-                    ui.add_space(8.0);
-                    ui.colored_label(Color32::from_rgb(230, 90, 90), format!("Échec : {e}"));
-                }
-                ui.add_space(16.0);
-                ui.weak("Pas encore de base ? Lancez-en une avec Docker :");
-                ui.code("docker run -d --name mnemo-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=vault -p 5432:5432 postgres:16");
-                ui.weak("Pour un serveur distant (Neon, Supabase, RDS…), ajoutez ?sslmode=require à l'URL.");
-                ui.weak("Toutes les instances connectées à la même base se synchronisent en temps réel.");
-            });
-        });
-    }
-
     pub(super) fn tab_bar(&mut self, ui: &mut egui::Ui) {
         let p = self.palette();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
@@ -277,19 +239,30 @@ impl MnemoApp {
     pub(super) fn sync_indicator(&mut self, ui: &mut egui::Ui) {
         let p = self.palette();
         let dirty = self.open.as_ref().is_some_and(|n| n.dirty());
+        let orange = Color32::from_rgb(0xe9, 0x97, 0x3f);
         let (ic, color, mut tip) = match (&self.conn, self.live) {
             (ConnState::Connected, true) if dirty => (icon::SYNC, p.faint, "Enregistrement…".to_string()),
             (ConnState::Connected, true) => {
                 (icon::SYNC, Color32::from_rgb(0x44, 0xcf, 0x6e), "Synchronisé en direct".to_string())
             }
-            (ConnState::Connected, false) => {
-                (icon::SYNC, Color32::from_rgb(0xe9, 0x97, 0x3f), "Connecté, flux live en reconnexion…".to_string())
-            }
-            _ => (icon::OFFLINE, Color32::from_rgb(0xfb, 0x46, 0x4c), "Hors ligne".to_string()),
+            (ConnState::Connected, false) => (icon::SYNC, orange, "Connecté, flux live en reconnexion…".to_string()),
+            (ConnState::Connecting, _) => (icon::SYNC, orange, "Connexion à la base…".to_string()),
+            (ConnState::Disconnected(Some(_)), _) => (
+                icon::OFFLINE,
+                orange,
+                "Hors ligne : tout est enregistré en local et sera synchronisé au retour".to_string(),
+            ),
+            (ConnState::Disconnected(None), _) => (
+                icon::LOCAL,
+                p.faint,
+                "Local uniquement : notes dans le dossier, sans base de synchronisation".to_string(),
+            ),
         };
-        tip.push_str(&format!("\nBase : {}", redact_url(&self.cfg.database_url)));
         if let Some(d) = &self.cfg.vault_dir {
-            tip.push_str(&format!("\nCoffre : {}", d.display()));
+            tip.push_str(&format!("\nDossier : {}", d.display()));
+        }
+        if !self.cfg.database_url.is_empty() {
+            tip.push_str(&format!("\nBase : {}", redact_url(&self.cfg.database_url)));
         }
         let (rect, r) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
         if r.hovered() {

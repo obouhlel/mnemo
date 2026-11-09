@@ -14,6 +14,7 @@
 //! Les dossiers cachés (`.obsidian`, `.trash`, `.git`…) et les fichiers autres que `.md` sont ignorés.
 
 use super::*;
+use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -45,12 +46,58 @@ pub(super) struct Vault {
     /// dossiers (en minuscules) présents des deux côtés au dernier passage
     folders: HashSet<String>,
     first: bool,
+    /// icônes / réglages des plugins tels qu'au dernier passage (base de la fusion à 3 voies)
+    kv_known: HashMap<&'static str, Map<String, Value>>,
 }
 
 impl Vault {
     pub(super) fn new(root: PathBuf) -> Self {
-        Self { root, known: HashMap::new(), folders: HashSet::new(), first: true }
+        Self { root, known: HashMap::new(), folders: HashSet::new(), first: true, kv_known: HashMap::new() }
     }
+
+    /// Oublie l'état connu : le prochain passage recompare tout (reconnexion à la base).
+    pub(super) fn reset(&mut self) {
+        self.known.clear();
+        self.folders.clear();
+        self.kv_known.clear();
+        self.first = true;
+    }
+}
+
+/// Clés à écrire dans la base après une fusion (`None` : à supprimer).
+type KvPush = Vec<(String, Option<Value>)>;
+
+/// Fusion à 3 voies d'un fichier d'état (icônes, plugins) avec la table correspondante.
+/// Renvoie le résultat et les clés à écrire dans la base (`None` : à supprimer). Si les deux côtés ont changé
+/// la même clé, la base l'emporte (comme pour les notes). Sans base connue (premier passage) : union.
+fn merge_kv(
+    base: Option<&Map<String, Value>>,
+    local: &Map<String, Value>,
+    remote: &Map<String, Value>,
+) -> (Map<String, Value>, KvPush) {
+    let keys: std::collections::BTreeSet<&String> = local.keys().chain(remote.keys()).collect();
+    let mut result = Map::new();
+    let mut push = vec![];
+    for k in keys {
+        let (l, r) = (local.get(k), remote.get(k));
+        let chosen = if l == r {
+            l
+        } else {
+            match base {
+                None => r.or(l),
+                Some(b) if l == b.get(k) => r, // seule la base a changé
+                Some(b) if r == b.get(k) => l, // seul le local a changé
+                Some(_) => r,                  // les deux : la base l'emporte
+            }
+        };
+        if chosen != r {
+            push.push((k.clone(), chosen.cloned()));
+        }
+        if let Some(v) = chosen {
+            result.insert(k.clone(), v.clone());
+        }
+    }
+    (result, push)
 }
 
 struct Known {
@@ -159,7 +206,7 @@ fn read(f: &DiskFile) -> Option<String> {
 }
 
 /// Écrit via un fichier temporaire caché puis renomme : Obsidian ne voit jamais de fichier à moitié écrit.
-fn write_file(abs: &Path, content: &str) -> std::io::Result<Option<SystemTime>> {
+pub(crate) fn write_file(abs: &Path, content: &str) -> std::io::Result<Option<SystemTime>> {
     if let Some(dir) = abs.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -246,6 +293,8 @@ impl Worker {
                         if let Some(dir) = abs.parent() {
                             let _ = std::fs::create_dir_all(dir);
                         }
+                        // l'id suit le fichier avant qu'il bouge : le stockage local garde la même note
+                        self.shared.ids.lock().expect("ids").rename(&k.path, &path, false, true);
                         if std::fs::rename(&old.abs, &abs).is_ok() {
                             stats.written += 1;
                             let m = mtime(&abs);
@@ -322,6 +371,8 @@ impl Worker {
                 v.known.insert(id, Known { path: path.clone(), version, mtime, hash: hash(text) });
             };
             let disk_file = disk.get(&path.to_lowercase());
+            // la note garde en local l'identifiant qu'elle a dans la base
+            self.shared.ids.lock().expect("ids").set(&path, id, true);
             match plan {
                 Plan::Write => match write_file(&abs, &db_text) {
                     Ok(m) => {
@@ -388,10 +439,17 @@ impl Worker {
                 stats.skipped += 1;
                 continue;
             };
+            // la note garde dans la base l'identifiant qu'elle a en local ; si cet id désigne déjà une autre note
+            // de la base (copie restée d'une note renommée ailleurs), le fichier devient une note à part
+            let mut id = self.shared.ids.lock().expect("ids").get_or_create(&f.rel);
+            if db_ids.contains(&id) {
+                id = Uuid::new_v4();
+                self.shared.ids.lock().expect("ids").set(&f.rel, id, true);
+            }
             let row = t
                 .query_opt(
-                    "INSERT INTO notes (path, content) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id, version",
-                    &[&f.rel, &text],
+                    "INSERT INTO notes (id, path, content) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING id, version",
+                    &[&id, &f.rel, &text],
                 )
                 .await?;
             if let Some(row) = row {
@@ -441,6 +499,64 @@ impl Worker {
                 stats.written += 1;
             }
         }
+        // icônes et réglages des plugins : .mnemo/icons.json et plugins.json ↔ tables de la base
+        for name in ["icons", "plugins"] {
+            let remote: Map<String, Value> = if name == "icons" {
+                t.query("SELECT path, icon FROM path_icons", &[])
+                    .await?
+                    .iter()
+                    .map(|r| (r.get::<_, String>(0), Value::String(r.get(1))))
+                    .collect()
+            } else {
+                t.query("SELECT id, enabled, settings FROM plugin_state", &[])
+                    .await?
+                    .iter()
+                    .map(|r| {
+                        let v = serde_json::json!({ "enabled": r.get::<_, bool>(1), "settings": r.get::<_, Value>(2) });
+                        (r.get::<_, String>(0), v)
+                    })
+                    .collect()
+            };
+            let push = {
+                let _guard = self.shared.state_lock.lock().expect("state lock");
+                let local = crate::local::shared::read_state(&root, name);
+                let (result, push) = merge_kv(v.kv_known.get(name), &local, &remote);
+                if result != local {
+                    crate::local::shared::write_state(&root, name, &result);
+                    stats.written += 1;
+                }
+                v.kv_known.insert(name, result);
+                push
+            };
+            for (key, val) in push {
+                stats.pulled += 1;
+                match (name, val) {
+                    ("icons", Some(Value::String(icon))) => {
+                        t.execute(
+                            "INSERT INTO path_icons (path, icon) VALUES ($1, $2) ON CONFLICT (path) DO UPDATE SET icon = EXCLUDED.icon",
+                            &[&key, &icon],
+                        )
+                        .await?;
+                    }
+                    ("icons", _) => {
+                        t.execute("DELETE FROM path_icons WHERE path = $1", &[&key]).await?;
+                    }
+                    (_, Some(v)) => {
+                        let enabled = v.get("enabled").and_then(|e| e.as_bool()).unwrap_or(false);
+                        let settings = v.get("settings").cloned().unwrap_or_else(|| serde_json::json!({}));
+                        t.execute(
+                            "INSERT INTO plugin_state (id, enabled, settings) VALUES ($1, $2, $3)
+                             ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, settings = EXCLUDED.settings",
+                            &[&key, &enabled, &settings],
+                        )
+                        .await?;
+                    }
+                    (_, None) => {
+                        t.execute("DELETE FROM plugin_state WHERE id = $1", &[&key]).await?;
+                    }
+                }
+            }
+        }
         t.commit().await?;
         v.folders = kept;
 
@@ -480,6 +596,24 @@ mod tests {
         assert_eq!(dirs, vec!["Projets".to_string(), "Projets/Vide".to_string()]);
         assert_eq!(skipped, 1);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn kv_merge() {
+        let m = |pairs: &[(&str, &str)]| -> Map<String, Value> {
+            pairs.iter().map(|(k, v)| (k.to_string(), Value::String(v.to_string()))).collect()
+        };
+        // premier passage : union, la base l'emporte sur une même clé
+        let (r, push) = merge_kv(None, &m(&[("a", "1"), ("b", "local")]), &m(&[("b", "base"), ("c", "3")]));
+        assert_eq!(r, m(&[("a", "1"), ("b", "base"), ("c", "3")]));
+        assert_eq!(push, vec![("a".to_string(), Some(Value::String("1".into())))]);
+        // ensuite : chaque côté propage ses changements, suppressions comprises
+        let base = m(&[("a", "1"), ("b", "2")]);
+        let (r, push) = merge_kv(Some(&base), &m(&[("a", "1"), ("b", "2"), ("n", "new")]), &m(&[("a", "1")]));
+        assert_eq!(r, m(&[("a", "1"), ("n", "new")])); // b supprimée dans la base, n ajoutée en local
+        assert_eq!(push, vec![("n".to_string(), Some(Value::String("new".into())))]);
+        let (_, push) = merge_kv(Some(&base), &m(&[("a", "1")]), &base);
+        assert_eq!(push, vec![("b".to_string(), None)]); // supprimée en local
     }
 
     #[test]

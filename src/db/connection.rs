@@ -10,6 +10,7 @@ impl Worker {
             l.abort();
         }
         self.client = None;
+        self.last_try = Some(std::time::Instant::now());
         let client = match open_client(&url).await {
             Ok(c) => c,
             Err(e) => return self.emit(Msg::ConnectionFailed(pg_err(&e))),
