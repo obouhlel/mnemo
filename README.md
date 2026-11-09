@@ -67,7 +67,7 @@ curl -LO https://github.com/obouhlel/mnemo/releases/latest/download/mnemo-linux-
 
 | OS | Installer |
 |---|---|
-| **Debian / Ubuntu** | `sudo apt install ./mnemo_0.1.0-1_amd64.deb` |
+| **Debian / Ubuntu** | `sudo apt install ./mnemo_<version>-1_amd64.deb` |
 | **Arch Linux** | `make arch` puis `sudo pacman -U dist/mnemo-*.pkg.tar.zst` |
 | **Autres Linux** | archive `mnemo-<version>-linux-x86_64.tar.gz` / `aarch64` (glibc ≥ 2.28) |
 | **Windows 10/11** | `mnemo.exe` |
