@@ -103,6 +103,15 @@ DROP TRIGGER IF EXISTS folders_notify ON folders;
 CREATE TRIGGER folders_notify AFTER INSERT OR UPDATE OR DELETE ON folders
   FOR EACH ROW EXECUTE FUNCTION generic_notify('folder', 'path');
 
+-- Icônes de l'explorateur (dossier ou note), nom d'icône Lucide ou emoji. Clé : chemin en minuscules.
+CREATE TABLE IF NOT EXISTS path_icons (
+  path text PRIMARY KEY,
+  icon text NOT NULL CHECK (icon <> '')
+);
+DROP TRIGGER IF EXISTS path_icons_notify ON path_icons;
+CREATE TRIGGER path_icons_notify AFTER INSERT OR UPDATE OR DELETE ON path_icons
+  FOR EACH ROW EXECUTE FUNCTION generic_notify('icon', 'path');
+
 DROP TRIGGER IF EXISTS plugin_state_notify ON plugin_state;
 CREATE TRIGGER plugin_state_notify AFTER INSERT OR UPDATE OR DELETE ON plugin_state
   FOR EACH ROW EXECUTE FUNCTION generic_notify('plugin', 'id');

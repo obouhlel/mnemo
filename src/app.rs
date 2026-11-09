@@ -4,6 +4,7 @@ mod conflict;
 mod dashboard;
 mod dialogs;
 mod editor;
+mod icons;
 mod layout;
 mod notes;
 mod settings;
@@ -98,6 +99,9 @@ pub struct MnemoApp {
     dash: dashboard::DashState,
     github_input: String,
     vault_input: String,
+    /// icônes de l'explorateur : chemin en minuscules → icône Lucide ou emoji
+    icons: HashMap<String, String>,
+    icon_pick: Option<icons::IconPick>,
     /// donne le focus à cet éditeur à la prochaine frame (note qui vient d'être créée)
     focus_editor: Option<egui::Id>,
     /// dossier de l'explorateur survolé pendant un glisser depuis le système
@@ -190,6 +194,8 @@ impl MnemoApp {
             dash: dashboard::DashState::default(),
             github_input: String::new(),
             vault_input: String::new(),
+            icons: HashMap::new(),
+            icon_pick: None,
             focus_editor: None,
             os_drop_target: None,
             vault_next_scan: 0.0,
@@ -330,6 +336,7 @@ impl eframe::App for MnemoApp {
         }
         self.conflict_window(&ctx, now);
         self.dialogs(&ctx, now);
+        self.icon_picker(&ctx);
         self.notices_ui(&ctx, now);
 
         // Intercept clicks on [[wikilinks]] / #tags rendered in the preview

@@ -11,6 +11,8 @@ connectées à la même base. Un seul binaire pour Windows, macOS et Linux.
 - **Rétroliens**, `#tags`, recherche plein texte (Postgres `tsvector`), arborescence de dossiers
 - Renommer / déplacer une note **met à jour les liens** dans les autres notes ; **glisser-déposer** des notes et dossiers
   dans l'explorateur, et import de fichiers `.md` / dossiers déposés depuis le système
+- **Icônes** de dossiers et de notes dans l'explorateur (clic droit › Changer l'icône…) : les 1 500 icônes Lucide ou
+  un emoji, synchronisées entre appareils ; celles du plugin Iconize d'Obsidian sont reprises à la liaison du coffre
 - **Coffre Obsidian** (Paramètres → Coffre Obsidian) : toutes les notes du dossier sont importées, puis le dossier reste
   synchronisé dans les deux sens (création, modification, renommage, suppression vers `.trash/`)
 - **Live refresh** : chaque modification (depuis une autre machine, une autre fenêtre ou même un `UPDATE` SQL) apparaît instantanément
