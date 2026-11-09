@@ -76,6 +76,12 @@ pub enum Cmd {
     },
     DeleteFolder(String),
     Search(String),
+    /// Icônes de l'explorateur : chemin (dossier ou note) → icône
+    ListIcons,
+    SetIcon {
+        path: String,
+        icon: Option<String>,
+    },
     Backlinks(Uuid),
     Tags,
     Graph,
@@ -168,6 +174,8 @@ pub enum Msg {
         links: Vec<Backlink>,
     },
     Tags(Vec<(String, i64)>),
+    /// chemin en minuscules → icône
+    Icons(HashMap<String, String>),
     Graph(GraphData),
     Plugins(HashMap<String, PluginState>),
     Board(Board),

@@ -128,6 +128,8 @@ pub(super) enum UiAction {
     Forward,
     /// glisser-déposer dans l'explorateur : élément déplacé, dossier de destination ("" = racine)
     Move(DragItem, String),
+    /// ouvre le choix de l'icône d'un dossier / d'une note
+    PickIcon(String),
     /// fichiers / dossiers déposés depuis le système : chemins, dossier de destination
     ImportFiles(Vec<std::path::PathBuf>, String),
 }
@@ -185,5 +187,6 @@ pub(super) struct Needs {
     pub(super) backlinks: bool,
     pub(super) graph: bool,
     pub(super) tags: bool,
+    pub(super) icons: bool,
     pub(super) plugins: bool,
 }

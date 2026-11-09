@@ -117,11 +117,14 @@ impl Worker {
                     Err(e) => return Err(e),
                 };
                 let relinked = relink(&mut t, id, &old, &new_path).await?;
+                move_icons(&t, &old, &new_path).await?;
                 t.commit().await?;
                 em.emit(Msg::Renamed { note: note_from(&row), relinked });
             }
             Cmd::Delete(id) => {
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
+                t.execute("DELETE FROM path_icons WHERE path IN (SELECT lower(path) FROM notes WHERE id = $1)", &[&id])
+                    .await?;
                 t.execute("DELETE FROM notes WHERE id = $1", &[&id]).await?;
                 t.commit().await?;
                 em.emit(Msg::Deleted(id));
@@ -150,6 +153,7 @@ impl Worker {
                     }
                     relink(&mut t, id, &path, &np).await?;
                 }
+                move_icons(&t, &from, &to).await?;
                 let folders =
                     t.query(&format!("DELETE FROM folders WHERE {PREFIXED} RETURNING path"), &[&from]).await?;
                 for f in &folders {
@@ -166,6 +170,26 @@ impl Worker {
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
                 t.execute(&format!("DELETE FROM notes WHERE {PREFIXED}"), &[&path]).await?;
                 t.execute(&format!("DELETE FROM folders WHERE {PREFIXED}"), &[&path]).await?;
+                t.execute(&format!("DELETE FROM path_icons WHERE {PREFIXED}"), &[&path]).await?;
+                t.commit().await?;
+            }
+            Cmd::ListIcons => {
+                let rows = self.conn().query("SELECT path, icon FROM path_icons", &[]).await?;
+                em.emit(Msg::Icons(rows.iter().map(|r| (r.get(0), r.get(1))).collect()));
+            }
+            Cmd::SetIcon { path, icon } => {
+                let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
+                match icon {
+                    Some(icon) => {
+                        t.execute(
+                            "INSERT INTO path_icons (path, icon) VALUES (lower($1), $2)
+                             ON CONFLICT (path) DO UPDATE SET icon = EXCLUDED.icon",
+                            &[&path, &icon],
+                        )
+                        .await?
+                    }
+                    None => t.execute("DELETE FROM path_icons WHERE path = lower($1)", &[&path]).await?,
+                };
                 t.commit().await?;
             }
             Cmd::Search(q) => {
@@ -323,6 +347,23 @@ pub(super) fn note_from(r: &Row) -> Note {
         updated_by: r.get(4),
         updated_at: r.get(5),
     }
+}
+
+/// Renommage / déplacement : les icônes du chemin (et de tout ce qu'il contient) suivent.
+pub(super) async fn move_icons(t: &tokio_postgres::Transaction<'_>, from: &str, to: &str) -> Res<()> {
+    t.execute(
+        &format!(
+            "INSERT INTO path_icons (path, icon)
+               SELECT lower($2) || substr(path, length($1) + 1), icon FROM path_icons WHERE {PREFIXED}
+             ON CONFLICT (path) DO UPDATE SET icon = EXCLUDED.icon"
+        ),
+        &[&from, &to],
+    )
+    .await?;
+    if from.to_lowercase() != to.to_lowercase() {
+        t.execute(&format!("DELETE FROM path_icons WHERE {PREFIXED}"), &[&from]).await?;
+    }
+    Ok(())
 }
 
 /// After a rename, rewrites `[[old]]`, `[[old|…]]`, `[[old#…]]` in every note linking to it.

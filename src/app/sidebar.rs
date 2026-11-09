@@ -36,6 +36,7 @@ struct TreeCx<'a> {
     actions: &'a mut Vec<UiAction>,
     expanded: &'a std::collections::HashSet<String>,
     sort: SortOrder,
+    icons: &'a HashMap<String, String>,
     /// un élément (de l'explorateur ou du système) est en train d'être glissé
     dragging: bool,
     /// dossier survolé pendant le glissement ("" = racine)
@@ -61,7 +62,8 @@ fn tree_ui(ui: &mut egui::Ui, folder: &TreeFolder, depth: usize, cx: &mut TreeCx
     for sub in folders {
         let is_open = cx.expanded.contains(&sub.path.to_lowercase());
         let top = ui.cursor().top();
-        let r = theme::tree_row(ui, &sub.name, depth, false, Some(is_open));
+        let icon = cx.icons.get(&sub.path.to_lowercase()).map(String::as_str);
+        let r = theme::tree_row_icon(ui, &sub.name, depth, false, Some(is_open), icon);
         let r = dnd_row(cx, r, DragItem::Folder(sub.path.clone()), &sub.path);
         if r.clicked() {
             cx.actions.push(UiAction::ToggleFolder(sub.path.clone()));
@@ -77,6 +79,10 @@ fn tree_ui(ui: &mut egui::Ui, folder: &TreeFolder, depth: usize, cx: &mut TreeCx
             }
             if ui.button("Renommer / déplacer…").clicked() {
                 cx.actions.push(UiAction::RenameFolder(sub.path.clone()));
+                ui.close();
+            }
+            if ui.button("Changer l'icône…").clicked() {
+                cx.actions.push(UiAction::PickIcon(sub.path.clone()));
                 ui.close();
             }
             ui.separator();
@@ -109,7 +115,8 @@ fn tree_ui(ui: &mut egui::Ui, folder: &TreeFolder, depth: usize, cx: &mut TreeCx
     }
     for (name, id, _) in notes {
         let path = if folder.path.is_empty() { name.clone() } else { format!("{}/{}", folder.path, name) };
-        let r = theme::tree_row(ui, name, depth, cx.open == Some(*id), None);
+        let icon = cx.icons.get(&path.to_lowercase()).map(String::as_str);
+        let r = theme::tree_row_icon(ui, name, depth, cx.open == Some(*id), None, icon);
         // déposer sur une note = déposer dans son dossier
         let r = dnd_row(cx, r, DragItem::Note(*id, path.clone()), &folder.path);
         if r.clicked() {
@@ -133,6 +140,10 @@ fn tree_ui(ui: &mut egui::Ui, folder: &TreeFolder, depth: usize, cx: &mut TreeCx
             }
             if ui.button("Copier le lien [[…]]").clicked() {
                 ui.ctx().copy_text(format!("[[{name}]]"));
+                ui.close();
+            }
+            if ui.button("Changer l'icône…").clicked() {
+                cx.actions.push(UiAction::PickIcon(path.clone()));
                 ui.close();
             }
             ui.separator();
@@ -256,6 +267,7 @@ impl MnemoApp {
                         actions: &mut self.actions,
                         expanded: &self.expanded,
                         sort: self.sort,
+                        icons: &self.icons,
                         dragging: internal || external,
                         target: None,
                         accent: p.accent,

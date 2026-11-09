@@ -64,6 +64,7 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `dialogs.rs` | palette, sélecteur de notes, saisie de nom, confirmations |
 | `conflict.rs` | fenêtre de résolution de conflit (choix par bloc, diff) |
 | `settings.rs` | fenêtre des paramètres (général, plugins, GitHub) |
+| `icons.rs` | icônes des dossiers / notes : fenêtre de choix (Lucide, emoji), import depuis Iconize |
 | `vault.rs` | onglet Coffre Obsidian, passage de synchronisation périodique, import des fichiers déposés, `settings_row` |
 | `appearance.rs` | onglet Apparence, chargement et surveillance des fichiers CSS |
 | `dashboard/` | tableau de bord : `mod.rs` (état, vue principale), `rows.rs`, `columns.rs`, `ticket.rs`, `actions.rs` |

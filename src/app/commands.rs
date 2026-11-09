@@ -119,6 +119,9 @@ impl MnemoApp {
                 UiAction::Back => self.navigate(false),
                 UiAction::Forward => self.navigate(true),
                 UiAction::Move(item, target) => self.move_item(item, &target, now),
+                UiAction::PickIcon(path) => {
+                    self.icon_pick = Some(icons::IconPick { path, query: String::new(), focus: true })
+                }
                 UiAction::ImportFiles(files, target) => self.import_dropped(files, &target, now),
             }
         }
@@ -212,6 +215,7 @@ impl MnemoApp {
                     tags: true,
                     graph: self.graph_shown(),
                     board: true,
+                    icons: true,
                 };
                 if let Some(n) = &self.open {
                     self.db.send(Cmd::Load { id: n.id, purpose: LoadPurpose::Refresh });

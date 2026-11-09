@@ -194,6 +194,38 @@ pub mod icon {
     pub const TICKET: &str = "\u{e20f}";
 }
 
+/// Toutes les icônes Lucide de la police : (nom, caractère), triées par nom.
+pub fn lucide_icons() -> &'static [(&'static str, char)] {
+    static LIST: std::sync::OnceLock<Vec<(&'static str, char)>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| {
+        include_str!("../assets/fonts/lucide-names.txt")
+            .lines()
+            .filter_map(|l| {
+                let (name, hex) = l.split_once(' ')?;
+                Some((name, char::from_u32(u32::from_str_radix(hex, 16).ok()?)?))
+            })
+            .collect()
+    })
+}
+
+/// Caractère d'une icône Lucide d'après son nom (« radio-tower »).
+pub fn lucide(name: &str) -> Option<char> {
+    let list = lucide_icons();
+    list.binary_search_by(|(n, _)| (*n).cmp(name)).ok().map(|i| list[i].1)
+}
+
+/// Dessine l'icône d'un dossier / d'une note : nom Lucide, sinon le texte tel quel (emoji).
+pub fn paint_entry_icon(painter: &egui::Painter, center: egui::Pos2, icon: &str, size: f32, color: Color32) {
+    match lucide(icon) {
+        Some(c) => {
+            painter.text(center, egui::Align2::CENTER_CENTER, c, FontId::new(size, icon_family()), color);
+        }
+        None => {
+            painter.text(center, egui::Align2::CENTER_CENTER, icon, FontId::proportional(size), color);
+        }
+    }
+}
+
 pub fn icon_family() -> FontFamily {
     FontFamily::Name("lucide".into())
 }
@@ -341,6 +373,18 @@ pub fn icon_button_sized(
 
 /// One row of the file explorer: indentation guides, chevron for folders, hover/active background.
 pub fn tree_row(ui: &mut Ui, label: &str, depth: usize, active: bool, folder: Option<bool>) -> Response {
+    tree_row_icon(ui, label, depth, active, folder, None)
+}
+
+/// Comme `tree_row`, avec une icône (Lucide ou emoji) devant le nom.
+pub fn tree_row_icon(
+    ui: &mut Ui,
+    label: &str,
+    depth: usize,
+    active: bool,
+    folder: Option<bool>,
+    icon: Option<&str>,
+) -> Response {
     let p = palette(ui.visuals().dark_mode);
     let width = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 26.0), Sense::click());
@@ -369,6 +413,10 @@ pub fn tree_row(ui: &mut Ui, label: &str, depth: usize, active: bool, folder: Op
         x += 16.0;
     } else {
         x += 4.0;
+    }
+    if let Some(ic) = icon {
+        paint_entry_icon(painter, egui::pos2(x + 7.0, rect.center().y), ic, 14.0, text_color);
+        x += 21.0;
     }
     // single line, truncated with "…" (full name in the tooltip)
     let mut job = LayoutJob::single_section(

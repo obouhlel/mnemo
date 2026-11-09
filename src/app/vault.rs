@@ -60,6 +60,10 @@ impl MnemoApp {
                 self.css.obsidian_input = d.join(".obsidian").display().to_string();
                 self.reload_css();
             }
+            // et les icônes de dossiers / notes réglées avec Iconize
+            if d.join(".obsidian").is_dir() {
+                self.import_iconize_notice(&d.join(".obsidian"), true, now);
+            }
         }
         self.vault_input = dir.as_ref().map(|d| d.display().to_string()).unwrap_or_default();
         self.cfg.vault_dir = dir;
@@ -140,6 +144,7 @@ impl MnemoApp {
             };
             let mut unlink = false;
             let mut rescan = false;
+            let mut iconize = false;
             settings_row(ui, &p, "Synchronisation", &state, |ui| {
                 if ui.button("Délier").clicked() {
                     unlink = true;
@@ -148,6 +153,20 @@ impl MnemoApp {
                     rescan = true;
                 }
             });
+            settings_row(
+                ui,
+                &p,
+                "Icônes",
+                "Reprend les icônes de dossiers et de notes réglées avec le plugin Iconize d'Obsidian.",
+                |ui| {
+                    if ui.button("Importer les icônes d'Obsidian").clicked() {
+                        iconize = true;
+                    }
+                },
+            );
+            if iconize {
+                self.import_iconize_notice(&dir.join(".obsidian"), false, now);
+            }
             if rescan {
                 self.db.send(Cmd::VaultScan);
             }

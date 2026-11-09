@@ -24,6 +24,7 @@ impl MnemoApp {
                         plugins: true,
                         tags: true,
                         board: true,
+                        icons: true,
                         ..Default::default()
                     };
                     self.send_github_config();
@@ -40,6 +41,7 @@ impl MnemoApp {
                         tags: true,
                         graph: self.graph_shown(),
                         board: true,
+                        icons: true,
                     };
                     if let Some(n) = &self.open {
                         self.db.send(Cmd::Load { id: n.id, purpose: LoadPurpose::Refresh });
@@ -141,6 +143,7 @@ impl MnemoApp {
                     }
                 }
                 Msg::Tags(t) => self.tags = t,
+                Msg::Icons(i) => self.icons = i,
                 Msg::Graph(g) => self.graph.set_data(g),
                 Msg::Plugins(states) => {
                     self.plugins.apply_states(states);
@@ -206,6 +209,7 @@ impl MnemoApp {
             "folder" => self.need.folders = true,
             "board" => self.need.board = true,
             "plugin" => self.need.plugins = true,
+            "icon" => self.need.icons = true,
             _ => {}
         }
     }
@@ -235,6 +239,9 @@ impl MnemoApp {
         }
         if n.tags {
             self.db.send(Cmd::Tags);
+        }
+        if n.icons {
+            self.db.send(Cmd::ListIcons);
         }
         if n.graph {
             self.db.send(Cmd::Graph);
