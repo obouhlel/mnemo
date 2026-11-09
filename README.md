@@ -97,7 +97,8 @@ Tout passe par le `Makefile` (`make` seul liste les cibles). Les binaires et paq
 | `make clean` | supprime `target/` et `dist/` |
 
 Le workflow `.github/workflows/release.yml` appelle les mêmes cibles sur des machines natives, y compris macOS
-(Actions › Run workflow, ou en poussant un tag `v*`).
+(Actions › Run workflow, ou en poussant un tag `v*`). Pour publier une version sans git : Actions › build ›
+Run workflow avec le champ « version » (ex. `0.2.0`) ; la page Releases est créée avec tous les fichiers.
 Le workflow `.github/workflows/macos-smoke.yml` (lancé à la main) compile `Mnemo.app`, l'ouvre sur un vrai Mac avec
 PostgreSQL, vérifie qu'elle se connecte et joint une capture d'écran en artefact.
 `.github/workflows/windows-smoke.yml` fait de même sous Windows avec le `mnemo.exe` compilé comme pour une livraison.

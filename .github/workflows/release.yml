@@ -1,9 +1,15 @@
 # Compile Mnemo pour les trois OS en appelant les cibles du Makefile (même chemin qu'en local).
 # Se lance en poussant un tag (v0.1.0) ou à la main (Actions › build › Run workflow).
-# Sur un tag, le job publish crée la page Releases avec tous les fichiers.
+# Sur un tag, le job publish crée la page Releases avec tous les fichiers. À la main, renseigner « version »
+# (ex. 0.2.0) publie aussi la release : le tag v<version> est créé sur le commit compilé.
 name: build
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Publier la release v<version> (laisser vide pour seulement compiler)"
+        required: false
+        default: ""
   push:
     tags: ["v*"]
 
@@ -52,7 +58,7 @@ jobs:
 
   # Sur un tag v* : page Releases publique avec les fichiers à télécharger directement.
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
     needs: [linux, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
@@ -69,6 +75,9 @@ jobs:
       - name: Publie la release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY"
-          --title "Mnemo $GITHUB_REF_NAME" --generate-notes
+          VERSION: ${{ inputs.version }}
+        run: |
+          # tag poussé : son nom ; lancement manuel : v<version>, créé sur le commit compilé
+          if [ -n "$VERSION" ]; then TAG="v${VERSION#v}"; else TAG="$GITHUB_REF_NAME"; fi
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Mnemo $TAG" --generate-notes
