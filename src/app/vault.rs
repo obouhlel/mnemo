@@ -5,9 +5,6 @@ use super::*;
 use crate::db::VaultStats;
 use std::path::PathBuf;
 
-/// Intervalle entre deux comparaisons dossier ↔ base.
-const VAULT_SCAN_EVERY: f64 = 2.0;
-
 /// `~/x` → dossier personnel ; accepte aussi le dossier `.obsidian` (on remonte au coffre).
 pub(super) fn expand_dir(raw: &str) -> PathBuf {
     let raw = raw.trim();
@@ -39,65 +36,47 @@ fn summary(s: &VaultStats) -> String {
 }
 
 impl MnemoApp {
-    /// Envoie la liaison au worker (à la connexion et quand le dossier change).
+    /// Synchronisation dossier ↔ base : à la connexion et quand le dossier change.
     pub(super) fn send_vault(&mut self) {
         self.db.send(Cmd::SetVault(self.cfg.vault_dir.clone()));
         if self.cfg.vault_dir.is_some() {
             self.db.send(Cmd::VaultScan);
         }
-        self.vault_next_scan = 0.0;
     }
 
-    pub(super) fn link_vault(&mut self, dir: Option<PathBuf>, now: f64) {
-        if let Some(d) = &dir {
-            if !d.is_dir() {
-                self.notice(format!("Dossier introuvable : {}", d.display()), true, now);
-                return;
-            }
-            // réutilise aussi les thèmes / snippets du coffre s'il n'y en a pas déjà
-            if self.cfg.obsidian_dir.is_none() && d.join(".obsidian").is_dir() {
-                self.cfg.obsidian_dir = Some(d.join(".obsidian"));
-                self.css.obsidian_input = d.join(".obsidian").display().to_string();
-                self.reload_css();
-            }
-            // et les icônes de dossiers / notes réglées avec Iconize
-            if d.join(".obsidian").is_dir() {
-                self.import_iconize_notice(&d.join(".obsidian"), true, now);
-            }
-        }
-        self.vault_input = dir.as_ref().map(|d| d.display().to_string()).unwrap_or_default();
-        self.cfg.vault_dir = dir;
-        self.vault_last = None;
-        self.cfg.save();
-        self.send_vault();
-    }
-
-    /// Une comparaison toutes les `VAULT_SCAN_EVERY` secondes tant qu'un dossier est lié.
-    pub(super) fn vault_tick(&mut self, ctx: &egui::Context, now: f64) {
-        if self.cfg.vault_dir.is_none() || self.conn != ConnState::Connected {
+    /// Change le dossier des notes (la référence de Mnemo) ; la synchro avec la base suit si elle est active.
+    pub(super) fn set_notes_dir(&mut self, dir: PathBuf, now: f64) {
+        if !dir.is_dir() {
+            self.notice(format!("Dossier introuvable : {}", dir.display()), true, now);
             return;
         }
-        if now >= self.vault_next_scan {
-            self.vault_next_scan = now + VAULT_SCAN_EVERY;
-            self.db.send(Cmd::VaultScan);
+        // un coffre Obsidian : ses thèmes / snippets et ses icônes Iconize sont repris
+        if self.cfg.obsidian_dir.is_none() && dir.join(".obsidian").is_dir() {
+            self.cfg.obsidian_dir = Some(dir.join(".obsidian"));
+            self.css.obsidian_input = dir.join(".obsidian").display().to_string();
+            self.reload_css();
         }
-        ctx.request_repaint_after(std::time::Duration::from_secs_f64((self.vault_next_scan - now).max(0.1)));
+        self.vault_input = dir.display().to_string();
+        self.cfg.vault_dir = Some(dir.clone());
+        self.vault_last = None;
+        self.cfg.save();
+        self.open = None;
+        self.tabs = vec![Tab::default()];
+        self.active_tab = 0;
+        self.db.send(Cmd::SetRoot(dir.clone()));
+        if dir.join(".obsidian").is_dir() {
+            self.import_iconize_notice(&dir.join(".obsidian"), true, now);
+        }
+        if self.conn == ConnState::Connected {
+            self.send_vault();
+        }
     }
 
     pub(super) fn on_vault_synced(&mut self, stats: VaultStats, first: bool, now: f64) {
-        if first {
-            let mut msg = format!("Coffre synchronisé : {}", summary(&stats));
-            if stats.skipped > 0 {
-                msg.push_str(&format!(
-                    " ({} fichier(s) ignoré(s) : nom ou encodage non pris en charge)",
-                    stats.skipped
-                ));
-            }
-            self.notice(msg, false, now);
+        if first && stats.changed() {
+            self.notice(format!("Synchronisé avec la base : {}", summary(&stats)), false, now);
         }
         self.vault_last = Some((stats, chrono::Local::now()));
-        self.need.notes = true;
-        self.need.folders = true;
     }
 
     pub(super) fn vault_settings(&mut self, ui: &mut egui::Ui, now: f64) {
@@ -105,9 +84,10 @@ impl MnemoApp {
         ui.add(
             egui::Label::new(
                 RichText::new(
-                    "Liez le dossier d'un coffre Obsidian : toutes ses notes (.md) sont importées, et chaque note créée, \
-                     modifiée, renommée ou supprimée dans Mnemo est aussi enregistrée dans ce dossier. Les changements \
-                     faits dans le dossier (par Obsidian ou un autre éditeur) reviennent dans Mnemo en quelques secondes.",
+                    "Vos notes sont des fichiers Markdown (.md) dans ce dossier : Mnemo fonctionne sans base de données. \
+                     Choisissez le dossier d'un coffre Obsidian pour retrouver toutes vos notes ; les changements faits \
+                     par Obsidian ou un autre éditeur apparaissent dans Mnemo en une seconde. Les icônes et réglages \
+                     de Mnemo sont rangés dans le sous-dossier .mnemo.",
                 )
                 .size(12.5)
                 .color(p.muted),
@@ -116,43 +96,49 @@ impl MnemoApp {
         );
         ui.add_space(14.0);
         let mut input = self.vault_input.clone();
-        let mut link = false;
+        let mut change = false;
         settings_row(
             ui,
             &p,
-            "Dossier du coffre",
-            "Le dossier qui contient vos notes (et le dossier .obsidian).",
+            "Dossier des notes",
+            "Un dossier de fichiers .md (par exemple un coffre Obsidian).",
             |ui| {
-                if ui.button("Lier").clicked() {
-                    link = true;
+                if ui.button("Changer").clicked() {
+                    change = true;
                 }
                 let r = ui.add(egui::TextEdit::singleline(&mut input).hint_text("~/MonCoffre").desired_width(240.0));
                 if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                    link = true;
+                    change = true;
                 }
             },
         );
         self.vault_input = input;
-        if link {
-            let raw = self.vault_input.trim().to_string();
-            self.link_vault(if raw.is_empty() { None } else { Some(expand_dir(&raw)) }, now);
+        if change && !self.vault_input.trim().is_empty() {
+            let dir = expand_dir(&self.vault_input);
+            if Some(&dir) != self.cfg.vault_dir.as_ref() {
+                self.set_notes_dir(dir, now);
+            }
         }
+        let state = match (&self.conn, &self.vault_last) {
+            (ConnState::Connected, Some((s, at))) => {
+                format!("Synchronisé avec la base à {} : {}.", at.format("%H:%M:%S"), summary(s))
+            }
+            (ConnState::Connected, None) => "Première synchronisation avec la base en cours…".into(),
+            _ if self.cfg.database_url.trim().is_empty() => {
+                "Local uniquement. Pour retrouver vos notes sur plusieurs appareils, connectez une base PostgreSQL \
+                 dans « Base de données »."
+                    .into()
+            }
+            _ => "Base injoignable : tout est gardé en local et sera synchronisé au retour de la connexion.".into(),
+        };
+        let mut rescan = false;
+        let mut iconize = false;
+        settings_row(ui, &p, "Synchronisation", &state, |ui| {
+            if self.conn == ConnState::Connected && ui.button("Synchroniser maintenant").clicked() {
+                rescan = true;
+            }
+        });
         if let Some(dir) = self.cfg.vault_dir.clone() {
-            let state = match &self.vault_last {
-                Some((s, at)) => format!("Dernière synchronisation à {} : {}.", at.format("%H:%M:%S"), summary(s)),
-                None => "Première synchronisation en cours…".into(),
-            };
-            let mut unlink = false;
-            let mut rescan = false;
-            let mut iconize = false;
-            settings_row(ui, &p, "Synchronisation", &state, |ui| {
-                if ui.button("Délier").clicked() {
-                    unlink = true;
-                }
-                if ui.button("Synchroniser maintenant").clicked() {
-                    rescan = true;
-                }
-            });
             settings_row(
                 ui,
                 &p,
@@ -167,25 +153,30 @@ impl MnemoApp {
             if iconize {
                 self.import_iconize_notice(&dir.join(".obsidian"), false, now);
             }
-            if rescan {
-                self.db.send(Cmd::VaultScan);
-            }
-            if unlink {
-                self.link_vault(None, now);
-                self.notice(format!("Dossier délié : {}", dir.display()), false, now);
-            }
-            ui.add(
-                egui::Label::new(
-                    RichText::new(
-                        "Les fichiers supprimés depuis Mnemo sont déplacés dans le dossier .trash du coffre. \
-                         Les pièces jointes (images, PDF…) restent sur le disque et ne sont pas importées.",
-                    )
-                    .size(12.5)
-                    .color(p.faint),
-                )
-                .wrap(),
-            );
         }
+        if rescan {
+            self.db.send(Cmd::VaultScan);
+        }
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "Les notes supprimées vont dans le dossier .trash. Les pièces jointes (images, PDF…) restent \
+                     sur le disque.",
+                )
+                .size(12.5)
+                .color(p.faint),
+            )
+            .wrap(),
+        );
+    }
+
+    /// Dossier des notes par défaut (premier lancement) : ~/Documents/Mnemo.
+    pub(super) fn default_notes_dir() -> PathBuf {
+        directories::UserDirs::new()
+            .and_then(|u| u.document_dir().map(|d| d.to_path_buf()))
+            .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Mnemo")
     }
 
     /// Fichiers / dossiers glissés depuis le système vers la fenêtre : importés dans `target`

@@ -1,23 +1,26 @@
 # Mnemo
 
-Base de connaissances Markdown **native** (Rust + egui, sans Electron, sans JS), dont les notes
-sont stockées dans **PostgreSQL** et **synchronisées en direct** entre toutes les instances
-connectées à la même base. Un seul binaire pour Windows, macOS et Linux.
+Base de connaissances Markdown **native** (Rust + egui, sans Electron, sans JS). Les notes sont de simples
+fichiers `.md` dans un dossier (un coffre Obsidian convient) : Mnemo fonctionne **sans base de données**.
+Une base **PostgreSQL** facultative les **synchronise en direct** entre vos appareils, et tout continue en local
+hors connexion. Un seul binaire pour Windows, macOS et Linux.
 
 ## Fonctionnalités
 
 - Éditeur Markdown avec **aperçu en direct** (modes Édition / Divisé / Lecture), coloration du code, cases à cocher cliquables
 - `[[Liens wiki]]` avec **autocomplétion** (`[[` + nom), `[[Note|alias]]`, `[[Note#titre]]`, création au clic si la note n'existe pas
-- **Rétroliens**, `#tags`, recherche plein texte (Postgres `tsvector`), arborescence de dossiers
+- **Rétroliens**, `#tags`, recherche plein texte (sans accent ni casse, extraits surlignés), arborescence de dossiers
 - Renommer / déplacer une note **met à jour les liens** dans les autres notes ; **glisser-déposer** des notes et dossiers
   dans l'explorateur, et import de fichiers `.md` / dossiers déposés depuis le système
 - **Icônes** de dossiers et de notes dans l'explorateur (clic droit › Changer l'icône…) : les 1 500 icônes Lucide ou
   un emoji, synchronisées entre appareils ; celles du plugin Iconize d'Obsidian sont reprises à la liaison du coffre
-- **Coffre Obsidian** (Paramètres → Coffre Obsidian) : toutes les notes du dossier sont importées, puis le dossier reste
-  synchronisé dans les deux sens (création, modification, renommage, suppression vers `.trash/`)
-- **Live refresh** : chaque modification (depuis une autre machine, une autre fenêtre ou même un `UPDATE` SQL) apparaît instantanément
+- **Dossier des notes** (Paramètres › Dossier des notes) : un dossier de fichiers `.md`, par exemple un coffre Obsidian ;
+  un fichier modifié par un autre éditeur apparaît dans Mnemo en une seconde ; suppressions dans `.trash/`
+- **Synchronisation facultative** (Paramètres › Synchronisation) : avec une base PostgreSQL, chaque modification
+  (depuis une autre machine ou même un `UPDATE` SQL) apparaît en direct ; hors ligne, tout est gardé en local et envoyé
+  au retour de la connexion
 - **Résolution de conflits façon GitHub** : fusion à 3 voies, les changements qui ne se chevauchent pas sont fusionnés automatiquement ; les autres s'affichent côte à côte avec un diff unifié et un choix par bloc
-- **Plugins** en [Rhai](https://rhai.rs) (scripting embarqué en Rust, sandboxé), activables et configurables, avec réglages synchronisés via la base
+- **Plugins** en [Rhai](https://rhai.rs) (scripting embarqué en Rust, sandboxé), activables et configurables, réglages synchronisés
 - Palette de commandes (Ctrl+P), sélecteur de notes (Ctrl+O), graphe des liens (Ctrl+G, optionnel), thème clair/sombre
 - Interface calquée sur le thème par défaut d'Obsidian : ruban, explorateur avec chevrons et guides, onglets avec historique
   (← →), fil d'Ariane, titre intégré éditable (renomme la note), colonne de lecture de 700 px ; aide, paramètres et état de la
@@ -27,17 +30,17 @@ connectées à la même base. Un seul binaire pour Windows, macOS et Linux.
 
 ## Démarrage rapide
 
-1. Démarrez une base PostgreSQL (ou utilisez une base existante : Neon, Supabase, RDS…) :
+1. Lancez Mnemo (`cargo run --release`, ou le fichier de la page [Releases](https://github.com/obouhlel/mnemo/releases/latest)).
+   Les notes sont rangées dans `~/Documents/Mnemo` ; choisissez un autre dossier (par exemple votre coffre Obsidian)
+   dans Paramètres › Dossier des notes.
+2. Facultatif, pour synchroniser plusieurs appareils : démarrez une base PostgreSQL (ou utilisez Neon, Supabase, RDS…)
    ```bash
    make db                       # PostgreSQL 16 dans Docker, sur localhost:5432 (base "vault")
    ```
-2. Lancez Mnemo (`make run` fait les deux étapes et passe l'URL locale automatiquement) :
-   ```bash
-   cargo run --release
-   ```
-3. Au premier lancement, entrez l'URL de connexion (par défaut `postgres://postgres:postgres@localhost:5432/vault`).
-   Le schéma est créé automatiquement. Pour une base distante, ajoutez `?sslmode=require`.
-4. Sur un autre ordinateur, entrez la même URL : tout est synchronisé en direct.
+   puis entrez son URL dans Paramètres › Synchronisation (`postgres://postgres:postgres@localhost:5432/vault`,
+   `?sslmode=require` pour une base distante). Le schéma est créé automatiquement et vos notes y sont envoyées.
+3. Sur un autre ordinateur, entrez la même URL : ses notes arrivent dans son dossier, puis tout est synchronisé en direct.
+   Le tableau de bord (projets, tickets, GitHub) est partagé par la base : il demande la synchronisation.
 
 Sous Linux, si une bibliothèque graphique manque, Mnemo affiche la commande `apt` / `pacman` / `dnf` à lancer.
 
@@ -45,7 +48,7 @@ Variables d'environnement utiles :
 
 | Variable | Rôle |
 |---|---|
-| `MNEMO_DATABASE_URL` | URL Postgres (prioritaire sur la config) |
+| `MNEMO_DATABASE_URL` | URL de la base de synchronisation (prioritaire sur la config) |
 | `MNEMO_CONFIG_DIR` | dossier de config (par défaut le dossier de config de l'OS) |
 | `MNEMO_PLUGINS_DIR` | dossier des plugins (par défaut `<config>/plugins`) |
 
@@ -134,34 +137,30 @@ Ouvrez-le avec l'icône du ruban ou **Ctrl+Shift+D**. Tout est stocké dans Post
 ## Comment marche la synchronisation
 
 ```
- Mnemo (PC)  ──┐                       ┌──  Mnemo (Mac)
-               │  UPDATE notes …       │
-               ▼                       │
-          ┌────────────── PostgreSQL ──────────────┐
-          │ trigger BEFORE : version+1, updated_by │
-          │ trigger AFTER  : liens + pg_notify()   │
-          └───────────── NOTIFY vault_events ──────┘
-               │                       ▲
-               └──── LISTEN ───────────┘  (chaque instance)
+   Appareil A                                                   Appareil B
+ dossier .md ◄─► stockage local ◄─► synchro ◄─► PostgreSQL ◄─► synchro ◄─► stockage local ◄─► dossier .md
+                  (src/local/)    (vault_sync)   NOTIFY ──────► (immédiat)
 ```
 
-- Chaque instance garde une connexion `LISTEN vault_events` (reconnexion automatique avec backoff).
-- Les triggers (`src/schema.sql`) incrémentent `version` et envoient un `NOTIFY` : même une modification faite en SQL est propagée.
-- Sauvegarde automatique 0,6 s après la dernière frappe, avec **verrouillage optimiste** (`base_version`).
-- Si la note a changé ailleurs pendant que vous écriviez : fusion à 3 voies (`src/merge.rs`) avec comme base la dernière version
-  enregistrée connue. Rien n'est jamais écrasé sans votre accord ; si vous quittez avec un conflit non résolu, votre version
-  est conservée dans une note `… (conflit <date>)`.
-- **Dossier du coffre** (facultatif) : toutes les 2 s, le worker compare le dossier lié à la base (`src/db/vault_sync.rs`)
-  et recopie les changements dans les deux sens. Si une note a changé des deux côtés entre deux passages, la base
-  l'emporte et le texte du disque est gardé dans une note `… (conflit disque)`. Les dossiers cachés (`.obsidian`,
-  `.trash`, `.git`) et les pièces jointes ne sont pas importés.
+- **Le dossier est la référence.** Le stockage local (`src/local/`) indexe les fichiers `.md`, répond à l'interface
+  (recherche, rétroliens, tags, graphe, renommage avec réécriture des `[[liens]]`) et voit en une seconde un fichier
+  modifié par un autre éditeur. Icônes et réglages des plugins sont dans `.mnemo/` à côté des notes.
+- **La base est facultative.** Si elle est configurée, le worker compare le dossier à la base toutes les 2 s (et tout de
+  suite quand un autre appareil écrit, grâce à `LISTEN/NOTIFY`) et recopie les changements dans les deux sens :
+  contenu, renommages, suppressions, dossiers, icônes, plugins. Une note garde le même identifiant en local et en base.
+- **Hors ligne**, rien ne bloque : les modifications restent dans le dossier et le worker réessaie toutes les 30 s ;
+  au retour, tout est recomparé et envoyé. Si une note a changé des deux côtés, la base l'emporte et le texte local
+  est gardé dans une note `… (conflit disque)`.
+- Dans l'éditeur, sauvegarde automatique 0,6 s après la dernière frappe ; si la note a changé ailleurs pendant que vous
+  écriviez, fusion à 3 voies (`src/merge.rs`) : rien n'est écrasé sans votre accord.
 
 ## Structure
 
 | Chemin | Rôle |
 |---|---|
 | `src/app.rs`, `src/app/` | interface egui (un fichier par zone : éditeur, barres latérales, tableau de bord…) |
-| `src/db/` | worker Postgres : connexion et LISTEN, commandes notes / tableau de bord / GitHub |
+| `src/local/` | stockage local : dossier de fichiers `.md`, index (recherche, liens, tags, graphe), `.mnemo/` |
+| `src/db/` | worker Postgres : connexion et LISTEN, synchro dossier ↔ base, tableau de bord / GitHub |
 | `src/schema.sql` | tables, triggers de version / liens / NOTIFY |
 | `src/merge.rs`, `src/board.rs`, `src/github.rs` | fusion à 3 voies, domaine du tableau de bord, client GitHub |
 | `src/plugins.rs`, `src/css.rs`, `src/theme.rs` | plugins Rhai, thèmes CSS, apparence |

@@ -187,6 +187,7 @@ pub mod icon {
     pub const PUZZLE: &str = "\u{e29c}";
     pub const SYNC: &str = "\u{e149}"; // refresh-cw
     pub const OFFLINE: &str = "\u{e091}"; // cloud-off
+    pub const LOCAL: &str = "\u{e0f0}"; // hard-drive
     pub const ALERT: &str = "\u{e07b}";
     pub const CHEVRON_RIGHT: &str = "\u{e073}";
     pub const CHEVRON_DOWN: &str = "\u{e071}";

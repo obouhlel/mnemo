@@ -7,8 +7,23 @@ impl MnemoApp {
     pub(super) fn connect(&mut self) {
         self.cfg.database_url = self.url_input.trim().to_string();
         self.cfg.save();
+        if self.cfg.database_url.is_empty() {
+            self.disconnect();
+            return;
+        }
         self.conn = ConnState::Connecting;
+        self.offline_noticed = false;
         self.db.send(Cmd::Connect(self.cfg.database_url.clone()));
+    }
+
+    /// Arrête la synchronisation : Mnemo continue avec le dossier local.
+    pub(super) fn disconnect(&mut self) {
+        self.cfg.database_url.clear();
+        self.url_input.clear();
+        self.cfg.save();
+        self.db.send(Cmd::Disconnect);
+        self.conn = ConnState::Disconnected(None);
+        self.live = false;
     }
 
     pub(super) fn handle_messages(&mut self, now: f64) {
@@ -16,21 +31,46 @@ impl MnemoApp {
             match msg {
                 Msg::Connecting => self.conn = ConnState::Connecting,
                 Msg::Connected => {
+                    let was_offline = std::mem::replace(&mut self.offline_noticed, false);
                     self.conn = ConnState::Connected;
-                    self.restore_done = false;
-                    self.need = Needs {
-                        notes: true,
-                        folders: true,
-                        plugins: true,
-                        tags: true,
-                        board: true,
-                        icons: true,
-                        ..Default::default()
-                    };
+                    self.need.board = true;
                     self.send_github_config();
                     self.send_vault();
+                    if was_offline {
+                        self.notice(
+                            "Base de nouveau joignable : synchronisation des changements faits hors ligne",
+                            false,
+                            now,
+                        );
+                    }
                 }
-                Msg::ConnectionFailed(e) => self.conn = ConnState::Disconnected(Some(e)),
+                Msg::ConnectionFailed(e) => {
+                    // une seule alerte par coupure (le worker réessaie toutes les 30 s)
+                    if !std::mem::replace(&mut self.offline_noticed, true) {
+                        self.notice(
+                            format!("Synchronisation indisponible ({e}). Mnemo continue en local et réessaiera."),
+                            true,
+                            now,
+                        );
+                    }
+                    self.conn = ConnState::Disconnected(Some(e));
+                    self.live = false;
+                }
+                Msg::Disconnected => {
+                    self.conn = ConnState::Disconnected(None);
+                    self.live = false;
+                }
+                Msg::LocalReady => {
+                    self.local_ready = true;
+                    self.restore_done = false;
+                    self.need.notes = true;
+                    self.need.folders = true;
+                    self.need.plugins = true;
+                    self.need.tags = true;
+                    self.need.icons = true;
+                }
+                Msg::LocalEvent(ev) => self.handle_event(ev, now),
+                Msg::IdChanged { old, new } => self.remap_note_id(old, new),
                 Msg::Live(v) => self.live = v,
                 Msg::Resync => {
                     self.need = Needs {
@@ -43,9 +83,8 @@ impl MnemoApp {
                         board: true,
                         icons: true,
                     };
-                    if let Some(n) = &self.open {
-                        self.db.send(Cmd::Load { id: n.id, purpose: LoadPurpose::Refresh });
-                    }
+                    // la base a pu changer pendant la coupure : comparaison immédiate avec le dossier
+                    self.db.send(Cmd::VaultScan);
                 }
                 Msg::Notes(notes) => {
                     self.notes = notes;
@@ -63,7 +102,10 @@ impl MnemoApp {
                                 .map(|n| n.id);
                             if let Some(id) = target {
                                 self.open_id(id);
-                            } else if self.notes.is_empty() && self.cfg.vault_dir.is_none() {
+                            } else if self.notes.is_empty()
+                                && self.fresh_vault
+                                && self.cfg.database_url.trim().is_empty()
+                            {
                                 self.db.send(Cmd::Create {
                                     path: "Bienvenue".into(),
                                     content: WELCOME.into(),
@@ -149,7 +191,16 @@ impl MnemoApp {
                     self.plugins.apply_states(states);
                     self.plugin_changed();
                 }
-                Msg::Event(ev) => self.handle_event(ev, now),
+                // événements de la base (autres appareils) : notes, dossiers, icônes et plugins passent par le
+                // dossier local (synchronisation immédiate) ; le tableau de bord est lu directement dans la base
+                Msg::Event(ev) => {
+                    let mine = ev.updated_by.as_deref().is_some_and(|u| u.starts_with(self.client_id.as_str()));
+                    match ev.kind.as_str() {
+                        "board" => self.handle_event(ev, now),
+                        _ if !mine => self.db.send(Cmd::VaultScan),
+                        _ => {}
+                    }
+                }
                 Msg::Board(b) => {
                     crate::board::set_label_colors(&b.projects);
                     self.board = b;
@@ -220,11 +271,40 @@ impl MnemoApp {
         self.preview_gen = u64::MAX;
     }
 
+    /// Une note a pris l'identifiant qu'elle a dans la base : onglets, historique et note ouverte suivent.
+    pub(super) fn remap_note_id(&mut self, old: Uuid, new: Uuid) {
+        let fix = |x: &mut Uuid| {
+            if *x == old {
+                *x = new;
+            }
+        };
+        for t in &mut self.tabs {
+            if let Some(n) = &mut t.note {
+                fix(n);
+            }
+            t.back.iter_mut().for_each(fix);
+            t.fwd.iter_mut().for_each(fix);
+        }
+        if let Some(n) = &mut self.open {
+            fix(&mut n.id);
+        }
+        if let Some((id, _, _)) = &mut self.title_edit {
+            fix(id);
+        }
+        self.need.notes = true;
+        self.need.backlinks = true;
+    }
+
     pub(super) fn flush_needs(&mut self) {
-        if self.conn != ConnState::Connected {
+        if !self.local_ready {
             return;
         }
-        let n = std::mem::take(&mut self.need);
+        let mut n = std::mem::take(&mut self.need);
+        // le tableau de bord vit dans la base : seulement quand elle est connectée
+        if self.conn != ConnState::Connected {
+            self.need.board = n.board;
+            n.board = false;
+        }
         if n.notes {
             self.db.send(Cmd::ListNotes);
         }

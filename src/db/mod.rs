@@ -25,8 +25,10 @@ mod vault_sync;
 
 use board::*;
 use connection::*;
+pub use notes::rewrite_links;
 use notes::*;
 pub use vault_sync::VaultStats;
+pub(crate) use vault_sync::{DiskFile, note_file, walk};
 
 /// Notes Markdown d'un dossier du disque : (chemin relatif sans `.md`, fichier), sous-dossiers, entrées ignorées.
 pub fn walk_markdown(root: &std::path::Path) -> (Vec<(String, std::path::PathBuf)>, Vec<String>, usize) {
@@ -45,6 +47,10 @@ pub enum LoadPurpose {
 #[derive(Debug)]
 pub enum Cmd {
     Connect(String),
+    /// Arrête la synchronisation avec la base (Mnemo continue en local).
+    Disconnect,
+    /// Stockage local : dossier des notes (voir `crate::local`).
+    SetRoot(std::path::PathBuf),
     ListNotes,
     ListFolders,
     Load {
@@ -146,6 +152,17 @@ pub enum Cmd {
 pub enum Msg {
     Connecting,
     Connected,
+    /// Synchronisation arrêtée à la demande (Mnemo reste en local).
+    Disconnected,
+    /// Le dossier des notes est indexé.
+    LocalReady,
+    /// Changement dans le dossier des notes (par Mnemo, un autre éditeur ou la synchronisation).
+    LocalEvent(VaultEvent),
+    /// Une note a adopté l'identifiant qu'elle a dans la base (première synchronisation).
+    IdChanged {
+        old: Uuid,
+        new: Uuid,
+    },
     ConnectionFailed(String),
     Live(bool),
     Notes(Vec<NoteMeta>),
@@ -197,14 +214,49 @@ pub enum Msg {
     Error(String),
 }
 
+/// Envoie chaque commande au bon thread : notes, dossiers, recherche, icônes et plugins au stockage local
+/// (`crate::local`), tableau de bord, GitHub, connexion et synchronisation au worker PostgreSQL.
 #[derive(Clone)]
 pub struct DbHandle {
     tx: mpsc::UnboundedSender<Cmd>,
+    local: std::sync::mpsc::Sender<Cmd>,
+}
+
+impl Cmd {
+    fn is_local(&self) -> bool {
+        matches!(
+            self,
+            Cmd::SetRoot(_)
+                | Cmd::ListNotes
+                | Cmd::ListFolders
+                | Cmd::Load { .. }
+                | Cmd::OpenLink(_)
+                | Cmd::Create { .. }
+                | Cmd::Save { .. }
+                | Cmd::Rename { .. }
+                | Cmd::Delete(_)
+                | Cmd::CreateFolder(_)
+                | Cmd::RenameFolder { .. }
+                | Cmd::DeleteFolder(_)
+                | Cmd::Search(_)
+                | Cmd::Backlinks(_)
+                | Cmd::Tags
+                | Cmd::Graph
+                | Cmd::LoadPlugins
+                | Cmd::SetPlugin { .. }
+                | Cmd::ListIcons
+                | Cmd::SetIcon { .. }
+        )
+    }
 }
 
 impl DbHandle {
     pub fn send(&self, cmd: Cmd) {
-        let _ = self.tx.send(cmd);
+        if cmd.is_local() {
+            let _ = self.local.send(cmd);
+        } else {
+            let _ = self.tx.send(cmd);
+        }
     }
 }
 
@@ -213,9 +265,12 @@ pub fn spawn(
     client_id: String,
     out: std::sync::mpsc::Sender<Msg>,
     notify: impl Fn() + Send + Sync + 'static,
+    shared: crate::local::shared::SharedState,
 ) -> DbHandle {
     let (tx, rx) = mpsc::unbounded_channel();
     let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(notify);
+    let (local_tx, local_rx) = std::sync::mpsc::channel();
+    crate::local::spawn(client_id.clone(), out.clone(), notify.clone(), shared.clone(), local_rx);
     std::thread::Builder::new()
         .name("mnemo-db".into())
         .spawn(move || {
@@ -234,12 +289,15 @@ pub fn spawn(
                     listener: None,
                     github: None,
                     vault: None,
+                    shared,
+                    want_url: String::new(),
+                    last_try: None,
                 }
                 .run(rx),
             );
         })
         .expect("spawn db thread");
-    DbHandle { tx }
+    DbHandle { tx, local: local_tx }
 }
 
 struct Worker {
@@ -251,6 +309,10 @@ struct Worker {
     listener: Option<tokio::task::JoinHandle<()>>,
     github: Option<GhConfig>,
     vault: Option<vault_sync::Vault>,
+    shared: crate::local::shared::SharedState,
+    /// base demandée par l'utilisateur (vide : local uniquement) ; le worker s'y reconnecte tout seul
+    want_url: String,
+    last_try: Option<std::time::Instant>,
 }
 
 type Res<T> = Result<T, tokio_postgres::Error>;
@@ -261,60 +323,130 @@ impl Worker {
         (self.notify)();
     }
 
+    /// Boucle du worker : les commandes de l'interface, et toutes les 2 s, sans dépendre de l'affichage
+    /// (fenêtre réduite ou cachée), la synchronisation dossier ↔ base et la reconnexion si elle est coupée.
     async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Cmd>) {
-        while let Some(cmd) = rx.recv().await {
-            if let Cmd::Connect(url) = cmd {
-                self.connect(url).await;
-                continue;
+        let mut tick = tokio::time::interval(Duration::from_secs(2));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                cmd = rx.recv() => match cmd {
+                    Some(cmd) => self.dispatch(cmd).await,
+                    None => break,
+                },
+                _ = tick.tick() => self.tick().await,
             }
-            if let Cmd::SetVault(dir) = cmd {
-                self.vault = dir.map(vault_sync::Vault::new);
-                continue;
+        }
+    }
+
+    /// Travail périodique : reconnexion (toutes les 30 s) puis comparaison dossier ↔ base.
+    async fn tick(&mut self) {
+        if self.want_url.is_empty() {
+            return;
+        }
+        if self.client.as_ref().is_none_or(|c| c.is_closed()) {
+            if self.last_try.is_some_and(|t| t.elapsed() < Duration::from_secs(30)) {
+                return;
             }
-            if matches!(cmd, Cmd::VaultScan) && self.vault.is_none() {
-                continue;
-            }
-            if let Cmd::SetGithub(cfg) = cmd {
-                self.github = cfg;
-                continue;
-            }
-            if let Cmd::GithubTest = cmd {
-                let cfg = self.github.clone();
-                let r = match cfg {
-                    Some(c) => tokio::task::spawn_blocking(move || github::whoami(&c))
-                        .await
-                        .unwrap_or_else(|e| Err(e.to_string())),
-                    None => Err("Aucun token GitHub configuré".into()),
-                };
-                self.emit(Msg::GithubUser(r));
-                continue;
-            }
-            if let Cmd::GithubRepos = cmd {
-                let r = match self.github.clone() {
-                    Some(c) => tokio::task::spawn_blocking(move || github::list_repos(&c))
-                        .await
-                        .unwrap_or_else(|e| Err(e.to_string())),
-                    None => Err("Aucun token GitHub configuré".into()),
-                };
-                self.emit(Msg::GithubRepos(r));
-                continue;
-            }
-            // Transparent reconnection of the query connection
+            let url = self.want_url.clone();
+            self.connect(url).await;
+            return;
+        }
+        if self.vault.is_some() {
+            self.scan_or_go_offline().await;
+        }
+    }
+
+    /// Passage de synchronisation ; une erreur de connexion fait passer en hors ligne (sans alerte répétée).
+    async fn scan_or_go_offline(&mut self) {
+        let em = Emitter { out: self.out.clone(), notify: self.notify.clone() };
+        if let Err(e) = self.vault_scan(&em).await {
             if self.client.as_ref().is_none_or(|c| c.is_closed()) {
-                if self.url.is_empty() {
-                    continue;
+                self.client = None;
+                self.last_try = Some(std::time::Instant::now());
+                if let Some(v) = &mut self.vault {
+                    v.reset(); // au retour, tout est recomparé
                 }
-                match open_client(&self.url).await {
-                    Ok(c) => self.client = Some(c),
-                    Err(e) => {
-                        self.emit(Msg::Error(format!("Base de données injoignable : {}", pg_err(&e))));
-                        continue;
-                    }
-                }
-            }
-            if let Err(e) = self.handle(cmd).await {
+                self.emit(Msg::ConnectionFailed(pg_err(&e)));
+            } else {
                 self.emit(Msg::Error(pg_err(&e)));
             }
+        }
+    }
+
+    async fn dispatch(&mut self, cmd: Cmd) {
+        if let Cmd::Connect(url) = cmd {
+            self.want_url = url.clone();
+            self.connect(url).await;
+            return;
+        }
+        if let Cmd::Disconnect = cmd {
+            if let Some(l) = self.listener.take() {
+                l.abort();
+            }
+            self.client = None;
+            self.url.clear();
+            self.want_url.clear();
+            if let Some(v) = &mut self.vault {
+                v.reset(); // à la reconnexion, tout est recomparé
+            }
+            self.emit(Msg::Disconnected);
+            return;
+        }
+        if let Cmd::SetVault(dir) = cmd {
+            self.vault = dir.map(vault_sync::Vault::new);
+            return;
+        }
+        if let Cmd::VaultScan = cmd {
+            // demandé par l'interface (changement venu d'un autre appareil) : seulement si la base répond
+            if self.vault.is_some() && self.client.as_ref().is_some_and(|c| !c.is_closed()) {
+                self.scan_or_go_offline().await;
+            }
+            return;
+        }
+        if let Cmd::SetGithub(cfg) = cmd {
+            self.github = cfg;
+            return;
+        }
+        if let Cmd::GithubTest = cmd {
+            let cfg = self.github.clone();
+            let r = match cfg {
+                Some(c) => {
+                    tokio::task::spawn_blocking(move || github::whoami(&c)).await.unwrap_or_else(|e| Err(e.to_string()))
+                }
+                None => Err("Aucun token GitHub configuré".into()),
+            };
+            self.emit(Msg::GithubUser(r));
+            return;
+        }
+        if let Cmd::GithubRepos = cmd {
+            let r = match self.github.clone() {
+                Some(c) => tokio::task::spawn_blocking(move || github::list_repos(&c))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string())),
+                None => Err("Aucun token GitHub configuré".into()),
+            };
+            self.emit(Msg::GithubRepos(r));
+            return;
+        }
+        // Transparent reconnection of the query connection
+        if self.client.as_ref().is_none_or(|c| c.is_closed()) {
+            if self.url.is_empty() {
+                return;
+            }
+            match open_client(&self.url).await {
+                Ok(c) => self.client = Some(c),
+                Err(e) => {
+                    // hors ligne : l'interface le signale une seule fois, le worker réessaie toutes les 30 s
+                    self.client = None;
+                    self.last_try = Some(std::time::Instant::now());
+                    self.emit(Msg::ConnectionFailed(pg_err(&e)));
+                    return;
+                }
+            }
+        }
+        if let Err(e) = self.handle(cmd).await {
+            self.emit(Msg::Error(pg_err(&e)));
         }
     }
 
@@ -328,10 +460,15 @@ impl Worker {
         let em = Emitter { out: self.out.clone(), notify: self.notify.clone() };
         match cmd {
             // traitées directement dans `run`
-            Cmd::Connect(_) | Cmd::SetGithub(_) | Cmd::GithubTest | Cmd::GithubRepos | Cmd::SetVault(_) => {
+            Cmd::Connect(_)
+            | Cmd::Disconnect
+            | Cmd::SetGithub(_)
+            | Cmd::GithubTest
+            | Cmd::GithubRepos
+            | Cmd::SetVault(_) => {
                 unreachable!()
             }
-            Cmd::VaultScan => self.vault_scan(&em).await,
+            Cmd::VaultScan => unreachable!(),
             Cmd::LoadBoard
             | Cmd::CreateProject { .. }
             | Cmd::UpdateProject { .. }

@@ -9,6 +9,7 @@ mod css;
 mod db;
 mod github;
 mod graph;
+mod local;
 mod markdown;
 mod merge;
 mod model;

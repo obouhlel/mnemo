@@ -41,8 +41,8 @@ impl MnemoApp {
                                 .show(ui, |ui| ui.label(RichText::new("Options").size(12.0).color(p.faint).strong()));
                             ui.add_space(4.0);
                             for (t, label) in [
-                                (SettingsTab::Connection, "Base de données"),
-                                (SettingsTab::Vault, "Coffre Obsidian"),
+                                (SettingsTab::Connection, "Synchronisation"),
+                                (SettingsTab::Vault, "Dossier des notes"),
                                 (SettingsTab::Appearance, "Apparence"),
                                 (SettingsTab::Github, "GitHub"),
                                 (SettingsTab::About, "À propos"),
@@ -94,8 +94,8 @@ impl MnemoApp {
                                 ui.visuals_mut().text_edit_bg_color = Some(p.bg2);
                                 ui.visuals_mut().extreme_bg_color = p.bg2;
                                 let title = match self.settings_tab {
-                                    SettingsTab::Connection => "Base de données",
-                                    SettingsTab::Vault => "Coffre Obsidian",
+                                    SettingsTab::Connection => "Synchronisation",
+                                    SettingsTab::Vault => "Dossier des notes",
                                     SettingsTab::Appearance => "Apparence",
                                     SettingsTab::Plugins => "Plugins",
                                     SettingsTab::Github => "GitHub",
@@ -121,37 +121,94 @@ impl MnemoApp {
             match self.settings_tab {
                 SettingsTab::Connection => {
                     let p = self.palette();
-                    let mut reconnect = false;
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(
+                                "Facultatif. Vos notes restent dans votre dossier local ; une base PostgreSQL permet de les \
+                                 retrouver sur plusieurs appareils, en direct, et d'utiliser le tableau de bord. Hors connexion, \
+                                 tout continue en local et se synchronise au retour.",
+                            )
+                            .size(12.5)
+                            .color(p.muted),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(14.0);
+                    let (mut connect, mut stop) = (false, false);
                     let mut url = std::mem::take(&mut self.url_input);
                     let mut show = self.show_password;
-                    settings_row(
-                        ui,
-                        &p,
-                        "URL PostgreSQL",
-                        "Ajoutez ?sslmode=require pour un serveur distant. MNEMO_DATABASE_URL a priorité sur ce réglage.",
-                        |ui| {
-                            if ui.button("Se reconnecter").clicked() {
-                                reconnect = true;
-                            }
-                            ui.checkbox(&mut show, "Afficher");
-                            ui.add(egui::TextEdit::singleline(&mut url).password(!show).desired_width(240.0));
-                        },
+                    // adresse sur toute la largeur, boutons dessous
+                    ui.label(RichText::new("Base PostgreSQL").color(p.text));
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(
+                                "Ajoutez ?sslmode=require pour un serveur distant (Neon, Supabase…). \
+                                 MNEMO_DATABASE_URL a priorité sur ce réglage.",
+                            )
+                            .size(12.5)
+                            .color(p.muted),
+                        )
+                        .wrap(),
                     );
+                    ui.add_space(6.0);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut url)
+                            .password(!show)
+                            .hint_text("postgres://utilisateur:motdepasse@hôte:5432/base")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(if self.cfg.database_url.is_empty() { "Connecter" } else { "Reconnecter" })
+                            .clicked()
+                        {
+                            connect = true;
+                        }
+                        ui.checkbox(&mut show, "Afficher l'adresse");
+                    });
+                    ui.add_space(8.0);
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+                    ui.painter().hline(r.x_range(), r.center().y, egui::Stroke::new(1.0, p.border));
+                    ui.add_space(10.0);
                     self.url_input = url;
                     self.show_password = show;
-                    if reconnect {
+                    let state = match &self.conn {
+                        ConnState::Connected if self.live => "Synchronisé en direct".to_string(),
+                        ConnState::Connected => "Connecté, flux temps réel en reconnexion".to_string(),
+                        ConnState::Connecting => "Connexion…".to_string(),
+                        ConnState::Disconnected(Some(e)) => format!("Hors ligne, nouvel essai toutes les 30 s ({e})"),
+                        ConnState::Disconnected(None) => "Local uniquement".to_string(),
+                    };
+                    let detail = if self.cfg.database_url.is_empty() {
+                        "Aucune base configurée.".to_string()
+                    } else {
+                        redact_url(&self.cfg.database_url)
+                    };
+                    settings_row(ui, &p, &state, &detail, |ui| {
+                        if !self.cfg.database_url.is_empty() && ui.button("Arrêter la synchronisation").clicked() {
+                            stop = true;
+                        }
+                    });
+                    if connect {
                         self.connect();
                     }
-                    let live = if self.live { "actif" } else { "en reconnexion" };
-                    settings_row(
-                        ui,
-                        &p,
-                        "État",
-                        &format!("Connecté à {}", redact_url(&self.cfg.database_url)),
-                        |ui| {
-                            ui.label(RichText::new(format!("Temps réel : {live}")).color(p.muted));
-                        },
+                    if stop {
+                        self.disconnect();
+                        self.notice("Synchronisation arrêtée : Mnemo continue avec le dossier local", false, now);
+                    }
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(
+                                "Pas encore de base ? docker run -d --name mnemo-db -e POSTGRES_PASSWORD=postgres \
+                                 -e POSTGRES_DB=vault -p 5432:5432 postgres:16",
+                            )
+                            .size(12.5)
+                            .color(p.faint),
+                        )
+                        .wrap(),
                     );
+                    ui.add_space(10.0);
                     settings_row(
                         ui,
                         &p,

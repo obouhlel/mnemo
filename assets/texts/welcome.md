@@ -1,5 +1,7 @@
-Mnemo est une base de connaissances **Markdown** stockée dans **PostgreSQL**.
-Ouvrez Mnemo sur un autre ordinateur connecté à la même base : chaque frappe s'y affiche en direct.
+Mnemo est une base de connaissances **Markdown** : vos notes sont de simples fichiers `.md` dans un dossier,
+lisibles par n'importe quel éditeur (et par Obsidian).
+Pour les retrouver sur plusieurs appareils, branchez une base **PostgreSQL** (⚙ Paramètres > Synchronisation) :
+chaque modification s'affiche alors en direct partout, et tout continue en local quand vous êtes hors ligne.
 
 ## Les bases
 - Créez une note avec **Ctrl+N** (utilisez `Dossier/Nom` pour ranger)

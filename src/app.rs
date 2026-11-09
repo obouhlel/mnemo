@@ -106,7 +106,12 @@ pub struct MnemoApp {
     focus_editor: Option<egui::Id>,
     /// dossier de l'explorateur survolé pendant un glisser depuis le système
     os_drop_target: Option<(String, f64)>,
-    vault_next_scan: f64,
+    /// la coupure de la base a déjà été signalée (une seule alerte jusqu'au retour)
+    offline_noticed: bool,
+    /// le dossier des notes est indexé
+    local_ready: bool,
+    /// dossier des notes créé à ce lancement (note de bienvenue)
+    fresh_vault: bool,
     vault_last: Option<(crate::db::VaultStats, chrono::DateTime<chrono::Local>)>,
 }
 
@@ -133,7 +138,8 @@ impl MnemoApp {
         let client_id = Uuid::new_v4().to_string();
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = cc.egui_ctx.clone();
-        let db = crate::db::spawn(client_id.clone(), tx, move || ctx.request_repaint());
+        let shared = crate::local::shared::new_shared();
+        let db = crate::db::spawn(client_id.clone(), tx, move || ctx.request_repaint(), shared);
         let mut plugins = PluginHost::new(cfg.plugins_dir());
         plugins.reload();
         let url_input = cfg.database_url.clone();
@@ -198,7 +204,9 @@ impl MnemoApp {
             icon_pick: None,
             focus_editor: None,
             os_drop_target: None,
-            vault_next_scan: 0.0,
+            offline_noticed: false,
+            local_ready: false,
+            fresh_vault: false,
             vault_last: None,
             cfg,
         };
@@ -206,6 +214,16 @@ impl MnemoApp {
         app.vault_input = app.cfg.vault_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         app.install_example_snippet();
         app.reload_css();
+        // le dossier des notes est la référence : Mnemo fonctionne sans base de données
+        let dir = app.cfg.vault_dir.clone().unwrap_or_else(MnemoApp::default_notes_dir);
+        app.fresh_vault = !dir.exists() || std::fs::read_dir(&dir).map(|mut d| d.next().is_none()).unwrap_or(true);
+        if app.cfg.vault_dir.is_none() {
+            app.cfg.vault_dir = Some(dir.clone());
+            app.cfg.save();
+        }
+        app.vault_input = dir.display().to_string();
+        app.db.send(Cmd::SetRoot(dir));
+        // la base ne sert qu'à synchroniser plusieurs appareils
         if !app.cfg.database_url.trim().is_empty() {
             app.connect();
         }
@@ -272,11 +290,10 @@ impl eframe::App for MnemoApp {
         self.handle_messages(now);
         self.apply_plugin_actions(&ctx, now);
         self.tick_autosave(&ctx, now);
-        self.vault_tick(&ctx, now);
         if let Some(t) = self.search_due {
             if now >= t {
                 self.search_due = None;
-                if !self.search_q.trim().is_empty() && self.conn == ConnState::Connected {
+                if !self.search_q.trim().is_empty() {
                     self.db.send(Cmd::Search(self.search_q.clone()));
                 }
             } else {
@@ -293,12 +310,6 @@ impl eframe::App for MnemoApp {
         if title != self.title_shown {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title_shown = title;
-        }
-
-        if self.conn != ConnState::Connected {
-            egui::CentralPanel::default().show(ui, |ui| self.connection_screen(ui));
-            self.notices_ui(&ctx, now);
-            return;
         }
 
         self.shortcuts(&ctx);

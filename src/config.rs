@@ -12,7 +12,8 @@ pub enum ViewMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// postgres://user:password@host:5432/db  (add ?sslmode=require for remote/managed servers)
+    /// Optional sync database: postgres://user:password@host:5432/db (add ?sslmode=require for remote servers).
+    /// Empty: local only.
     pub database_url: String,
     pub dark_mode: bool,
     pub font_size: f32,
@@ -24,7 +25,7 @@ pub struct Config {
     pub plugins_dir: Option<PathBuf>,
     /// `.obsidian` folder of an existing vault, to reuse its themes / snippets / appearance.json
     pub obsidian_dir: Option<PathBuf>,
-    /// Vault folder on disk mirrored with the database (Obsidian vault): imported, then kept in sync both ways
+    /// Notes folder: Markdown files, the source of truth (e.g. an Obsidian vault). Mirrored with the database if any.
     pub vault_dir: Option<PathBuf>,
     /// Follow that vault's appearance.json (theme, snippets, font size, accent, light/dark)
     pub follow_appearance: bool,
@@ -43,7 +44,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            database_url: "postgres://postgres:postgres@localhost:5432/vault".into(),
+            // vide : Mnemo travaille en local ; une base PostgreSQL ne sert qu'à synchroniser plusieurs appareils
+            database_url: String::new(),
             dark_mode: true,
             font_size: 16.0,
             view_mode: ViewMode::Edit,

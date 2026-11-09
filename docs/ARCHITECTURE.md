@@ -1,25 +1,32 @@
 # Architecture de Mnemo
 
 Ce document explique comment le code est organisé et comment les morceaux communiquent.
-Commencez par lire [Les deux threads](#les-deux-threads), le reste en découle.
+Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle.
 
-## Les deux threads
+## Les trois threads
 
 ```
-          thread UI (egui)                           thread worker (tokio)
- ┌────────────────────────────────┐   Cmd    ┌──────────────────────────────┐
- │ MnemoApp::ui() à chaque frame  │ ───────► │ Worker::run → handle(cmd)    │──► PostgreSQL
- │   handle_messages()            │ ◄─────── │   note_cmd / board_cmd /     │◄── (requêtes)
- │   … dessin des panneaux …      │   Msg    │   github_cmd                 │
- └────────────────────────────────┘          │ listen_loop (2ᵉ connexion)   │◄── NOTIFY vault_events
-                                             └──────────────────────────────┘
+        thread UI (egui)                 thread local (std)                 thread worker (tokio)
+ ┌──────────────────────────┐  Cmd  ┌──────────────────────────┐     ┌─────────────────────────────┐
+ │ MnemoApp::ui()           │ ────► │ local::Store             │     │ Worker::run                 │──► PostgreSQL
+ │   handle_messages()      │ ◄──── │  notes .md, index,       │     │  tableau de bord, GitHub,   │◄── (requêtes)
+ │   … dessin …             │  Msg  │  .mnemo/ (icônes…)       │     │  vault_sync (toutes les 2 s)│
+ └──────────────────────────┘       │  relit le disque (1 s)   │     │ listen_loop (2ᵉ connexion)  │◄── NOTIFY
+        │  Cmd (tableau de bord,    └────────────┬─────────────┘     └──────────────┬──────────────┘
+        └──── connexion, GitHub) ──────────────────────────────────────────────────►│
+                                                 └──── dossier .md + .mnemo/ids.json ┘ (partagés)
 ```
 
-- L'interface ne parle **jamais** directement à Postgres. Elle envoie des `db::Cmd` via `DbHandle::send`
-  (canal tokio) et lit les `db::Msg` dans `handle_messages` (canal std), sans jamais bloquer.
-- Le worker exécute les commandes **une par une**, sur une seule connexion de requêtes.
-  Une seconde connexion fait `LISTEN vault_events` et relaie chaque événement en `Msg::Event`.
-- Après chaque message, le worker appelle `ctx.request_repaint()` pour réveiller l'interface.
+- `DbHandle::send` aiguille chaque `db::Cmd` : notes, dossiers, recherche, rétroliens, tags, graphe, icônes et plugins
+  vont au **stockage local** (`src/local/`) ; connexion, tableau de bord et GitHub vont au **worker PostgreSQL**.
+  Les deux renvoient des `db::Msg` sur le même canal, lus dans `handle_messages` sans jamais bloquer.
+- Le dossier des notes est la référence : Mnemo fonctionne sans base. Le stockage local relit le disque toutes les
+  secondes et transforme chaque changement extérieur en `Msg::LocalEvent`.
+- Si une base est configurée, le worker la compare au dossier toutes les 2 s (`db/vault_sync.rs`), sans dépendre de
+  l'affichage (fenêtre réduite comprise), se reconnecte seul toutes les 30 s, et `listen_loop` relaie les NOTIFY des
+  autres appareils (`Msg::Event`) pour lancer la comparaison tout de suite.
+- Stockage local et synchronisation partagent `local::shared` : l'identifiant de chaque note (`.mnemo/ids.json`, le
+  même en local et en base) et un verrou pour les fichiers d'état `.mnemo/icons.json` / `plugins.json`.
 
 ## Carte des modules
 
@@ -35,7 +42,10 @@ Commencez par lire [Les deux threads](#les-deux-threads), le reste en découle.
 | `db/connection.rs` | ouverture (TLS si `sslmode=require`), migration sous verrou consultatif, boucle `LISTEN` avec backoff |
 | `db/notes.rs` | commandes notes / dossiers / recherche / graphe / plugins, réécriture des `[[liens]]` au renommage |
 | `db/board.rs` | commandes projets / tickets / rapports, chargement du tableau de bord |
-| `db/vault_sync.rs` | miroir d'un dossier de coffre (Obsidian) sur le disque : import, export, renommages, suppressions |
+| `db/vault_sync.rs` | synchro dossier ↔ base : notes, dossiers, renommages, suppressions, icônes et plugins |
+| `local/mod.rs` | stockage local : commandes des notes sur les fichiers, relecture du disque |
+| `local/index.rs` | liens, résolution, tags, recherche, rétroliens, graphe, réécriture des liens (fonctions pures) |
+| `local/shared.rs` | identifiants des notes (`.mnemo/ids.json`) et fichiers d'état partagés avec la synchro |
 | `db/github_sync.rs` | publication et synchronisation des tickets avec les issues GitHub |
 | `board.rs` | domaine du tableau de bord et **plan** de synchronisation GitHub (fonctions pures, testées) |
 | `github.rs` | client REST GitHub bloquant (appelé via `spawn_blocking`) |
@@ -84,19 +94,16 @@ Dans l'ordre :
 
 ## Flux de synchronisation d'une note
 
-1. **Frappe** : `editor` marque l'onglet modifié. `tick_autosave` envoie `Cmd::Save { id, content, base_version }`.
-2. **Worker** : `UPDATE … WHERE version = base_version`, dans une transaction marquée avec le `client_id`
-   (`tagged_tx`). Les triggers incrémentent `version`, remplissent `updated_by` et font `pg_notify`.
-   - Version à jour → `Msg::Saved(note)`.
-   - Version dépassée (quelqu'un a écrit entre-temps) → `Msg::Conflict(note_actuelle)`.
-3. **Autres instances** : `listen_loop` reçoit le NOTIFY, puis `Msg::Event` arrive dans `handle_event`.
-   L'instance ignore ses propres échos (`updated_by == client_id`). Sinon, elle recharge la note
-   (`LoadPurpose::Refresh`), puis `apply_refresh` :
-   - pas de modification locale → la note est remplacée ;
-   - modifications locales → `on_divergence` : fusion à 3 voies (`merge.rs`) avec comme base la dernière
-     version enregistrée connue. Les blocs qui se chevauchent ouvrent la fenêtre de conflit.
-4. **Perte de connexion** : le worker rouvre la connexion avant la commande suivante, et `listen_loop`
-   se reconnecte avec un backoff (0,5 s → 30 s) puis envoie `Msg::Resync` pour tout recharger.
+1. **Frappe** : `editor` marque l'onglet modifié. `tick_autosave` envoie `Cmd::Save { id, content, base_version }`
+   au stockage local, qui écrit le fichier (écriture atomique) et renvoie `Msg::Saved`. Si la note a changé sur le
+   disque entre-temps (autre éditeur, synchro), sa version a augmenté : `Msg::Conflict`, puis fusion à 3 voies.
+2. **Base, si configurée** : au passage suivant (≤ 2 s), `vault_sync` voit le fichier modifié et met la note à jour
+   dans une transaction marquée `<client_id>#disk`. Les triggers incrémentent `version` et font `pg_notify`.
+3. **Autres appareils** : `listen_loop` reçoit le NOTIFY (`Msg::Event`) ; l'interface demande aussitôt un passage
+   (`Cmd::VaultScan`) qui écrit le fichier. Leur stockage local le voit (≤ 1 s) et envoie `Msg::LocalEvent` :
+   la note ouverte est rechargée (`apply_refresh`), fusionnée si elle était en cours de modification.
+4. **Perte de connexion** : le worker passe hors ligne (`Msg::ConnectionFailed`, une seule alerte), réessaie toutes
+   les 30 s et, au retour, recompare tout le dossier avec la base.
 
 ## Recettes
 
