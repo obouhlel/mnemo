@@ -1,7 +1,7 @@
 # Maintainer: Oussama Bouhlel
 # Build: copy this folder next to the sources (or set _srcdir) then run `makepkg -si`
 pkgname=mnemo
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Notes Markdown façon Obsidian, stockées dans PostgreSQL et synchronisées en direct"
 arch=('x86_64' 'aarch64')
