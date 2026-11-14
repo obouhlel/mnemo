@@ -79,14 +79,7 @@ impl MnemoApp {
                     self.preview_gen = u64::MAX; // les images de l'aperçu sont à résoudre de nouveau
                     self.forget_images = true;
                 }
-                Msg::FileSaved { path, insert } => {
-                    if !self.files.contains(&path) {
-                        self.files.push(path.clone());
-                    }
-                    if insert {
-                        self.actions.push(UiAction::InsertEmbed(path));
-                    }
-                }
+                Msg::FileSaved { path, insert } => self.file_saved(path, insert, now),
                 Msg::IdChanged { old, new } => self.remap_note_id(old, new),
                 Msg::Live(v) => self.live = v,
                 Msg::Resync => {
@@ -192,8 +185,8 @@ impl MnemoApp {
                     if let Some(n) = self.open.as_mut().filter(|n| n.id == note.id) {
                         n.path = note.path.clone();
                         n.version = note.version;
+                        self.cfg.last_note = Some(note.path.clone());
                     }
-                    self.cfg.last_note = Some(note.path.clone());
                     if relinked > 0 {
                         self.notice(format!("Renommée — liens mis à jour dans {relinked} note(s)"), false, now);
                     }
@@ -279,6 +272,13 @@ impl MnemoApp {
                     self.search_due.get_or_insert(now + 0.3);
                 }
                 let mine = ev.updated_by.as_deref() == Some(self.client_id.as_str());
+                // note supprimée (seule, avec son dossier, ou hors de Mnemo) : ni onglet ni historique ne la gardent
+                if ev.op == "delete"
+                    && let Some(id) = ev.note_id()
+                    && !self.open.as_ref().is_some_and(|n| n.id == id)
+                {
+                    self.forget_note(id);
+                }
                 if let Some(n) = &self.open
                     && Some(n.id) == ev.note_id()
                 {

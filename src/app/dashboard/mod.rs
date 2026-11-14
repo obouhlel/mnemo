@@ -62,14 +62,21 @@ impl Default for DashState {
     }
 }
 
-/// Edit buffers of the selected ticket (committed on focus loss)
+/// Edit buffers of the selected ticket: saved shortly after the last keystroke, on focus loss, and when the
+/// panel, the tab or the application closes (`flush_ticket_edit`)
 pub(super) struct Edit {
     id: Uuid,
     title: String,
     body: String,
+    /// title / body as last read from the ticket or sent to the database: what the buffers are compared to
     base_title: String,
     base_body: String,
+    /// last keystroke not saved yet
+    changed_at: Option<f64>,
 }
+
+/// Délai entre la dernière frappe dans un ticket et son enregistrement.
+const TICKET_SAVE_DELAY: f64 = 0.8;
 
 pub(super) struct ProjectForm {
     id: Option<Uuid>,
@@ -289,6 +296,10 @@ impl MnemoApp {
 
         // ---- body: list / kanban + ticket detail
         let selected = self.dash.selected.and_then(|id| self.board.tickets.iter().find(|t| t.id == id).cloned());
+        if selected.is_none() {
+            // panneau du ticket fermé : ce qui y était tapé est enregistré
+            self.flush_ticket_edit(true);
+        }
         if let Some(t) = &selected {
             egui::Panel::right("ticket-detail")
                 .default_size(400.0)

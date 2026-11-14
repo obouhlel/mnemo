@@ -27,38 +27,93 @@ pub struct Parsed {
 
 // ------------------------------------------------------------------------------- parsing
 
-fn strip_comments(css: &str) -> String {
-    let mut out = String::with_capacity(css.len());
-    let mut rest = css;
-    while let Some(start) = rest.find("/*") {
-        out.push_str(&rest[..start]);
-        match rest[start + 2..].find("*/") {
-            Some(end) => rest = &rest[start + 2 + end + 2..],
-            None => return out,
-        }
+/// Avance dans du CSS en suivant les chaînes : `"…"` / `'…'` avec échappements `\x` (une chaîne non fermée
+/// s'arrête à la fin de la ligne, comme dans un navigateur). `quote` est la chaîne en cours ; renvoie vrai si
+/// l'octet `i` est du CSS « actif » (hors chaîne et non échappé), et met `i` à jour pour sauter un échappement.
+fn active(bytes: &[u8], i: &mut usize, quote: &mut Option<u8>) -> bool {
+    let c = bytes[*i];
+    if c == b'\\' {
+        // l'octet suivant est pris tel quel (un saut de ligne échappé continue la chaîne)
+        *i += 1;
+        return false;
     }
-    out.push_str(rest);
+    match *quote {
+        Some(q) => {
+            if c == q || c == b'\n' {
+                *quote = None;
+            }
+            false
+        }
+        None if c == b'"' || c == b'\'' => {
+            *quote = Some(c);
+            false
+        }
+        None => true,
+    }
+}
+
+/// Retire les commentaires `/* … */`, sauf dans les chaînes et les `url(…)` sans guillemets.
+fn strip_comments(css: &str) -> String {
+    let b = css.as_bytes();
+    let mut out = String::with_capacity(css.len());
+    let (mut i, mut copied, mut quote) = (0, 0, None);
+    while i < b.len() {
+        if active(b, &mut i, &mut quote) {
+            if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+                out.push_str(&css[copied..i]);
+                out.push(' ');
+                match css[i + 2..].find("*/") {
+                    Some(end) => i += 2 + end + 2,
+                    None => return out,
+                }
+                copied = i;
+                continue;
+            }
+            // url(http://x/*y) : pas un commentaire
+            if b[i] == b'(' && i >= 3 && b[i - 3..i].eq_ignore_ascii_case(b"url") {
+                let arg = css[i + 1..].trim_start();
+                if !arg.starts_with(['"', '\'']) {
+                    i += css[i..].find(')').unwrap_or(css.len() - i - 1);
+                }
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&css[copied.min(css.len())..]);
     out
 }
 
-/// Index of the `}` matching the `{` at `open` (byte index), honouring nesting and strings.
-fn matching_brace(s: &str, open: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut quote: Option<char> = None;
-    for (i, c) in s[open..].char_indices() {
-        match (quote, c) {
-            (Some(q), c) if c == q => quote = None,
-            (Some(_), _) => {}
-            (None, '"' | '\'') => quote = Some(c),
-            (None, '{') => depth += 1,
-            (None, '}') => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(open + i);
-                }
-            }
-            _ => {}
+/// Position du premier octet `what` actif (hors chaîne) à partir de `from`.
+fn find_active(s: &str, from: usize, what: u8) -> Option<usize> {
+    let b = s.as_bytes();
+    let (mut i, mut quote) = (from, None);
+    while i < b.len() {
+        if active(b, &mut i, &mut quote) && b[i] == what {
+            return Some(i);
         }
+        i += 1;
+    }
+    None
+}
+
+/// Index of the `}` matching the `{` at `open` (byte index), honouring nesting, strings and escapes.
+fn matching_brace(s: &str, open: usize) -> Option<usize> {
+    let b = s.as_bytes();
+    let (mut i, mut quote, mut depth) = (open, None, 0i32);
+    while i < b.len() {
+        if active(b, &mut i, &mut quote) {
+            match b[i] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        i += 1;
     }
     None
 }
@@ -107,42 +162,118 @@ fn declarations(block: &str, scope: Scope, out: &mut Parsed) {
             }
         }
     };
-    for (i, b) in bytes.iter().enumerate() {
-        match b {
-            b'(' => depth += 1,
-            b')' => depth -= 1,
-            b';' if depth == 0 => {
-                push(&block[start..i]);
-                start = i + 1;
+    let (mut i, mut quote) = (0, None);
+    while i < bytes.len() {
+        if active(bytes, &mut i, &mut quote) {
+            match bytes[i] {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                b';' if depth <= 0 => {
+                    push(&block[start..i]);
+                    start = i + 1;
+                    depth = 0;
+                }
+                _ => {}
             }
-            _ => {}
         }
+        i += 1;
     }
-    push(&block[start..]);
+    push(&block[start.min(block.len())..]);
 }
 
-fn parse_rules(css: &str, out: &mut Parsed) {
+/// Fenêtre de référence pour les requêtes `min-width` / `max-width` (Mnemo est une application de bureau).
+const VIEWPORT: (f32, f32) = (1280.0, 800.0);
+
+/// Une requête `@media` s'applique-t-elle à l'écran ? `None` : non ; `Some(scope)` : oui, pour ce mode.
+/// `print`, `speech`… sont ignorés ; `prefers-color-scheme` limite le bloc au mode sombre ou clair ;
+/// `min/max-width/height` sont comparés à une fenêtre de bureau ; les autres conditions sont tenues pour vraies.
+fn media_query(query: &str) -> Option<Scope> {
+    let q = query.trim().to_lowercase();
+    let (negated, q) = match q.strip_prefix("not ") {
+        Some(rest) => (true, rest.trim().to_string()),
+        None => (false, q.strip_prefix("only ").map(|r| r.trim().to_string()).unwrap_or(q)),
+    };
+    let mut scope = Some(Scope::Both);
+    for (n, part) in q.split(" and ").map(str::trim).enumerate() {
+        let part_scope = match part.strip_prefix('(').and_then(|p| p.strip_suffix(')')) {
+            // type de média (uniquement en tête)
+            None if n == 0 => matches!(part, "" | "screen" | "all").then_some(Scope::Both),
+            None => None,
+            Some(feature) => {
+                let (name, value) = feature.split_once(':').map(|(a, b)| (a.trim(), b.trim())).unwrap_or((feature, ""));
+                let px = || parse_px(value);
+                match name {
+                    "prefers-color-scheme" => match value {
+                        "dark" => Some(Scope::Dark),
+                        "light" => Some(Scope::Light),
+                        _ => None,
+                    },
+                    "min-width" => px().is_some_and(|v| v <= VIEWPORT.0).then_some(Scope::Both),
+                    "max-width" => px().is_some_and(|v| v >= VIEWPORT.0).then_some(Scope::Both),
+                    "min-height" => px().is_some_and(|v| v <= VIEWPORT.1).then_some(Scope::Both),
+                    "max-height" => px().is_some_and(|v| v >= VIEWPORT.1).then_some(Scope::Both),
+                    _ => Some(Scope::Both),
+                }
+            }
+        };
+        scope = match (scope, part_scope) {
+            (Some(a), Some(b)) => narrow(a, b),
+            _ => None,
+        };
+    }
+    match (negated, scope) {
+        (false, s) => s,
+        (true, None) => Some(Scope::Both),
+        (true, Some(Scope::Dark)) => Some(Scope::Light),
+        (true, Some(Scope::Light)) => Some(Scope::Dark),
+        (true, Some(Scope::Both)) => None,
+    }
+}
+
+/// Intersection de deux portées (`None` : contradictoires, sombre et clair).
+fn narrow(a: Scope, b: Scope) -> Option<Scope> {
+    match (a, b) {
+        (Scope::Both, s) | (s, Scope::Both) => Some(s),
+        (a, b) if a == b => Some(a),
+        _ => None,
+    }
+}
+
+/// Liste de requêtes séparées par des virgules : réunion des portées de celles qui s'appliquent.
+fn media_scope(queries: &str) -> Option<Scope> {
+    queries.split(',').filter_map(media_query).reduce(|a, b| if a == b { a } else { Scope::Both })
+}
+
+/// Profondeur maximale des blocs imbriqués (`@media { @supports { … } }`) : au-delà, le bloc est ignoré.
+const MAX_NESTING: usize = 32;
+
+/// `limit` : portée imposée par les `@media` englobants.
+fn parse_rules(css: &str, limit: Scope, depth: usize, out: &mut Parsed) {
     let mut i = 0;
     while i < css.len() {
-        let Some(rel) = css[i..].find('{') else { break };
-        let open = i + rel;
+        let Some(open) = find_active(css, i, b'{') else { break };
         let prelude_start = css[i..open].rfind(';').map(|p| i + p + 1).unwrap_or(i);
         let prelude = css[prelude_start..open].trim();
         let Some(close) = matching_brace(css, open) else { break };
         let body = &css[open + 1..close];
         if let Some(at) = prelude.strip_prefix('@') {
-            let kw = at.split_whitespace().next().unwrap_or("").to_lowercase();
-            if matches!(kw.as_str(), "media" | "supports" | "layer" | "container" | "document") {
-                parse_rules(body, out);
+            let kw = at.split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("").to_lowercase();
+            let inner = match kw.as_str() {
+                "media" => media_scope(&at[kw.len()..]).and_then(|s| narrow(limit, s)),
+                "supports" | "layer" | "container" | "document" => Some(limit),
+                _ => None,
+            };
+            match inner {
+                Some(scope) if depth < MAX_NESTING => parse_rules(body, scope, depth + 1, out),
+                _ => {}
             }
         } else {
             // top-level declarations of the rule (nested rules removed)
             let mut flat = String::new();
             let mut j = 0;
             while j < body.len() {
-                match body[j..].find('{') {
-                    Some(r) => {
-                        let o = j + r;
+                match find_active(body, j, b'{') {
+                    Some(o) => {
                         let decl_end = body[j..o].rfind(';').map(|p| j + p + 1).unwrap_or(j);
                         flat.push_str(&body[j..decl_end]);
                         flat.push(';');
@@ -156,7 +287,12 @@ fn parse_rules(css: &str, out: &mut Parsed) {
                 }
             }
             match classify(prelude) {
-                Some(scope) => declarations(&flat, scope, out),
+                // `.theme-light` dans un bloc réservé au mode sombre : jamais appliqué
+                Some(scope) => {
+                    if let Some(scope) = narrow(limit, scope) {
+                        declarations(&flat, scope, out)
+                    }
+                }
                 None => out.ignored_rules += 1,
             }
         }
@@ -165,52 +301,113 @@ fn parse_rules(css: &str, out: &mut Parsed) {
 }
 
 pub fn parse(css: &str, out: &mut Parsed) {
-    parse_rules(&strip_comments(css), out);
+    parse_rules(&strip_comments(css), Scope::Both, 0, out);
 }
 
 // ------------------------------------------------------------------------------- evaluation
 
-/// Resolves every `var(--x[, fallback])` in `value`.
-pub fn resolve(value: &str, vars: &HashMap<String, String>, depth: usize) -> Option<String> {
-    if depth > 24 {
-        return None;
-    }
-    let mut out = String::new();
-    let mut rest = value;
-    while let Some(pos) = rest.find("var(") {
-        out.push_str(&rest[..pos]);
-        let inner_start = pos + 4;
-        let mut d = 1;
-        let mut end = None;
-        for (k, c) in rest[inner_start..].char_indices() {
-            match c {
-                '(' => d += 1,
-                ')' => {
-                    d -= 1;
-                    if d == 0 {
-                        end = Some(inner_start + k);
-                        break;
+/// Taille maximale d'une valeur résolue, et nombre maximal de `var()` développés pour une valeur.
+const MAX_RESOLVED: usize = 16 * 1024;
+const MAX_EXPANSIONS: usize = 2000;
+
+struct Resolver<'a> {
+    vars: &'a HashMap<String, String>,
+    /// variables en cours de résolution (détection des cycles)
+    stack: Vec<&'a str>,
+    expansions: usize,
+    /// cycle détecté : position dans `stack` de la variable qui le ferme (toutes celles du cycle sont invalides)
+    cycle: Option<usize>,
+    /// budget dépassé : toute la résolution échoue, sans essayer les valeurs de repli
+    exhausted: bool,
+}
+
+impl<'a> Resolver<'a> {
+    fn value(&mut self, value: &'a str) -> Option<String> {
+        let mut out = String::new();
+        let mut rest = value;
+        while let Some(pos) = rest.find("var(") {
+            out.push_str(&rest[..pos]);
+            let inner_start = pos + 4;
+            let mut d = 1;
+            let mut end = None;
+            for (k, c) in rest[inner_start..].char_indices() {
+                match c {
+                    '(' => d += 1,
+                    ')' => {
+                        d -= 1;
+                        if d == 0 {
+                            end = Some(inner_start + k);
+                            break;
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
+            let end = end?;
+            let inner = &rest[inner_start..end];
+            let (name, fallback) = match inner.split_once(',') {
+                Some((n, f)) => (n.trim(), Some(f.trim())),
+                None => (inner.trim(), None),
+            };
+            let mut v = self.var(name);
+            if self.cycle.is_some() {
+                return None; // la variable en cours fait partie d'un cycle : pas de repli
+            }
+            if v.is_none() && !self.exhausted {
+                v = fallback.and_then(|f| self.value(f));
+            }
+            out.push_str(&v?);
+            if out.len() > MAX_RESOLVED {
+                self.exhausted = true;
+            }
+            if self.exhausted {
+                return None;
+            }
+            rest = &rest[end + 1..];
         }
-        let end = end?;
-        let inner = &rest[inner_start..end];
-        let (name, fallback) = match inner.split_once(',') {
-            Some((n, f)) => (n.trim(), Some(f.trim())),
-            None => (inner.trim(), None),
-        };
-        let v = match vars.get(name) {
-            Some(v) => resolve(v, vars, depth + 1),
-            None => None,
-        }
-        .or_else(|| fallback.and_then(|f| resolve(f, vars, depth + 1)))?;
-        out.push_str(&v);
-        rest = &rest[end + 1..];
+        out.push_str(rest);
+        Some(out)
     }
-    out.push_str(rest);
-    Some(out)
+
+    /// Valeur d'une variable ; `None` si elle est inconnue ou se référence elle-même (directement ou non) :
+    /// comme en CSS, elle est alors invalide et le `var()` qui la lit prend sa valeur de repli.
+    fn var(&mut self, name: &str) -> Option<String> {
+        let (name, value) = self.vars.get_key_value(name)?;
+        self.expansions += 1;
+        if self.expansions > MAX_EXPANSIONS {
+            self.exhausted = true;
+        }
+        if self.exhausted {
+            return None;
+        }
+        if let Some(at) = self.stack.iter().position(|n| *n == name) {
+            self.cycle = Some(self.cycle.map_or(at, |c| c.min(at)));
+            return None;
+        }
+        let at = self.stack.len();
+        self.stack.push(name);
+        let v = self.value(value);
+        self.stack.pop();
+        if let Some(c) = self.cycle {
+            if c >= at {
+                self.cycle = None;
+            }
+            return None;
+        }
+        v
+    }
+}
+
+/// Resolves every `var(--x[, fallback])` in `value`. Les cycles et les valeurs démesurées (plus de
+/// `MAX_RESOLVED` octets ou de `MAX_EXPANSIONS` variables développées) donnent `None`.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn resolve(value: &str, vars: &HashMap<String, String>) -> Option<String> {
+    Resolver { vars, stack: vec![], expansions: 0, cycle: None, exhausted: false }.value(value)
+}
+
+/// Valeur résolue de la variable `name`.
+fn resolve_var(name: &str, vars: &HashMap<String, String>) -> Option<String> {
+    Resolver { vars, stack: vec![], expansions: 0, cycle: None, exhausted: false }.var(name)
 }
 
 /// Evaluates a number possibly wrapped in calc(); units are ignored (68% -> 68, 16px -> 16).
@@ -219,7 +416,7 @@ pub fn eval_number(s: &str) -> Option<f32> {
     let s = s.strip_prefix("calc").map(str::trim).unwrap_or(s);
     let tokens = tokenize(s)?;
     let mut pos = 0;
-    let v = expr(&tokens, &mut pos)?;
+    let v = expr(&tokens, &mut pos, 0)?;
     (pos == tokens.len()).then_some(v)
 }
 
@@ -263,27 +460,33 @@ fn tokenize(s: &str) -> Option<Vec<Tok>> {
     Some(out)
 }
 
-fn expr(t: &[Tok], p: &mut usize) -> Option<f32> {
-    let mut v = term(t, p)?;
+/// Profondeur maximale des parenthèses et des `-` unaires d'un calc() (l'analyse est récursive).
+const MAX_CALC_DEPTH: usize = 64;
+
+fn expr(t: &[Tok], p: &mut usize, depth: usize) -> Option<f32> {
+    let mut v = term(t, p, depth)?;
     while let Some(Tok::Op(c @ ('+' | '-'))) = t.get(*p) {
         *p += 1;
-        let r = term(t, p)?;
+        let r = term(t, p, depth)?;
         v = if *c == '+' { v + r } else { v - r };
     }
     Some(v)
 }
 
-fn term(t: &[Tok], p: &mut usize) -> Option<f32> {
-    let mut v = factor(t, p)?;
+fn term(t: &[Tok], p: &mut usize, depth: usize) -> Option<f32> {
+    let mut v = factor(t, p, depth)?;
     while let Some(Tok::Op(c @ ('*' | '/'))) = t.get(*p) {
         *p += 1;
-        let r = factor(t, p)?;
+        let r = factor(t, p, depth)?;
         v = if *c == '*' { v * r } else { v / r };
     }
     Some(v)
 }
 
-fn factor(t: &[Tok], p: &mut usize) -> Option<f32> {
+fn factor(t: &[Tok], p: &mut usize, depth: usize) -> Option<f32> {
+    if depth > MAX_CALC_DEPTH {
+        return None;
+    }
     match t.get(*p)? {
         Tok::Num(n) => {
             *p += 1;
@@ -291,13 +494,13 @@ fn factor(t: &[Tok], p: &mut usize) -> Option<f32> {
         }
         Tok::Op('(') => {
             *p += 1;
-            let v = expr(t, p)?;
+            let v = expr(t, p, depth + 1)?;
             (t.get(*p) == Some(&Tok::Op(')'))).then(|| *p += 1)?;
             Some(v)
         }
         Tok::Op('-') => {
             *p += 1;
-            factor(t, p).map(|v| -v)
+            factor(t, p, depth + 1).map(|v| -v)
         }
         _ => None,
     }
@@ -552,7 +755,7 @@ pub fn apply(parsed: &Parsed, extra: &[(String, String)], dark: bool, base: Pale
         vars.insert(k.clone(), v.clone());
         user.insert(k.clone());
     }
-    let get = |name: &str| resolve(vars.get(name)?, &vars, 0);
+    let get = |name: &str| resolve_var(name, &vars);
     let color = |names: &[&str], fallback: Color32| {
         names.iter().find_map(|n| get(n).and_then(|v| parse_color(&v))).unwrap_or(fallback)
     };
@@ -707,7 +910,8 @@ mod tests {
             body { --font-text-size: 18px; --file-line-width: 50rem; }
             .theme-dark { --color-base-00: #101010; --accent-h: 200; --text-normal: var(--missing, #eeeeee); }
             .theme-light, .theme-dark .something { --background-primary: #fafafa !important; }
-            @media (max-width: 400px) { .theme-dark { --text-muted: red; } }
+            @media (min-width: 400px) { .theme-dark { --text-muted: red; } }
+            @media print { body { --background-primary: white; --text-muted: blue; } }
             .nav-file-title { color: red; }
             .theme-dark { .nested { color: blue } --h1-color: #ff0000; }
         "#;
@@ -726,6 +930,87 @@ mod tests {
         // the light scheme gets its own value
         let l = apply(&p, &[], false, theme::builtin_palette(false), Metrics::default());
         assert_eq!(l.palette.bg, Color32::from_rgb(0xfa, 0xfa, 0xfa));
+    }
+
+    fn vars(css: &str, dark: bool) -> HashMap<String, String> {
+        let mut p = Parsed::default();
+        parse(css, &mut p);
+        let scope = if dark { Scope::Dark } else { Scope::Light };
+        p.vars.into_iter().filter(|(s, _, _)| *s == Scope::Both || *s == scope).map(|(_, k, v)| (k, v)).collect()
+    }
+
+    #[test]
+    fn media_queries() {
+        let css = r#"
+            body { --a: 1; --b: 1; --c: 1; --d: 1; --e: 1; --f: 1; --g: 1 }
+            @media print { body { --a: 2 } }
+            @media screen and (prefers-color-scheme: dark) { body { --b: 2 } .theme-light { --c: 2 } }
+            @media (prefers-color-scheme: light) { :root { --c: 3 } }
+            @media not print { body { --d: 2 } }
+            @media (max-width: 600px) { body { --e: 2 } }
+            @media print, (min-width: 600px) { body { --f: 2 } }
+            @media only screen { @media speech { body { --g: 2 } } }
+            @MEDIA ALL { body { --h: 2 } }
+        "#;
+        let get = |dark, k: &str| vars(css, dark).get(k).cloned().unwrap_or_default();
+        assert_eq!((get(true, "--a"), get(false, "--a")), ("1".into(), "1".into()));
+        assert_eq!((get(true, "--b"), get(false, "--b")), ("2".into(), "1".into()));
+        assert_eq!((get(true, "--c"), get(false, "--c")), ("1".into(), "3".into()));
+        assert_eq!((get(true, "--d"), get(true, "--e"), get(true, "--f")), ("2".into(), "1".into(), "2".into()));
+        assert_eq!((get(true, "--g"), get(true, "--h")), ("1".into(), "2".into()));
+    }
+
+    #[test]
+    fn strings_and_comments() {
+        // guillemet échappé : la suite du thème est lue
+        let css = r#"
+            .x::before { content: "\""; }
+            body { --a: "};/* pas un commentaire */"; --b: url(http://x/*y); --c: 3; /* c */ --d: '\'{' }
+            .y { content: "non fermée
+            }
+            body { --e: 5 } /* fin
+        "#;
+        let v = vars(css, true);
+        assert_eq!(v["--a"], r#""};/* pas un commentaire */""#);
+        assert_eq!(v["--b"], "url(http://x/*y)");
+        assert_eq!((v["--c"].as_str(), v["--d"].as_str(), v["--e"].as_str()), ("3", r"'\'{'", "5"));
+    }
+
+    #[test]
+    fn hostile_values() {
+        let map = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        // auto-référence : la variable est invalide, le repli du var() qui la lit s'applique
+        let v = map(&[("--t", "var(--t, x) var(--t, x)"), ("--a", "var(--b)"), ("--b", "var(--a, 1)")]);
+        assert_eq!(resolve("var(--t, red)", &v).as_deref(), Some("red"));
+        assert_eq!(resolve("var(--t)", &v), None);
+        assert_eq!(resolve("var(--a, blue)", &v).as_deref(), Some("blue"));
+        assert_eq!(resolve("var(--b, blue)", &v).as_deref(), Some("blue"));
+        // éventail sans cycle (2^40 copies) : abandon immédiat au lieu d'une chaîne géante
+        let names: Vec<String> = (0..=40).map(|i| format!("--v{i}")).collect();
+        let mut fan: HashMap<String, String> =
+            (0..40).map(|i| (names[i].clone(), format!("var({0}) var({0})", names[i + 1]))).collect();
+        fan.insert(names[40].clone(), "x".into());
+        let t = std::time::Instant::now();
+        assert_eq!(resolve("var(--v0, repli)", &fan), None);
+        assert!(t.elapsed().as_secs() < 2);
+        // un usage normal répété reste permis
+        assert_eq!(resolve("var(--v38)", &fan).as_deref(), Some("x x x x"));
+        // calc() et blocs imbriqués à l'excès : pas de débordement de pile
+        assert_eq!(eval_number(&format!("calc{}", "(".repeat(200_000))), None);
+        assert_eq!(eval_number(&format!("calc({}1)", "-".repeat(200_000))), None);
+        assert_eq!(eval_number(&format!("calc({}1{})", "(".repeat(40), ")".repeat(40))), Some(1.0));
+        let deep = format!("{}body {{ --a: 1 }}{}", "@media screen {".repeat(100_000), "}".repeat(100_000));
+        assert!(vars(&deep, true).is_empty());
+        let a = apply(
+            &Parsed::default(),
+            &[("--text-normal".into(), "var(--text-normal, x) var(--text-normal, x)".into())],
+            true,
+            theme::builtin_palette(true),
+            Metrics::default(),
+        );
+        assert_eq!(a.palette.text, theme::builtin_palette(true).text);
     }
 
     #[test]

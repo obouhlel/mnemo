@@ -160,6 +160,34 @@ fn diff_ui(ui: &mut egui::Ui, old: &str, new: &str, new_label: &str) {
     }
 }
 
+impl Conflict {
+    /// Recalcule les blocs pour le texte actuel de l'éditeur (`mine`), en gardant les choix déjà faits sur les
+    /// conflits qui n'ont pas changé. Sans effet si le texte est celui du dernier calcul.
+    pub(super) fn rebuild(&mut self, saved: &str, mine: &str) {
+        if self.mine == mine {
+            return;
+        }
+        let old = std::mem::replace(&mut self.blocks, merge::build(saved, mine, &self.remote.content));
+        for b in &mut self.blocks {
+            if let Block::Conflict { base, mine, theirs, choice, custom } = b {
+                let same = old.iter().find_map(|o| match o {
+                    Block::Conflict { base: b2, mine: m2, theirs: t2, choice: c2, custom: u2 }
+                        if b2 == base && m2 == mine && t2 == theirs =>
+                    {
+                        Some((c2.clone(), u2.clone()))
+                    }
+                    _ => None,
+                });
+                if let Some((c2, u2)) = same {
+                    *choice = c2;
+                    *custom = u2;
+                }
+            }
+        }
+        self.mine = mine.to_string();
+    }
+}
+
 impl MnemoApp {
     pub(super) fn conflict_window(&mut self, ctx: &egui::Context, now: f64) {
         let Some(n) = self.open.as_mut() else { return };
@@ -169,6 +197,8 @@ impl MnemoApp {
         if !c.window_open {
             return;
         }
+        // l'éditeur reste utilisable derrière la fenêtre : ce qui y est tapé entre dans la fusion
+        c.rebuild(&n.saved, &n.content);
         let mut open = true;
         let mut apply: Option<String> = None;
         let mut close = false;
@@ -241,6 +271,7 @@ impl MnemoApp {
         }
         if let Some(text) = apply {
             let remote = n.conflict.take().unwrap().remote;
+            self.cursor_fix.get_or_insert_with(|| (n.id, n.content.clone()));
             n.content = text;
             n.saved = remote.content;
             n.version = remote.version;

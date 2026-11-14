@@ -55,31 +55,73 @@ pub fn preprocess(src: &str) -> String {
 /// `![[croquis.mnemo-board]]`) sont résolus par `resolve` : images affichées, whiteboards en lien.
 pub fn preprocess_with(src: &str, resolve: Resolver) -> String {
     let mut out = String::with_capacity(src.len() + 64);
-    let mut fence: Option<String> = None;
+    let mut fence = Fence::default();
     for line in src.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if let Some(f) = &fence {
-            if trimmed.starts_with(f.as_str()) {
-                fence = None;
-            }
-            out.push_str(line);
-            continue;
-        }
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            let ch = trimmed.chars().next().unwrap();
-            let n = trimmed.chars().take_while(|c| *c == ch).count();
-            fence = Some(std::iter::repeat_n(ch, n).collect());
-            out.push_str(line);
-            continue;
-        }
-        // Indented code block (4 spaces / tab) — leave as is
-        if line.starts_with("    ") || line.starts_with('\t') {
+        // Bloc de code (barrière, ou indenté de 4 espaces / tabulation) : laissé tel quel
+        if fence.code_line(line) || line.starts_with("    ") || line.starts_with('\t') {
             out.push_str(line);
             continue;
         }
         transform_line(line, &mut out, resolve);
     }
     out
+}
+
+/// Suivi des blocs de code à barrière, selon CommonMark (mêmes règles que `local::index::mask_code`) :
+/// une barrière s'ouvre par au moins 3 `` ` `` ou 3 `~` (indentation de 3 espaces au plus ; après des `` ` ``,
+/// le reste de la ligne ne contient pas de `` ` `` : "```code```" est du code en ligne) et ne se ferme que par
+/// une ligne du même caractère, au moins aussi longue, sans rien d'autre.
+#[derive(Default)]
+struct Fence(Option<(char, usize)>);
+
+impl Fence {
+    /// Vrai si la ligne fait partie d'un bloc de code (barrières comprises).
+    fn code_line(&mut self, line: &str) -> bool {
+        let t = line.trim_start_matches(' ');
+        let indent = line.len() - t.len();
+        let mark = t.chars().next().filter(|c| matches!(c, '`' | '~'));
+        let run = mark.map(|m| t.chars().take_while(|c| *c == m).count()).unwrap_or(0);
+        let after = &t[run..];
+        match self.0 {
+            Some((m, n)) => {
+                if mark == Some(m) && run >= n && indent <= 3 && after.trim().is_empty() {
+                    self.0 = None;
+                }
+                true
+            }
+            None if indent <= 3 && run >= 3 && !(mark == Some('`') && after.contains('`')) => {
+                self.0 = mark.map(|m| (m, run));
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Fin (exclue) du code en ligne ouvert par `n` accents graves en `i` : la suite fermante a exactement `n` accents.
+fn inline_code_end(bytes: &[u8], i: usize, n: usize) -> Option<usize> {
+    let mut j = i + n;
+    while j < bytes.len() {
+        if bytes[j] == b'`' {
+            let m = bytes[j..].iter().take_while(|b| **b == b'`').count();
+            if m == n {
+                return Some(j + m);
+            }
+            j += m;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+/// Longueur en octets du tag qui commence à `rest` (juste après `#`), 0 s'il n'y en a pas. Règle d'Obsidian,
+/// la même que `local::index::tags` : lettres, chiffres, `_`, `-`, `/`, avec au moins un caractère qui n'est
+/// pas un chiffre (`#123` est un numéro d'issue, pas un tag).
+fn tag_len(rest: &str) -> usize {
+    let len: usize =
+        rest.chars().take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '/')).map(char::len_utf8).sum();
+    if rest[..len].chars().all(|c| c.is_ascii_digit()) { 0 } else { len }
 }
 
 /// `![[cible]]` ou `![](cible)` d'un fichier : image Markdown ou lien vers le whiteboard.
@@ -98,14 +140,9 @@ fn transform_line(line: &str, out: &mut String, resolve: Resolver) {
     while i < bytes.len() {
         match bytes[i] {
             b'`' => {
-                // skip inline code span with the same number of backticks
+                // code en ligne : jusqu'à la suite du même nombre d'accents graves
                 let n = bytes[i..].iter().take_while(|b| **b == b'`').count();
-                let ticks = &line[i..i + n];
-                if let Some(end) = line[i + n..].find(ticks) {
-                    i += n + end + n;
-                } else {
-                    i += n;
-                }
+                i = inline_code_end(bytes, i, n).unwrap_or(i + n);
             }
             b'[' if bytes.get(i + 1) == Some(&b'[') => {
                 if let Some(end) = line[i + 2..].find("]]") {
@@ -158,15 +195,10 @@ fn transform_line(line: &str, out: &mut String, resolve: Resolver) {
                 }
                 i += 1;
             }
-            b'#' if (i == 0 || bytes[i - 1].is_ascii_whitespace()) => {
+            b'#' if line[..i].chars().next_back().is_none_or(char::is_whitespace) => {
                 let rest = &line[i + 1..];
-                let first = rest.chars().next();
-                if first.is_some_and(|c| c.is_alphabetic() || c == '_') {
-                    let len: usize = rest
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '/'))
-                        .map(char::len_utf8)
-                        .sum();
+                let len = tag_len(rest);
+                if len > 0 {
                     let tag = &rest[..len];
                     out.push_str(&line[last..i]);
                     out.push_str(&format!("[#{tag}](<{TAG_SCHEME}{}>)", encode(tag)));
@@ -186,16 +218,12 @@ fn transform_line(line: &str, out: &mut String, resolve: Resolver) {
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn headings(src: &str) -> Vec<(usize, String, usize)> {
     let mut res = Vec::new();
-    let mut in_fence = false;
+    let mut fence = Fence::default();
     for (n, line) in src.lines().enumerate() {
+        if fence.code_line(line) {
+            continue;
+        }
         let t = line.trim_start();
-        if t.starts_with("```") || t.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
         let level = t.chars().take_while(|c| *c == '#').count();
         if (1..=6).contains(&level) && t[level..].starts_with(' ') {
             res.push((level, t[level..].trim().trim_end_matches('#').trim().to_string(), n));
@@ -250,6 +278,23 @@ mod tests {
         assert_eq!(preprocess("# Titre\n#projet/rust ok"), "# Titre\n[#projet/rust](<mnemo:tag/projet/rust>) ok");
         assert_eq!(preprocess("issue#12 et #42"), "issue#12 et #42");
         assert_eq!(preprocess("#été"), "[#été](<mnemo:tag/été>)");
+        // règle d'Obsidian : jamais purement numérique, mais un chiffre en tête est permis
+        assert_eq!(preprocess("#123 #2024-11 #1abc"), "#123 [#2024-11](<mnemo:tag/2024-11>) [#1abc](<mnemo:tag/1abc>)");
+        assert_eq!(preprocess("a\u{a0}#b x#c ##d"), "a\u{a0}[#b](<mnemo:tag/b>) x#c ##d");
+        assert_eq!(preprocess("`#non` ``a ` #non`` #oui"), "`#non` ``a ` #non`` [#oui](<mnemo:tag/oui>)");
+    }
+
+    #[test]
+    fn fences() {
+        // "```code```" sur une ligne est du code en ligne : la suite reste transformée
+        assert_eq!(preprocess("```code```\n[[y]] #t"), "```code```\n[y](<mnemo:note/y>) [#t](<mnemo:tag/t>)");
+        // fermeture : même caractère, au moins la même longueur, rien d'autre sur la ligne
+        let src = "````\n```\n[[x]]\n~~~~\n```` suite\n`````\n[[y]]";
+        assert_eq!(preprocess(src), src.replace("[[y]]", "[y](<mnemo:note/y>)"));
+        let src = "~~~ rust `x`\n#tag\n```\n~~~\n#tag";
+        assert_eq!(preprocess(src), "~~~ rust `x`\n#tag\n```\n~~~\n[#tag](<mnemo:tag/tag>)");
+        let h = headings("# A\n~~~\n# non\n```\n# non\n~~~\n```x```\n## B\n````\n# non\n```\n# non\n````\n### C");
+        assert_eq!(h.iter().map(|h| h.1.as_str()).collect::<Vec<_>>(), ["A", "B", "C"]);
     }
 
     #[test]

@@ -40,4 +40,21 @@ API disponible : `notice(msg)`, `log(msg)`, `open_note(path)`, `create_note(path
 
 Plugins fournis (copiés au premier lancement, désactivés par défaut) : **Compteur de mots**, **Notes quotidiennes**,
 **Plan** (table des matières), **Encadrés** (`> [!note]`, `> [!warning]`…), **Modèles**.
-Les scripts sont limités en nombre d'opérations : un plugin bogué ne peut pas figer l'application.
+
+## Bac à sable
+
+Un script n'a accès qu'au langage Rhai et à l'API ci-dessus : ni fichiers, ni réseau, ni processus. Ce qui est imposé :
+
+- **`main`** (facultatif dans `plugin.toml`, `main.rhai` par défaut) est un simple nom de fichier du dossier du
+  plugin : un chemin absolu, `..` ou un sous-dossier sont refusés ;
+- **pas d'`import`** : tout le script tient dans ce fichier ;
+- **temps** : `status`, `panel`, `preprocess` et `commands` (rappelés à chaque modification de la note) ont droit à
+  1 000 000 d'opérations et 2 s par appel ; les autres hooks (`run`, `on_load`, `on_open`, `on_save`, `on_event`) à
+  5 000 000 d'opérations et 10 s ;
+- **mémoire** : chaînes de 10 Mo, tableaux de 100 000 éléments et maps de 10 000 entrées au plus (éléments imbriqués
+  compris), 64 niveaux d'appels, 1 000 clés `state_set` par plugin, 200 actions (`notice`, `insert_text`…) par appel ;
+- **erreurs** : une limite dépassée, un format de date invalide (`date("%Q")`), un décalage de date hors calendrier ou
+  une erreur interne arrêtent l'appel ; le plugin est mis en erreur (message affiché, bouton pour le relancer dans les
+  paramètres) et l'application continue.
+
+Les hooks s'exécutent dans le thread de l'interface : un script lent la ralentit, dans les limites ci-dessus.

@@ -22,5 +22,11 @@ Variables prises en charge : `--background-primary`, `--background-primary-alt`,
 `--bold-color`, `--italic-color`, `--h1-color`…`--h6-color`, `--h1-size`…`--h6-size`, `--font-text-size`,
 `--file-line-width`, `--line-height-normal`, `--text-selection`, `--color-base-*`, `--mono-rgb-100`.
 
+`@media` : les blocs `print`, `speech`… sont ignorés ; `(prefers-color-scheme: dark|light)` ne s'applique qu'au mode
+sombre ou clair ; `min-width` / `max-width` / `min-height` / `max-height` sont comparés à une fenêtre de bureau
+(1280 × 800) ; les autres conditions sont tenues pour vraies. Une variable qui se référence elle-même (directement ou
+non) est invalide, comme dans un navigateur : le `var()` qui la lit prend sa valeur de repli. Garde-fous : valeur résolue
+de 16 Ko au plus, 2000 `var()` développés par valeur, 64 niveaux de parenthèses dans `calc()`, 32 blocs imbriqués.
+
 Limites (l'interface n'est pas une page web) : les règles qui ciblent des éléments précis (`.nav-file-title { … }`),
 `color-mix()` et les polices personnalisées ne sont pas appliquées ; le rapport des paramètres les signale.

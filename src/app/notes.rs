@@ -106,14 +106,28 @@ impl MnemoApp {
             self.content_gen += 1;
             self.notice("Modifications distantes fusionnées automatiquement avec les vôtres", false, now);
         } else {
+            // pas de fenêtre qui s'ouvre toute seule au milieu d'une phrase : l'éditeur garde le focus, le
+            // bandeau propose de résoudre ; la fenêtre déjà ouverte le reste, avec la nouvelle version distante
+            let window_open = n.conflict.as_ref().is_some_and(|c| c.window_open);
+            let known = n.conflict.is_some();
             n.conflict = Some(Conflict {
                 remote,
+                mine: n.content.clone(),
                 blocks,
                 tab: ConflictTab::Resolve,
                 diff_against_result: false,
-                window_open: true,
+                window_open,
             });
-            self.notice(format!("Conflit : {total} bloc(s) modifié(s) des deux côtés à résoudre"), true, now);
+            if !known {
+                self.notice(
+                    format!(
+                        "Conflit : {total} bloc(s) modifié(s) des deux côtés. Vous pouvez continuer à écrire ; \
+                         résolvez-le depuis le bandeau de la note."
+                    ),
+                    true,
+                    now,
+                );
+            }
         }
     }
 
@@ -158,6 +172,13 @@ impl MnemoApp {
             return;
         }
         match self.tabs[self.active_tab].note {
+            // la note de cet onglet n'existe plus (supprimée pendant qu'il était en arrière-plan) : onglet vide,
+            // au lieu de continuer à montrer et modifier la note de l'onglet précédent
+            Some(id) if self.restore_done && !self.notes.iter().any(|n| n.id == id) => {
+                self.forget_note(id);
+                self.leave_note();
+                self.open = None;
+            }
             Some(id) => self.open_in(id, OpenMode::History),
             None => {
                 self.leave_note();

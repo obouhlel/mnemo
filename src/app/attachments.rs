@@ -39,8 +39,8 @@ impl MnemoApp {
         if !is_image(&rel) {
             return None;
         }
-        let abs = self.file_abs(&rel)?;
-        Some(Embed::Image(format!("file://{}", abs.display())))
+        // adresse non encodée : `markdown::preprocess_with` encode lui-même ce que l'aperçu exige
+        Some(Embed::Image(file_uri_plain(&self.file_abs(&rel)?)))
     }
 
     /// Dossier des pièces jointes pour une note : réglage d'Obsidian (`attachmentFolderPath` de
@@ -80,13 +80,48 @@ impl MnemoApp {
         let Some(note) = &self.open else { return };
         let dir = self.attachment_dir(&note.path);
         let path = if dir.is_empty() { file_name.to_string() } else { format!("{dir}/{file_name}") };
+        // la réponse arrive plus tard : on retient pour quelle note c'était (voir `file_saved`)
+        self.embed_targets.push((path.clone(), note.id));
+        if self.embed_targets.len() > 32 {
+            self.embed_targets.remove(0); // enregistrements restés sans réponse (erreur d'écriture)
+        }
         self.db.send(Cmd::SaveFile { path, bytes, insert: true });
     }
 
+    /// Une pièce jointe vient d'être enregistrée (`Msg::FileSaved`). Si elle était destinée à une note
+    /// (`insert`), `![[…]]` n'y est inséré que si cette note est encore celle affichée et n'a pas de conflit
+    /// en attente ; sinon le fichier est simplement gardé.
+    pub(super) fn file_saved(&mut self, path: String, insert: bool, now: f64) {
+        if !self.files.contains(&path) {
+            self.files.push(path.clone());
+        }
+        if !insert {
+            return;
+        }
+        let target = self.embed_targets.iter().position(|(asked, _)| saved_as(asked, &path));
+        let target = target.map(|i| self.embed_targets.remove(i).1);
+        let why = match (&self.open, target) {
+            (Some(n), Some(t)) if n.id == t && n.conflict.is_none() => {
+                self.actions.push(UiAction::InsertEmbed(path));
+                return;
+            }
+            (Some(n), Some(t)) if n.id == t => "sa note a un conflit à résoudre",
+            _ => "sa note n'est plus affichée",
+        };
+        self.notice(
+            format!("« {path} » est enregistrée mais pas intégrée ({why}). Elle reste dans l'explorateur."),
+            false,
+            now,
+        );
+    }
+
     /// Ctrl+V avec une image dans le presse-papiers (capture d'écran…) : egui la transmet en `PasteImage` ;
-    /// elle devient une pièce jointe PNG intégrée au curseur. Renvoie vrai si une image a été collée.
+    /// elle devient une pièce jointe PNG intégrée au curseur. Seulement quand on écrit dans la note : un
+    /// collage dans la recherche, le titre ou un réglage ne la concerne pas. Renvoie vrai si une image a été
+    /// collée.
     pub(super) fn paste_image(&mut self, ctx: &egui::Context) -> bool {
-        if self.open.is_none() {
+        let Some(n) = &self.open else { return false };
+        if !ctx.memory(|m| m.has_focus(editor_id(n.id))) {
             return false;
         }
         let images: Vec<std::sync::Arc<egui::ColorImage>> = ctx.input(|i| {
@@ -142,7 +177,7 @@ impl MnemoApp {
             ui.add_space(8.0);
             if let Some(abs) = self.file_abs(&rel) {
                 ui.add(
-                    egui::Image::from_uri(format!("file://{}", abs.display()))
+                    egui::Image::from_uri(file_uri(&abs))
                         .max_size(egui::vec2(screen.width() - 160.0, screen.height() - 180.0))
                         .fit_to_original_size(1.0),
                 );
@@ -152,6 +187,71 @@ impl MnemoApp {
             self.image_view = None;
         }
     }
+}
+
+/// `saved` est-il le nom donné par le stockage local au fichier demandé sous `asked` ? (le même, ou
+/// « photo 1.png », « photo 2.png »… si le nom était pris)
+fn saved_as(asked: &str, saved: &str) -> bool {
+    if asked == saved {
+        return true;
+    }
+    let (stem, ext) = match asked.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() && !e.contains('/') => (s, format!(".{e}")),
+        _ => (asked, String::new()),
+    };
+    saved
+        .strip_prefix(stem)
+        .and_then(|r| r.strip_suffix(ext.as_str()))
+        .and_then(|n| n.strip_prefix(' '))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Adresse `file://` d'un fichier, sans encodage : `file:///home/moi/a b.png`, `file:///C:/Users/moi/a b.png`
+/// (jamais `file://C:\…`), `file://serveur/partage/a.png` pour un chemin réseau Windows.
+fn plain_uri(path: &str, windows: bool) -> String {
+    if !windows {
+        return format!("file://{}{path}", if path.starts_with('/') { "" } else { "/" });
+    }
+    let p = path.replace('\\', "/");
+    // chemins « verbatim » de Windows : \\?\C:\… et \\?\UNC\serveur\partage\…
+    let p = match p.strip_prefix("//?/") {
+        Some(rest) => match rest.strip_prefix("UNC/") {
+            Some(unc) => format!("//{unc}"),
+            None => rest.to_string(),
+        },
+        None => p,
+    };
+    match p.strip_prefix("//") {
+        Some(unc) => format!("file://{unc}"),
+        None => format!("file:///{}", p.trim_start_matches('/')),
+    }
+}
+
+/// Encode en `%XX` tout ce qui n'est pas sûr dans une adresse (espace, `#`, `?`, `%`, accents…).
+fn percent_encode(uri: &str) -> String {
+    let (scheme, rest) = uri.split_at(uri.find("//").map_or(0, |i| i + 2));
+    let mut out = String::from(scheme);
+    for b in rest.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~/:".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// Adresse `file://` d'un fichier, sur tous les systèmes, encodée (`a b#1.png` → `a%20b%231.png`) : pour
+/// `egui::Image::from_uri` et pour ouvrir le fichier avec l'application du système. Le chargeur d'egui_extras
+/// essaie le chemin tel quel puis le chemin décodé une fois : il ne faut donc encoder qu'une fois (ne pas
+/// passer cette adresse à `markdown::preprocess_with`, qui encode déjà : voir `file_uri_plain`).
+pub(super) fn file_uri(path: &std::path::Path) -> String {
+    percent_encode(&file_uri_plain(path))
+}
+
+/// La même adresse sans encodage, pour l'aperçu Markdown (qui encode lui-même `%`, `<` et `>`).
+pub(super) fn file_uri_plain(path: &std::path::Path) -> String {
+    plain_uri(&path.to_string_lossy(), cfg!(windows))
 }
 
 /// Icône Lucide d'une pièce jointe dans l'explorateur.
@@ -165,5 +265,44 @@ pub(super) fn file_icon(rel: &str) -> &'static str {
         "file-text"
     } else {
         "file"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_uris() {
+        let uri = |p: &str, win: bool| percent_encode(&plain_uri(p, win));
+        // Linux / macOS
+        assert_eq!(uri("/home/moi/Notes/img/photo.png", false), "file:///home/moi/Notes/img/photo.png");
+        assert_eq!(uri("/home/moi/Mes notes/a#1 50%?.png", false), "file:///home/moi/Mes%20notes/a%231%2050%25%3F.png");
+        assert_eq!(uri("/n/été.png", false), "file:///n/%C3%A9t%C3%A9.png");
+        assert_eq!(uri("/n/a\\b.png", false), "file:///n/a%5Cb.png"); // « \ » est un caractère comme un autre
+        // Windows : barres obliques, trois barres avant la lettre du lecteur
+        assert_eq!(uri("C:\\Users\\moi\\Notes\\photo.png", true), "file:///C:/Users/moi/Notes/photo.png");
+        assert_eq!(
+            uri("C:\\Users\\moi\\Mes notes/img/a b.png", true),
+            "file:///C:/Users/moi/Mes%20notes/img/a%20b.png"
+        );
+        assert_eq!(uri("\\\\?\\C:\\Notes\\a.png", true), "file:///C:/Notes/a.png");
+        assert_eq!(uri("\\\\nas\\partage\\Notes\\a.png", true), "file://nas/partage/Notes/a.png");
+        assert_eq!(uri("\\\\?\\UNC\\nas\\partage\\a.png", true), "file://nas/partage/a.png");
+        // sans encodage (aperçu Markdown) : seule la forme change
+        assert_eq!(plain_uri("C:\\Mes notes\\a 50%.png", true), "file:///C:/Mes notes/a 50%.png");
+        assert_eq!(plain_uri("/n/a b#1.png", false), "file:///n/a b#1.png");
+        // un « % » du nom est encodé une fois : décoder une fois redonne le chemin
+        assert_eq!(uri("/n/a%20b.png", false), "file:///n/a%2520b.png");
+    }
+
+    #[test]
+    fn saved_file_matches_its_request() {
+        assert!(saved_as("Pièces jointes/Image 1.png", "Pièces jointes/Image 1.png"));
+        assert!(saved_as("Pièces jointes/photo.png", "Pièces jointes/photo 2.png"));
+        assert!(saved_as("dossier.v2/notes", "dossier.v2/notes 1"));
+        assert!(!saved_as("Pièces jointes/photo.png", "Pièces jointes/photo bis.png"));
+        assert!(!saved_as("Pièces jointes/photo.png", "Pièces jointes/autre.png"));
+        assert!(!saved_as("a/photo.png", "b/photo 1.png"));
     }
 }

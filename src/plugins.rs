@@ -18,13 +18,18 @@
 //! Host API: `notice(msg)`, `log(msg)`, `open_note(path)`, `create_note(path, content)`,
 //! `insert_text(text)`, `replace_content(text)`, `setting(key)`, `note_paths()`, `date(fmt)`,
 //! `date_offset(days, fmt)`, `word_count(text)`, `state_get(key)`, `state_set(key, value)`.
+//!
+//! Bac à sable (voir `docs/plugins.md`) : opérations, profondeur d'appel, tailles des chaînes / tableaux / maps
+//! bornées, pas d'`import`, script principal dans le dossier du plugin, et une panique pendant un appel devient
+//! une erreur du plugin.
 
 use crate::model::PluginState;
-use rhai::{AST, Array, Dynamic, Engine, FuncArgs, Map, Scope};
+use rhai::{AST, Array, Dynamic, Engine, EvalAltResult, FuncArgs, Map, Scope};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SettingDef {
@@ -91,6 +96,66 @@ struct Shared {
     settings: Mutex<HashMap<String, Map>>,
     state: Mutex<HashMap<String, Map>>,
     note_paths: Mutex<Vec<String>>,
+    /// heure limite de l'appel en cours
+    deadline: Mutex<Option<Instant>>,
+}
+
+/// Verrou qui survit à une panique survenue pendant un appel de plugin (mutex « empoisonné »).
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Budget d'opérations d'un appel. Les hooks rappelés à chaque modification de la note (`status`, `panel`,
+/// `preprocess`, `commands`) ont un budget plus serré que ceux déclenchés par une action de l'utilisateur.
+const OPS_FREQUENT: u64 = 1_000_000;
+const OPS_ACTION: u64 = 5_000_000;
+/// Tailles maximales des valeurs d'un script (éléments imbriqués compris).
+const MAX_STRING: usize = 10_000_000;
+const MAX_ARRAY: usize = 100_000;
+const MAX_MAP: usize = 10_000;
+/// Actions (notifications, insertions…) gardées par appel, et clés de `state_set` par plugin.
+const MAX_ACTIONS: usize = 200;
+const MAX_STATE_KEYS: usize = 1_000;
+
+/// Durée maximale d'un appel : certaines opérations coûtent bien plus que d'autres (grands tableaux), le
+/// nombre d'opérations seul ne borne pas le temps.
+const TIME_FREQUENT: Duration = Duration::from_secs(2);
+const TIME_ACTION: Duration = Duration::from_secs(10);
+
+fn budget(hook: &str) -> (u64, Duration) {
+    if matches!(hook, "status" | "panel" | "preprocess" | "commands") {
+        (OPS_FREQUENT, TIME_FREQUENT)
+    } else {
+        (OPS_ACTION, TIME_ACTION)
+    }
+}
+
+/// Date formatée, ou une erreur Rhai si le format strftime est invalide (`%Q`, `100%`) : l'affichage d'un
+/// format invalide par chrono panique.
+fn format_date(date: chrono::DateTime<chrono::Local>, fmt: &str) -> Result<String, Box<EvalAltResult>> {
+    let items: Vec<chrono::format::Item> = chrono::format::StrftimeItems::new(fmt).collect();
+    if items.iter().any(|i| matches!(i, chrono::format::Item::Error)) {
+        return Err(format!("format de date invalide : « {fmt} »").into());
+    }
+    let mut out = String::new();
+    use std::fmt::Write;
+    write!(out, "{}", date.format_with_items(items.iter()))
+        .map_err(|_| format!("format de date invalide : « {fmt} »"))?;
+    Ok(out)
+}
+
+/// Aujourd'hui décalé de `days` jours ; erreur si la date sort du calendrier.
+fn offset_date(days: i64) -> Result<chrono::DateTime<chrono::Local>, Box<EvalAltResult>> {
+    chrono::Duration::try_days(days)
+        .and_then(|d| chrono::Local::now().checked_add_signed(d))
+        .ok_or_else(|| format!("décalage de date hors limites : {days} jours").into())
+}
+
+/// `main` du manifeste : un simple nom de fichier du dossier du plugin (ni chemin absolu, ni `..`, ni sous-dossier).
+fn valid_main(main: &str) -> bool {
+    let mut parts = Path::new(main).components();
+    matches!((parts.next(), parts.next()), (Some(std::path::Component::Normal(n)), None) if n == main)
+        && !main.contains(['/', '\\', ':'])
 }
 
 /// Data about the current note handed to plugins.
@@ -148,14 +213,29 @@ impl PluginHost {
     pub fn new(dir: PathBuf) -> Self {
         let shared = Arc::new(Shared::default());
         let mut engine = Engine::new();
-        engine.set_max_operations(5_000_000); // protects the UI from infinite loops
+        engine.set_max_operations(OPS_ACTION); // protects the UI from infinite loops (ajusté à chaque appel)
         engine.set_max_call_levels(64);
         engine.set_max_expr_depths(256, 128);
-        engine.set_max_string_size(10_000_000);
+        engine.set_max_string_size(MAX_STRING);
+        engine.set_max_array_size(MAX_ARRAY);
+        engine.set_max_map_size(MAX_MAP);
+        // pas d'`import` : le résolveur par défaut lirait n'importe quel fichier .rhai du disque
+        engine.set_module_resolver(rhai::module_resolvers::DummyModuleResolver::new());
+
+        let s = shared.clone();
+        engine.on_progress(move |ops| {
+            let late = ops % 512 == 0 && lock(&s.deadline).is_some_and(|d| Instant::now() > d);
+            late.then(|| "temps d'exécution dépassé".into())
+        });
 
         let push = |s: &Arc<Shared>| {
             let s = s.clone();
-            move |a: Action| s.actions.lock().unwrap().push(a)
+            move |a: Action| {
+                let mut actions = lock(&s.actions);
+                if actions.len() < MAX_ACTIONS {
+                    actions.push(a);
+                }
+            }
         };
         let p = push(&shared);
         engine.register_fn("notice", move |msg: &str| p(Action::Notice(msg.to_string())));
@@ -172,31 +252,35 @@ impl PluginHost {
 
         let s = shared.clone();
         engine.register_fn("log", move |msg: &str| {
-            eprintln!("[plugin:{}] {msg}", s.current.lock().unwrap());
+            eprintln!("[plugin:{}] {msg}", lock(&s.current));
         });
         let s = shared.clone();
         engine.register_fn("setting", move |key: &str| -> Dynamic {
-            let cur = s.current.lock().unwrap().clone();
-            s.settings.lock().unwrap().get(&cur).and_then(|m| m.get(key).cloned()).unwrap_or(Dynamic::UNIT)
+            let cur = lock(&s.current).clone();
+            lock(&s.settings).get(&cur).and_then(|m| m.get(key).cloned()).unwrap_or(Dynamic::UNIT)
         });
         let s = shared.clone();
         engine.register_fn("state_get", move |key: &str| -> Dynamic {
-            let cur = s.current.lock().unwrap().clone();
-            s.state.lock().unwrap().get(&cur).and_then(|m| m.get(key).cloned()).unwrap_or(Dynamic::UNIT)
+            let cur = lock(&s.current).clone();
+            lock(&s.state).get(&cur).and_then(|m| m.get(key).cloned()).unwrap_or(Dynamic::UNIT)
         });
         let s = shared.clone();
-        engine.register_fn("state_set", move |key: &str, value: Dynamic| {
-            let cur = s.current.lock().unwrap().clone();
-            s.state.lock().unwrap().entry(cur).or_default().insert(key.into(), value);
+        engine.register_fn("state_set", move |key: &str, value: Dynamic| -> Result<(), Box<EvalAltResult>> {
+            let cur = lock(&s.current).clone();
+            let mut state = lock(&s.state);
+            let map = state.entry(cur).or_default();
+            if map.len() >= MAX_STATE_KEYS && !map.contains_key(key) {
+                return Err(format!("state_set : plus de {MAX_STATE_KEYS} clés").into());
+            }
+            map.insert(key.into(), value);
+            Ok(())
         });
         let s = shared.clone();
         engine.register_fn("note_paths", move || -> Array {
-            s.note_paths.lock().unwrap().iter().map(|p| Dynamic::from(p.clone())).collect()
+            lock(&s.note_paths).iter().map(|p| Dynamic::from(p.clone())).collect()
         });
-        engine.register_fn("date", |fmt: &str| chrono::Local::now().format(fmt).to_string());
-        engine.register_fn("date_offset", |days: i64, fmt: &str| {
-            (chrono::Local::now() + chrono::Duration::days(days)).format(fmt).to_string()
-        });
+        engine.register_fn("date", |fmt: &str| format_date(chrono::Local::now(), fmt));
+        engine.register_fn("date_offset", |days: i64, fmt: &str| format_date(offset_date(days)?, fmt));
         engine.register_fn("word_count", |t: &str| {
             t.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).count() as i64
         });
@@ -235,9 +319,15 @@ impl PluginHost {
         for dir in dirs {
             match load_manifest(&dir) {
                 Ok(manifest) => {
-                    let (ast, error) = match self.engine.compile_file(dir.join(&manifest.main)) {
-                        Ok(a) => (Some(a), None),
-                        Err(e) => (None, Some(format!("Erreur de compilation : {e}"))),
+                    let (ast, error) = if !valid_main(&manifest.main) {
+                        let e =
+                            format!("main = « {} » : attendu un nom de fichier du dossier du plugin", manifest.main);
+                        (None, Some(e))
+                    } else {
+                        match self.engine.compile_file(dir.join(&manifest.main)) {
+                            Ok(a) => (Some(a), None),
+                            Err(e) => (None, Some(format!("Erreur de compilation : {e}"))),
+                        }
                     };
                     self.plugins.push(Plugin { manifest, dir, enabled: false, error, ast, loaded: false });
                 }
@@ -268,7 +358,7 @@ impl PluginHost {
                     m.insert(k.as_str().into(), json_to_dyn(v));
                 }
             }
-            self.shared.settings.lock().unwrap().insert(p.manifest.id.clone(), m);
+            lock(&self.shared.settings).insert(p.manifest.id.clone(), m);
             if p.enabled && !p.loaded {
                 to_load.push(i);
             }
@@ -289,29 +379,39 @@ impl PluginHost {
     }
 
     pub fn set_note_paths(&self, paths: Vec<String>) {
-        *self.shared.note_paths.lock().unwrap() = paths;
+        *lock(&self.shared.note_paths) = paths;
     }
 
     pub fn take_actions(&self) -> Vec<Action> {
-        std::mem::take(&mut *self.shared.actions.lock().unwrap())
+        std::mem::take(&mut *lock(&self.shared.actions))
     }
 
     fn call<T: Clone + Send + Sync + 'static>(&mut self, i: usize, name: &str, args: impl FuncArgs) -> Option<T> {
         let p = &self.plugins[i];
         let ast = p.ast.as_ref()?;
-        *self.shared.current.lock().unwrap() = p.manifest.id.clone();
-        let mut scope = Scope::new();
-        let opts = rhai::CallFnOptions::new().eval_ast(false).rewind_scope(true);
-        match self.engine.call_fn_with_options::<Dynamic>(opts, &mut scope, ast, name, args) {
+        *lock(&self.shared.current) = p.manifest.id.clone();
+        let (ops, time) = budget(name);
+        self.engine.set_max_operations(ops);
+        *lock(&self.shared.deadline) = Some(Instant::now() + time);
+        let engine = &self.engine;
+        // une panique dans le moteur ou dans une fonction de l'hôte ne doit pas emporter l'application
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut scope = Scope::new();
+            let opts = rhai::CallFnOptions::new().eval_ast(false).rewind_scope(true);
+            engine.call_fn_with_options::<Dynamic>(opts, &mut scope, ast, name, args).map_err(|e| e.to_string())
+        }))
+        .unwrap_or_else(|panic| {
+            let what =
+                panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned());
+            Err(format!("erreur interne ({})", what.unwrap_or_else(|| "panique".into())))
+        });
+        match result {
             Ok(v) => v.try_cast::<T>(),
             Err(e) => {
                 let msg = format!("{name}() : {e}");
                 eprintln!("[plugin:{}] {msg}", p.manifest.id);
-                self.shared
-                    .actions
-                    .lock()
-                    .unwrap()
-                    .push(Action::Notice(format!("Plugin « {} » : {msg}", p.manifest.name)));
+                // hors de `push` : l'erreur s'affiche même si le plugin a rempli la file d'actions
+                lock(&self.shared.actions).push(Action::Notice(format!("Plugin « {} » : {msg}", p.manifest.name)));
                 self.plugins[i].error = Some(msg);
                 None
             }
@@ -500,5 +600,110 @@ mod tests {
         for p in &h.plugins {
             assert!(p.error.is_none(), "{}: {:?}", p.manifest.id, p.error);
         }
+    }
+
+    /// Hôte avec un seul plugin `t` dont le script est `script`.
+    fn host_with(script: &str, manifest_extra: &str) -> PluginHost {
+        let dir = std::env::temp_dir().join(format!("mnemo-plugins-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("t")).unwrap();
+        std::fs::write(dir.join("t/plugin.toml"), format!("id = \"t\"\nname = \"T\"\n{manifest_extra}")).unwrap();
+        std::fs::write(dir.join("t/main.rhai"), script).unwrap();
+        let mut h = PluginHost::new(dir);
+        h.reload();
+        h.apply_states([("t".to_string(), PluginState { enabled: true, settings: Default::default() })].into());
+        h
+    }
+
+    fn status_of(script: &str) -> (Vec<String>, Option<String>) {
+        let mut h = host_with(script, "");
+        let out = h.status(None);
+        let err = h.plugins[0].error.clone();
+        let _ = std::fs::remove_dir_all(&h.dir);
+        (out, err)
+    }
+
+    #[test]
+    fn bundled_plugins_handle_a_large_note() {
+        let mut h = host();
+        let mut content = String::new();
+        for i in 0..4000 {
+            content.push_str(&format!(
+                "## Titre {i}\n\nUn paragraphe de quelques mots, ligne {i}.\n\n> [!note] Note {i}\n> texte\n\n"
+            ));
+        }
+        assert!(content.len() > 300_000);
+        let note = NoteCtx { id: "x".into(), path: "Grande", content: &content };
+        assert!(!h.status(Some(&note)).is_empty());
+        assert!(!h.panels(Some(&note)).is_empty());
+        assert!(!h.preprocess(content.clone(), Some(&note)).contains("[!note]"));
+        for p in &h.plugins {
+            assert!(p.error.is_none(), "{}: {:?}", p.manifest.id, p.error);
+        }
+    }
+
+    #[test]
+    fn bad_dates_are_plugin_errors() {
+        for script in [
+            r#"fn status(n) { date("%Y-%Q") }"#,
+            r#"fn status(n) { date("100%") }"#,
+            r#"fn status(n) { date_offset(9_000_000_000_000_000, "%Y") }"#,
+            r#"fn status(n) { date_offset(-400_000_000, "%Y") }"#,
+        ] {
+            let (out, err) = status_of(script);
+            assert!(out.is_empty() && err.is_some(), "{script}: {out:?} {err:?}");
+        }
+        let (out, err) = status_of(r#"fn status(n) { date("%d/%m/%Y %H:%M 100%%") + date_offset(-1, "%F") }"#);
+        assert!(err.is_none() && out[0].contains("100%"), "{out:?} {err:?}");
+    }
+
+    #[test]
+    fn sandbox() {
+        // mémoire : tableaux, maps et chaînes bornés
+        for script in [
+            "fn status(n) { let a = []; loop { a.push(1); } }",
+            "fn status(n) { let a = [0]; loop { a += a; } }",
+            "fn status(n) { let m = #{}; let i = 0; loop { m[`k${i}`] = i; i += 1; } }",
+            r#"fn status(n) { let s = "xxxxxxxxxxxxxxxx"; loop { s += s; } }"#,
+            "fn status(n) { loop { } }",
+        ] {
+            let (out, err) = status_of(script);
+            assert!(out.is_empty() && err.is_some(), "{script}: {out:?} {err:?}");
+        }
+        // pas d'import, même d'un fichier voisin
+        let mut h = host_with("import \"autre\" as a;\nfn status(n) { a::x() }", "");
+        std::fs::write(h.dir.join("t/autre.rhai"), "fn x() { 1 }").unwrap();
+        h.reload();
+        assert!(h.status(None).is_empty());
+        assert!(h.plugins[0].error.is_some());
+        let _ = std::fs::remove_dir_all(&h.dir);
+        // main hors du dossier du plugin
+        for main in ["../autre.rhai", "sous/main.rhai", "/etc/passwd", "..", "", "C:\\\\x.rhai"] {
+            assert!(!valid_main(main), "{main}");
+            let h = host_with("fn status(n) { 1 }", &format!("main = '{main}'\n"));
+            assert!(h.plugins[0].error.as_deref().is_some_and(|e| e.contains("main")), "{main}");
+            let _ = std::fs::remove_dir_all(&h.dir);
+        }
+        assert!(valid_main("main.rhai") && valid_main("mon script.rhai"));
+        // file d'actions et état bornés
+        let mut h = host_with(
+            "fn run(id, n) { for i in 0..5000 { notice(`n${i}`); } }\nfn on_open(n) { for i in 0..5000 { state_set(`k${i}`, i); } }",
+            "",
+        );
+        h.run_command(0, "x", None);
+        assert_eq!(h.take_actions().len(), MAX_ACTIONS);
+        h.hook("on_open", None);
+        assert!(h.plugins[0].error.as_deref().is_some_and(|e| e.contains("state_set")));
+        let _ = std::fs::remove_dir_all(&h.dir);
+    }
+
+    #[test]
+    fn a_panic_in_a_call_is_a_plugin_error() {
+        let mut h = host_with("fn status(n) { boom() }", "");
+        h.engine.register_fn("boom", || -> i64 { panic!("aïe") });
+        assert!(h.status(None).is_empty());
+        assert!(h.plugins[0].error.as_deref().is_some_and(|e| e.contains("aïe")), "{:?}", h.plugins[0].error);
+        // l'hôte reste utilisable (verrous compris)
+        assert!(matches!(&h.take_actions()[..], [Action::Notice(m)] if m.contains("erreur interne")));
+        let _ = std::fs::remove_dir_all(&h.dir);
     }
 }
