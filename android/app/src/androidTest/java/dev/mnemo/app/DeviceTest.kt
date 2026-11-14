@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -52,6 +53,17 @@ class DeviceTest {
         }
     }
 
+    /** Texte de tous les TextView affichés (rendu Markdown). */
+    private fun renderedText(): String {
+        val out = StringBuilder()
+        fun walk(v: android.view.View) {
+            if (v is android.widget.TextView) out.append(v.text).append('\n')
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        compose.runOnUiThread { walk(compose.activity.window.decorView) }
+        return out.toString()
+    }
+
     private val url = InstrumentationRegistry.getArguments().getString("dbUrl")
         ?: "postgres://postgres:postgres@10.0.2.2:5432/mnemo_ci"
 
@@ -88,7 +100,9 @@ class DeviceTest {
         compose.onNodeWithText("Projets").performClick()
         waitText("Plan")
         compose.onNode(hasText("Plan") and !hasSetTextAction()).performClick()
-        waitText("Étapes suivantes")
+        // le texte Markdown est rendu par un TextView (Markwon), hors de l'arbre Compose ; l'image, elle, est en Compose
+        compose.waitUntil(30_000) { renderedText().contains("Étapes suivantes") }
+        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("schema.png").fetchSemanticsNodes().isNotEmpty() }
         Thread.sleep(1500)
         shot("3-note-avec-image")
     }
