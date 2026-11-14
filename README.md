@@ -16,6 +16,10 @@ hors connexion. Un seul binaire pour Windows, macOS et Linux.
   une capture collée (Ctrl+V) ou une image déposée sur la note est rangée dans le dossier des pièces jointes (réglage
   d'Obsidian, sinon « Pièces jointes ») et intégrée au curseur ; pièces jointes visibles dans l'explorateur et
   synchronisées entre appareils (jusqu'à 50 Mo par fichier)
+- **Whiteboard** à dessin libre (icône du ruban, palette ou clic droit sur un dossier) : stylo, ligne, flèche, rectangle,
+  ellipse, texte, gomme, sélection et déplacement, 6 couleurs, 3 épaisseurs, annuler / rétablir, zoom (Ctrl+molette) ;
+  fichier `.mnemo-board` (JSON) enregistré automatiquement et synchronisé, intégrable dans une note avec
+  `![[croquis.mnemo-board]]` (aperçu cliquable dans l'éditeur)
 - **Icônes** de dossiers et de notes dans l'explorateur (clic droit › Changer l'icône…) : les 1 500 icônes Lucide ou
   un emoji, synchronisées entre appareils ; celles du plugin Iconize d'Obsidian sont reprises à la liaison du coffre
 - **Dossier des notes** (Paramètres › Dossier des notes) : un dossier de fichiers `.md`, par exemple un coffre Obsidian ;

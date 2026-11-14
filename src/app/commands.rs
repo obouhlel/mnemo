@@ -11,6 +11,7 @@ pub(super) enum CoreCmd {
     Palette,
     Search,
     Graph,
+    NewWhiteboard,
     ToggleMode,
     SplitMode,
     RenameCurrent,
@@ -34,6 +35,7 @@ pub(super) const CORE_COMMANDS: &[(CoreCmd, &str, &str)] = &[
     (CoreCmd::Switcher, "Ouvrir une note…", "Ctrl+O"),
     (CoreCmd::Search, "Rechercher dans toutes les notes", "Ctrl+Shift+F"),
     (CoreCmd::Graph, "Afficher le graphe", "Ctrl+G"),
+    (CoreCmd::NewWhiteboard, "Nouveau whiteboard (dessin libre)", ""),
     (CoreCmd::ToggleMode, "Basculer édition / lecture", "Ctrl+E"),
     (CoreCmd::SplitMode, "Mode divisé (édition + aperçu)", ""),
     (CoreCmd::RenameCurrent, "Renommer / déplacer la note", "F2"),
@@ -123,8 +125,11 @@ impl MnemoApp {
                     let text = self.embed_text(&rel);
                     self.insert_at_cursor(ctx, &text, now);
                 }
+                UiAction::NewWhiteboardIn(folder) => self.new_whiteboard(&folder),
                 UiAction::OpenFile(rel) => {
-                    if crate::markdown::is_image(&rel) {
+                    if rel.to_lowercase().ends_with(".mnemo-board") {
+                        self.open_whiteboard(&rel);
+                    } else if crate::markdown::is_image(&rel) {
                         self.image_view = Some(rel);
                     } else if let Some(abs) = self.file_abs(&rel) {
                         ctx.open_url(egui::OpenUrl::new_tab(format!("file://{}", abs.display())));
@@ -168,6 +173,11 @@ impl MnemoApp {
                 }
             }
             CoreCmd::Graph => self.open_graph(),
+            CoreCmd::NewWhiteboard => {
+                // dans le dossier de la note ouverte, sinon à la racine
+                let folder = self.open.as_ref().and_then(|n| parent(&n.path).map(str::to_string)).unwrap_or_default();
+                self.new_whiteboard(&folder);
+            }
             CoreCmd::ToggleMode => {
                 self.cfg.view_mode =
                     if self.cfg.view_mode == ViewMode::Preview { ViewMode::Edit } else { ViewMode::Preview };

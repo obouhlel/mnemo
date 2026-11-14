@@ -36,7 +36,9 @@ impl MnemoApp {
                 break;
             }
             let active = i == self.active_tab;
-            let dirty = active && self.open.as_ref().is_some_and(|n| n.dirty());
+            let tab_board = self.tabs[i].board.as_ref();
+            let dirty = (active && self.open.as_ref().is_some_and(|n| n.dirty()))
+                || tab_board.is_some_and(|b| self.boards.get(b).is_some_and(|v| v.is_dirty()));
             let (r, close) = theme::tab(ui, title, active, dirty);
             if close {
                 self.actions.push(UiAction::CloseTab(i));

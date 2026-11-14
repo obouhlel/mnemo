@@ -54,6 +54,7 @@ Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle
 | `plugins.rs` | hôte de plugins Rhai (voir [plugins.md](plugins.md)) |
 | `css.rs` | lit les thèmes / snippets CSS au format Obsidian (voir [themes.md](themes.md)) |
 | `theme.rs` | palette, polices, visuels egui, coloration de l'éditeur, widgets maison |
+| `sketch.rs` | format `.mnemo-board` du whiteboard (JSON partagé avec l'appli Android) et géométrie, testés |
 | `graph.rs` | vue graphe (disposition par forces) |
 
 ### `src/app/` : l'interface
@@ -74,6 +75,7 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `dialogs.rs` | palette, sélecteur de notes, saisie de nom, confirmations |
 | `conflict.rs` | fenêtre de résolution de conflit (choix par bloc, diff) |
 | `settings.rs` | fenêtre des paramètres (général, plugins, GitHub) |
+| `whiteboard.rs` | onglet whiteboard : outils, vue (zoom, déplacement), annuler / rétablir, enregistrement, aperçu dans les notes |
 | `attachments.rs` | pièces jointes : résolution des images, collage (Ctrl+V), dépôt, dossier des pièces jointes, visionneuse |
 | `icons.rs` | icônes des dossiers / notes : fenêtre de choix (Lucide, emoji), import depuis Iconize |
 | `vault.rs` | onglet Coffre Obsidian, passage de synchronisation périodique, import des fichiers déposés, `settings_row` |

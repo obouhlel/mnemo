@@ -191,6 +191,7 @@ pub mod icon {
     pub const ALERT: &str = "\u{e07b}";
     pub const CHEVRON_RIGHT: &str = "\u{e073}";
     pub const CHEVRON_DOWN: &str = "\u{e071}";
+    pub const WHITEBOARD: &str = "\u{e135}"; // pen-tool
     pub const DASHBOARD: &str = "\u{e1c1}"; // layout-dashboard
     pub const TICKET: &str = "\u{e20f}";
 }

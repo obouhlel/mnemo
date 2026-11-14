@@ -14,6 +14,7 @@ mod markdown;
 mod merge;
 mod model;
 mod plugins;
+mod sketch;
 mod theme;
 
 fn main() -> eframe::Result {

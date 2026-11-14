@@ -541,6 +541,16 @@ impl Store {
                     Err(e) => self.error(format!("Enregistrement de « {rel} » impossible : {e}")),
                 }
             }
+            Cmd::WriteFile { path, bytes } => {
+                let abs = self.root.clone().expect("root").join(&path);
+                match write_bytes_atomic(&abs, &bytes) {
+                    Ok(()) => {
+                        self.files.insert(path.clone(), (mtime(&abs), bytes.len() as u64));
+                        self.event("file", "update", None, &path, None, true);
+                    }
+                    Err(e) => self.error(format!("Enregistrement de « {path} » impossible : {e}")),
+                }
+            }
             Cmd::DeleteFile(path) => {
                 let root = self.root.clone().expect("root");
                 let mut dest = root.join(".trash").join(&path);

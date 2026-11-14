@@ -73,6 +73,8 @@ impl MnemoApp {
                 Msg::LocalEvent(ev) => self.handle_event(ev, now),
                 Msg::Files(f) => {
                     self.files = f;
+                    self.reload_whiteboards();
+                    self.sketch_cache.clear();
                     self.rebuild_tree();
                     self.preview_gen = u64::MAX; // les images de l'aperçu sont à résoudre de nouveau
                     self.forget_images = true;

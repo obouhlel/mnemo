@@ -49,19 +49,37 @@ fn task_positions(src: &str) -> Vec<(usize, bool)> {
 }
 
 impl MnemoApp {
+    /// Dessin d'un whiteboard pour un aperçu : celui ouvert dans un onglet, sinon le fichier (mis en cache).
+    pub(super) fn board_sketch(&mut self, rel: &str) -> Option<crate::sketch::Sketch> {
+        if let Some(b) = self.boards.get(rel) {
+            return Some(b.sketch.clone());
+        }
+        let abs = self.file_abs(rel)?;
+        let m = std::fs::metadata(&abs).and_then(|m| m.modified()).ok();
+        if let Some((cm, sk)) = self.sketch_cache.get(rel)
+            && *cm == m
+        {
+            return Some(sk.clone());
+        }
+        let sk = crate::sketch::Sketch::parse(&std::fs::read_to_string(&abs).ok()?).ok()?;
+        self.sketch_cache.insert(rel.to_string(), (m, sk.clone()));
+        Some(sk)
+    }
+
     /// Lignes de la note ouverte qui n'intègrent qu'une image (`![[photo.png]]`, `![](img/a.png)`), hors des
     /// lignes du curseur : numéro de ligne → (adresse, taille d'affichage). Taille réelle de l'image, réduite
     /// à la largeur de la colonne ; pendant le chargement, une hauteur provisoire.
     pub(super) fn editor_images(
-        &self,
+        &mut self,
         ui: &egui::Ui,
         active: Option<(usize, usize)>,
     ) -> std::collections::HashMap<usize, (String, egui::Vec2)> {
         let mut out = std::collections::HashMap::new();
-        let Some(n) = &self.open else { return out };
+        let Some(n) = self.open.as_ref().map(|n| (n.content.clone(), n.path.clone())) else { return out };
+        let (content, path) = n;
         let max_w = ui.available_width().max(100.0);
         let mut fence = false;
-        for (no, line) in n.content.lines().enumerate() {
+        for (no, line) in content.lines().enumerate() {
             let t = line.trim();
             if t.starts_with("```") || t.starts_with("~~~") {
                 fence = !fence;
@@ -79,7 +97,20 @@ impl MnemoApp {
             } else {
                 continue;
             };
-            let Some(markdown::Embed::Image(uri)) = self.resolve_embed(&target, &n.path) else { continue };
+            let uri = match self.resolve_embed(&target, &path) {
+                Some(markdown::Embed::Image(uri)) => uri,
+                // whiteboard : aperçu du dessin, cliquable (« board:<chemin> »)
+                Some(markdown::Embed::Board(rel)) => {
+                    let h = self
+                        .board_sketch(&rel)
+                        .and_then(|s| s.bounds())
+                        .map(|b| ((b[3] - b[1]) / (b[2] - b[0]).max(1.0) * max_w.min(640.0)).clamp(140.0, 420.0))
+                        .unwrap_or(140.0);
+                    out.insert(no, (format!("board:{rel}"), egui::vec2(max_w.min(640.0), h)));
+                    continue;
+                }
+                None => continue,
+            };
             let size = match ui.ctx().try_load_texture(&uri, egui::TextureOptions::default(), egui::SizeHint::default())
             {
                 Ok(egui::load::TexturePoll::Ready { texture }) => texture.size,
@@ -170,6 +201,10 @@ impl MnemoApp {
         }
         if self.tabs[self.active_tab].graph {
             self.graph_ui(ui);
+            return;
+        }
+        if let Some(rel) = self.tabs[self.active_tab].board.clone() {
+            self.whiteboard_ui(ui, &rel, now);
             return;
         }
         if self.open.is_none() {
@@ -349,7 +384,25 @@ impl MnemoApp {
                 let Some(&ci) = starts.get(*line) else { continue };
                 let row = out.galley.pos_from_cursor(egui::text::CCursor::new(ci)).translate(out.galley_pos.to_vec2());
                 let rect = egui::Rect::from_min_size(egui::pos2(out.galley_pos.x, row.bottom() - size.y - 4.0), *size);
-                egui::Image::from_uri(uri.clone()).corner_radius(4.0).paint_at(ui, rect);
+                if let Some(rel) = uri.strip_prefix("board:") {
+                    ui.painter().rect(rect, 6.0, pal.bg2, egui::Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
+                    if let Some(sk) = self.board_sketch(rel) {
+                        super::whiteboard::paint_preview(ui.painter(), &sk, rect, &pal);
+                    }
+                    let hint = "Cliquer pour ouvrir le whiteboard";
+                    ui.painter().text(
+                        rect.right_bottom() - egui::vec2(8.0, 6.0),
+                        egui::Align2::RIGHT_BOTTOM,
+                        hint,
+                        FontId::proportional(11.0),
+                        pal.faint,
+                    );
+                    if out.response.clicked() && out.response.interact_pointer_pos().is_some_and(|p| rect.contains(p)) {
+                        self.actions.push(UiAction::OpenFile(rel.to_string()));
+                    }
+                } else {
+                    egui::Image::from_uri(uri.clone()).corner_radius(4.0).paint_at(ui, rect);
+                }
             }
         }
         if out.response.clicked()
