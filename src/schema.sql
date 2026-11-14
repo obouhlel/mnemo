@@ -1,4 +1,47 @@
 -- Mnemo schema. Idempotent: executed on every server start.
+--
+-- Rejoué à chaque connexion, pendant que d'autres appareils écrivent : en régime établi, aucune instruction ne
+-- doit verrouiller une table (ALTER TABLE, CREATE INDEX et CREATE TRIGGER le font même quand il n'y a rien à
+-- faire). D'où les fonctions mnemo_ensure_* ci-dessous, qui n'agissent que si l'objet manque.
+-- D'anciennes versions (bureau, Android) utilisent la même base : uniquement des changements compatibles, et
+-- toute nouvelle logique passe par des fonctions / triggers aux noms nouveaux (une ancienne version rejoue son
+-- propre schéma et remet ses définitions de notes_before_write, tickets_before_write…).
+
+CREATE OR REPLACE FUNCTION mnemo_ensure_trigger(tbl text, trg text, def text) RETURNS void AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = tbl::regclass AND tgname = trg AND NOT tgisinternal) THEN
+    EXECUTE format('CREATE TRIGGER %I %s', trg, def);
+  END IF;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION mnemo_ensure_index(idx text, def text) RETURNS void AS $$
+BEGIN
+  IF to_regclass(quote_ident(idx)) IS NULL THEN
+    EXECUTE def;
+  END IF;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION mnemo_ensure_column(tbl text, col text, def text) RETURNS void AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute
+                 WHERE attrelid = tbl::regclass AND attname = col AND NOT attisdropped) THEN
+    EXECUTE format('ALTER TABLE %I ADD COLUMN %I %s', tbl, col, def);
+  END IF;
+END $$ LANGUAGE plpgsql;
+
+-- Contrainte CHECK ajoutée NOT VALID : les lignes existantes ne font pas échouer la migration, mais toute
+-- écriture est vérifiée.
+CREATE OR REPLACE FUNCTION mnemo_ensure_check(tbl text, con text, expr text) RETURNS void AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = tbl::regclass AND conname = con) THEN
+    EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK (%s) NOT VALID', tbl, con, expr);
+  END IF;
+END $$ LANGUAGE plpgsql;
+
+-- Chemin sûr : aucun segment « . » ou « .. », ni barre oblique inverse, ni caractère de contrôle.
+CREATE OR REPLACE FUNCTION mnemo_path_ok(path text) RETURNS boolean AS $$
+  SELECT path !~ '(^|/)\.\.?(/|$)' AND position(chr(92) IN path) = 0 AND path !~ '[\x01-\x1f\x7f]'
+$$ LANGUAGE sql IMMUTABLE;
 
 CREATE TABLE IF NOT EXISTS notes (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -8,18 +51,28 @@ CREATE TABLE IF NOT EXISTS notes (
   updated_by  text,
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now(),
-  search      tsvector GENERATED ALWAYS AS (
-                setweight(to_tsvector('simple', path), 'A') ||
-                setweight(to_tsvector('simple', content), 'B')
-              ) STORED
+  search      tsvector  -- obsolète, toujours NULL (voir ci-dessous)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS notes_path_uniq ON notes (lower(path));
-CREATE INDEX IF NOT EXISTS notes_search_idx ON notes USING gin (search);
+SELECT mnemo_ensure_index('notes_path_uniq', 'CREATE UNIQUE INDEX notes_path_uniq ON notes (lower(path))');
+SELECT mnemo_ensure_check('notes', 'notes_path_safe', 'mnemo_path_ok(path)');
+
+-- `search` était une colonne générée (tsvector du contenu) : plus aucune requête ne la lit (la recherche est
+-- locale) et sa limite de 1 Mo faisait échouer l'enregistrement des grandes notes, donc toute la synchro.
+-- Elle devient une colonne ordinaire, vide : les anciennes versions, qui rejouent
+-- `CREATE INDEX IF NOT EXISTS notes_search_idx … (search)` à la connexion, continuent de fonctionner.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = 'notes'::regclass AND attname = 'search' AND NOT attisdropped AND attgenerated <> '') THEN
+    ALTER TABLE notes DROP COLUMN search;
+    ALTER TABLE notes ADD COLUMN search tsvector;
+  END IF;
+END $$;
 
 -- Empty folders (folders that contain notes are derived from note paths)
 CREATE TABLE IF NOT EXISTS folders (
   path text PRIMARY KEY CHECK (path <> '' AND path !~ '(^/|/$|//)')
 );
+SELECT mnemo_ensure_check('folders', 'folders_path_safe', 'mnemo_path_ok(path)');
 
 -- Outgoing [[wikilinks]], maintained by trigger so even direct SQL edits stay consistent
 CREATE TABLE IF NOT EXISTS links (
@@ -27,7 +80,20 @@ CREATE TABLE IF NOT EXISTS links (
   target    text NOT NULL,
   PRIMARY KEY (source_id, target)
 );
-CREATE INDEX IF NOT EXISTS links_target_idx ON links (lower(target));
+SELECT mnemo_ensure_index('links_target_idx', 'CREATE INDEX links_target_idx ON links (lower(target))');
+
+-- Une cible démesurée (« [[ » suivi de plusieurs Ko sans retour à la ligne) dépasse la taille d'une entrée
+-- d'index et ferait échouer l'enregistrement de la note : elle n'est pas indexée. Trigger sur `links` (et non
+-- dans notes_after_write) pour rester en place quand une ancienne version rejoue son schéma.
+CREATE OR REPLACE FUNCTION links_skip_long() RETURNS trigger AS $$
+BEGIN
+  IF length(NEW.target) > 500 THEN
+    RETURN NULL;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+SELECT mnemo_ensure_trigger('links', 'links_skip_long',
+  'BEFORE INSERT OR UPDATE ON links FOR EACH ROW EXECUTE FUNCTION links_skip_long()');
 
 -- Identité de la base : chaque appareil note avec quelle base son dossier a été synchronisé (.mnemo/sync.json)
 CREATE TABLE IF NOT EXISTS mnemo_meta (
@@ -60,9 +126,8 @@ BEGIN
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS notes_before_write ON notes;
-CREATE TRIGGER notes_before_write BEFORE INSERT OR UPDATE ON notes
-  FOR EACH ROW EXECUTE FUNCTION notes_before_write();
+SELECT mnemo_ensure_trigger('notes', 'notes_before_write',
+  'BEFORE INSERT OR UPDATE ON notes FOR EACH ROW EXECUTE FUNCTION notes_before_write()');
 
 -- AFTER trigger: refresh links + broadcast through NOTIFY
 CREATE OR REPLACE FUNCTION notes_after_write() RETURNS trigger AS $$
@@ -92,9 +157,8 @@ BEGIN
   RETURN NULL;
 END $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS notes_after_write ON notes;
-CREATE TRIGGER notes_after_write AFTER INSERT OR UPDATE OR DELETE ON notes
-  FOR EACH ROW EXECUTE FUNCTION notes_after_write();
+SELECT mnemo_ensure_trigger('notes', 'notes_after_write',
+  'AFTER INSERT OR UPDATE OR DELETE ON notes FOR EACH ROW EXECUTE FUNCTION notes_after_write()');
 
 -- Folders and plugin state also broadcast
 CREATE OR REPLACE FUNCTION generic_notify() RETURNS trigger AS $$
@@ -106,18 +170,16 @@ BEGIN
   RETURN NULL;
 END $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS folders_notify ON folders;
-CREATE TRIGGER folders_notify AFTER INSERT OR UPDATE OR DELETE ON folders
-  FOR EACH ROW EXECUTE FUNCTION generic_notify('folder', 'path');
+SELECT mnemo_ensure_trigger('folders', 'folders_notify',
+  'AFTER INSERT OR UPDATE OR DELETE ON folders FOR EACH ROW EXECUTE FUNCTION generic_notify(''folder'', ''path'')');
 
 -- Icônes de l'explorateur (dossier ou note), nom d'icône Lucide ou emoji. Clé : chemin en minuscules.
 CREATE TABLE IF NOT EXISTS path_icons (
   path text PRIMARY KEY,
   icon text NOT NULL CHECK (icon <> '')
 );
-DROP TRIGGER IF EXISTS path_icons_notify ON path_icons;
-CREATE TRIGGER path_icons_notify AFTER INSERT OR UPDATE OR DELETE ON path_icons
-  FOR EACH ROW EXECUTE FUNCTION generic_notify('icon', 'path');
+SELECT mnemo_ensure_trigger('path_icons', 'path_icons_notify',
+  'AFTER INSERT OR UPDATE OR DELETE ON path_icons FOR EACH ROW EXECUTE FUNCTION generic_notify(''icon'', ''path'')');
 
 -- Pièces jointes du dossier des notes (images, PDF, whiteboards…), synchronisées entre appareils.
 -- hash : FNV-1a 64 bits du contenu en hexadécimal (calculé de la même façon par l'application mobile).
@@ -128,13 +190,12 @@ CREATE TABLE IF NOT EXISTS files (
   size       bigint NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
-DROP TRIGGER IF EXISTS files_notify ON files;
-CREATE TRIGGER files_notify AFTER INSERT OR UPDATE OR DELETE ON files
-  FOR EACH ROW EXECUTE FUNCTION generic_notify('file', 'path');
+SELECT mnemo_ensure_check('files', 'files_path_safe', 'mnemo_path_ok(path)');
+SELECT mnemo_ensure_trigger('files', 'files_notify',
+  'AFTER INSERT OR UPDATE OR DELETE ON files FOR EACH ROW EXECUTE FUNCTION generic_notify(''file'', ''path'')');
 
-DROP TRIGGER IF EXISTS plugin_state_notify ON plugin_state;
-CREATE TRIGGER plugin_state_notify AFTER INSERT OR UPDATE OR DELETE ON plugin_state
-  FOR EACH ROW EXECUTE FUNCTION generic_notify('plugin', 'id');
+SELECT mnemo_ensure_trigger('plugin_state', 'plugin_state_notify',
+  'AFTER INSERT OR UPDATE OR DELETE ON plugin_state FOR EACH ROW EXECUTE FUNCTION generic_notify(''plugin'', ''id'')');
 
 -- ===========================================================================
 -- Dashboard: projects, tickets, reports (notes linked to tickets)
@@ -147,7 +208,7 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS projects_name_uniq ON projects (lower(name));
+SELECT mnemo_ensure_index('projects_name_uniq', 'CREATE UNIQUE INDEX projects_name_uniq ON projects (lower(name))');
 
 CREATE TABLE IF NOT EXISTS tickets (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -167,11 +228,18 @@ CREATE TABLE IF NOT EXISTS tickets (
   updated_at       timestamptz NOT NULL DEFAULT now(),
   done_at          timestamptz
 );
-CREATE UNIQUE INDEX IF NOT EXISTS tickets_number_uniq ON tickets (project_id, number);
-CREATE UNIQUE INDEX IF NOT EXISTS tickets_github_uniq ON tickets (project_id, github_number) WHERE github_number IS NOT NULL;
+SELECT mnemo_ensure_index('tickets_number_uniq', 'CREATE UNIQUE INDEX tickets_number_uniq ON tickets (project_id, number)');
+SELECT mnemo_ensure_index('tickets_github_uniq',
+  'CREATE UNIQUE INDEX tickets_github_uniq ON tickets (project_id, github_number) WHERE github_number IS NOT NULL');
 -- Ajouts ultérieurs (idempotents) : ticket qui suit une pull request, labels du dépôt (nom + couleur)
-ALTER TABLE tickets ADD COLUMN IF NOT EXISTS github_pr boolean NOT NULL DEFAULT false;
-ALTER TABLE projects ADD COLUMN IF NOT EXISTS github_labels jsonb NOT NULL DEFAULT '[]'::jsonb;
+SELECT mnemo_ensure_column('tickets', 'github_pr', 'boolean NOT NULL DEFAULT false');
+SELECT mnemo_ensure_column('projects', 'github_labels', $$jsonb NOT NULL DEFAULT '[]'::jsonb$$);
+-- Synchronisation GitHub champ par champ :
+--   content_changed_at : dernière modification d'un champ que GitHub voit (titre, description, tags, ouvert / terminé) ;
+--                        NULL sur les lignes antérieures (updated_at fait alors foi) ;
+--   github_base        : l'issue telle que vue à la dernière synchro {title, body, labels, open, updated_at}.
+SELECT mnemo_ensure_column('tickets', 'content_changed_at', 'timestamptz');
+SELECT mnemo_ensure_column('tickets', 'github_base', 'jsonb');
 
 CREATE TABLE IF NOT EXISTS ticket_reports (
   ticket_id uuid NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
@@ -198,22 +266,74 @@ BEGIN
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS tickets_before_write ON tickets;
-CREATE TRIGGER tickets_before_write BEFORE INSERT OR UPDATE ON tickets
-  FOR EACH ROW EXECUTE FUNCTION tickets_before_write();
+SELECT mnemo_ensure_trigger('tickets', 'tickets_before_write',
+  'BEFORE INSERT OR UPDATE ON tickets FOR EACH ROW EXECUTE FUNCTION tickets_before_write()');
+
+-- Lien GitHub et numéro d'un ticket modifié. Trigger distinct de tickets_before_write (voir l'en-tête).
+--   * changement de projet : nouveau numéro dans le projet d'arrivée (l'ancien y est sans doute déjà pris) ; si le
+--     dépôt n'est pas le même, ou si l'issue y a déjà son ticket, le lien GitHub est effacé (ticket « non publié ») :
+--     sinon la synchro suivante écraserait l'issue de même numéro d'un autre dépôt ;
+--   * content_changed_at ne bouge que si un champ visible sur GitHub change (pas la priorité ni la position).
+CREATE OR REPLACE FUNCTION tickets_track() RETURNS trigger AS $$
+DECLARE
+  old_repo text;
+  new_repo text;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    NEW.content_changed_at := COALESCE(NEW.content_changed_at, now());
+    RETURN NEW;
+  END IF;
+  IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN
+    PERFORM pg_advisory_xact_lock(hashtext(NEW.project_id::text));
+    SELECT COALESCE(max(number), 0) + 1 INTO NEW.number FROM tickets WHERE project_id = NEW.project_id;
+    IF NEW.github_number IS NOT NULL THEN
+      SELECT lower(github_repo) INTO old_repo FROM projects WHERE id = OLD.project_id;
+      SELECT lower(github_repo) INTO new_repo FROM projects WHERE id = NEW.project_id;
+      IF old_repo IS DISTINCT FROM new_repo OR EXISTS (
+           SELECT 1 FROM tickets WHERE project_id = NEW.project_id AND github_number = NEW.github_number) THEN
+        NEW.github_number := NULL;
+        NEW.github_url := NULL;
+        NEW.github_state := NULL;
+        NEW.github_synced_at := NULL;
+        NEW.github_base := NULL;
+        NEW.github_pr := false;
+      END IF;
+    END IF;
+  END IF;
+  IF NEW.title IS DISTINCT FROM OLD.title OR NEW.body IS DISTINCT FROM OLD.body OR NEW.tags IS DISTINCT FROM OLD.tags
+     OR (NEW.status = 'done') IS DISTINCT FROM (OLD.status = 'done') THEN
+    NEW.content_changed_at := now();
+  ELSE
+    NEW.content_changed_at := COALESCE(OLD.content_changed_at, OLD.updated_at);
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+SELECT mnemo_ensure_trigger('tickets', 'tickets_track',
+  'BEFORE INSERT OR UPDATE ON tickets FOR EACH ROW EXECUTE FUNCTION tickets_track()');
+
+-- Le dépôt d'un projet change (ou est retiré) : ses tickets ne désignent plus les issues de l'ancien dépôt.
+CREATE OR REPLACE FUNCTION projects_repo_changed() RETURNS trigger AS $$
+BEGIN
+  IF lower(NEW.github_repo) IS DISTINCT FROM lower(OLD.github_repo) THEN
+    UPDATE tickets
+       SET github_number = NULL, github_url = NULL, github_state = NULL, github_synced_at = NULL,
+           github_base = NULL, github_pr = false
+     WHERE project_id = NEW.id AND github_number IS NOT NULL;
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+SELECT mnemo_ensure_trigger('projects', 'projects_repo_changed',
+  'AFTER UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION projects_repo_changed()');
 
 CREATE OR REPLACE FUNCTION projects_touch() RETURNS trigger AS $$
 BEGIN NEW.updated_at := now(); RETURN NEW; END $$ LANGUAGE plpgsql;
-DROP TRIGGER IF EXISTS projects_touch ON projects;
-CREATE TRIGGER projects_touch BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION projects_touch();
+SELECT mnemo_ensure_trigger('projects', 'projects_touch',
+  'BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION projects_touch()');
 
 -- Live refresh for the dashboard
-DROP TRIGGER IF EXISTS projects_notify ON projects;
-CREATE TRIGGER projects_notify AFTER INSERT OR UPDATE OR DELETE ON projects
-  FOR EACH ROW EXECUTE FUNCTION generic_notify('board', 'id');
-DROP TRIGGER IF EXISTS tickets_notify ON tickets;
-CREATE TRIGGER tickets_notify AFTER INSERT OR UPDATE OR DELETE ON tickets
-  FOR EACH ROW EXECUTE FUNCTION generic_notify('board', 'id');
-DROP TRIGGER IF EXISTS ticket_reports_notify ON ticket_reports;
-CREATE TRIGGER ticket_reports_notify AFTER INSERT OR UPDATE OR DELETE ON ticket_reports
-  FOR EACH ROW EXECUTE FUNCTION generic_notify('board', 'ticket_id');
+SELECT mnemo_ensure_trigger('projects', 'projects_notify',
+  'AFTER INSERT OR UPDATE OR DELETE ON projects FOR EACH ROW EXECUTE FUNCTION generic_notify(''board'', ''id'')');
+SELECT mnemo_ensure_trigger('tickets', 'tickets_notify',
+  'AFTER INSERT OR UPDATE OR DELETE ON tickets FOR EACH ROW EXECUTE FUNCTION generic_notify(''board'', ''id'')');
+SELECT mnemo_ensure_trigger('ticket_reports', 'ticket_reports_notify',
+  'AFTER INSERT OR UPDATE OR DELETE ON ticket_reports FOR EACH ROW EXECUTE FUNCTION generic_notify(''board'', ''ticket_id'')');

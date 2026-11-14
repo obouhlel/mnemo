@@ -33,6 +33,8 @@ impl Worker {
                 }
             }
             Cmd::UpdateProject { id, name, description, repo } => {
+                // dépôt changé ou retiré : le trigger `projects_repo_changed` délie les tickets des issues de
+                // l'ancien dépôt dans la même transaction (ils redeviennent « non publiés »)
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
                 match t
                     .query_opt(
@@ -76,6 +78,8 @@ impl Worker {
                 em.emit(Msg::TicketCreated(row.get(0)));
             }
             Cmd::UpdateTicket { id, patch } => {
+                // changement de projet : le trigger `tickets_track` donne un numéro libre dans le projet d'arrivée
+                // et, si le dépôt n'est pas le même, efface le lien GitHub (voir schema.sql)
                 let t = tagged_tx(self.client.as_mut().expect("connected"), &self.client_id).await?;
                 t.execute(
                     "UPDATE tickets SET title = COALESCE($2, title), body = COALESCE($3, body), status = COALESCE($4, status),
@@ -85,7 +89,8 @@ impl Worker {
                 )
                 .await?;
                 t.commit().await?;
-                // keep the GitHub issue in step (title, body, labels, open/closed)
+                // keep the GitHub issue in step (title, body, labels, open/closed) : `push_ticket` lit d'abord
+                // l'issue et n'envoie que ce qui a changé ici depuis la dernière synchro
                 let touches_github =
                     patch.title.is_some() || patch.body.is_some() || patch.status.is_some() || patch.tags.is_some();
                 if touches_github && self.github.is_some() {
@@ -153,9 +158,10 @@ impl Worker {
 
 pub(super) const TICKET_COLS: &str =
     "t.id, t.project_id, t.number, t.title, t.body, t.status, t.tags, t.priority, t.github_number, t.github_url,
-  t.github_state, t.github_synced_at, t.created_at, t.updated_at, t.done_at, t.github_pr";
+  t.github_state, t.github_synced_at, t.created_at, t.updated_at, t.done_at, t.github_pr, t.content_changed_at,
+  t.github_base";
 
-pub(super) const TICKET_COLS_N: usize = 16;
+pub(super) const TICKET_COLS_N: usize = 18;
 
 pub(super) fn ticket_from(r: &Row) -> Ticket {
     Ticket {
@@ -165,7 +171,7 @@ pub(super) fn ticket_from(r: &Row) -> Ticket {
         title: r.get(3),
         body: r.get(4),
         status: Status::parse(r.get::<_, &str>(5)),
-        tags: r.get(6),
+        tags: canonical_tags(r.get(6)),
         priority: r.get(7),
         github_number: r.get(8),
         github_url: r.get(9),
@@ -175,7 +181,21 @@ pub(super) fn ticket_from(r: &Row) -> Ticket {
         updated_at: r.get(13),
         done_at: r.get(14),
         github_pr: r.get(15),
+        content_changed_at: r.get(16),
+        github_base: r.get::<_, Option<serde_json::Value>>(17).as_ref().and_then(IssueBase::from_json),
     }
+}
+
+/// Tags sous leur nom d'affichage : un tag enregistré sous le nom d'un label GitHub (`enhancement`, importé par
+/// une ancienne version) est montré comme le tag intégré correspondant (« Amélioration »).
+fn canonical_tags(tags: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for t in tags.iter().map(|t| label_to_tag(t)) {
+        if !out.contains(&t) {
+            out.push(t);
+        }
+    }
+    out
 }
 
 /// `[["bug", "d73a4a"], …]` → [(nom, couleur)]
@@ -187,6 +207,19 @@ pub(super) fn labels_from_json(v: &serde_json::Value) -> Vec<(String, String)> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Labels du dépôt proposés comme tags : sous le nom du tag intégré quand il y en a un (`bug` → « Bug »),
+/// comme les tags des tickets.
+fn display_labels(labels: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = vec![];
+    for (name, color) in labels {
+        let name = label_to_tag(&name);
+        if !out.iter().any(|(n, _)| *n == name) {
+            out.push((name, color));
+        }
+    }
+    out
 }
 
 pub(super) async fn load_board(c: &Client) -> Res<Board> {
@@ -202,7 +235,7 @@ pub(super) async fn load_board(c: &Client) -> Res<Board> {
             name: r.get(1),
             description: r.get(2),
             github_repo: r.get(3),
-            github_labels: labels_from_json(&r.get::<_, serde_json::Value>(4)),
+            github_labels: display_labels(labels_from_json(&r.get::<_, serde_json::Value>(4))),
         })
         .collect();
     let tickets = c
@@ -223,4 +256,20 @@ pub(super) async fn load_board(c: &Client) -> Res<Board> {
         .map(|r| ReportLink { ticket_id: r.get(0), note_id: r.get(1), path: r.get(2) })
         .collect();
     Ok(Board { projects, tickets, reports })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn built_in_names_for_display() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(canonical_tags(v(&["enhancement", "Bug", "bug", "à moi"])), v(&["Amélioration", "Bug", "à moi"]));
+        let labels = vec![("bug".to_string(), "d73a4a".to_string()), ("help wanted".to_string(), "008672".to_string())];
+        assert_eq!(
+            display_labels(labels),
+            vec![("Bug".to_string(), "d73a4a".to_string()), ("help wanted".to_string(), "008672".to_string())]
+        );
+    }
 }

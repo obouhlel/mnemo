@@ -1,6 +1,6 @@
 //! Minimal GitHub REST client (issues, pull requests, labels, repositories), blocking: called through `spawn_blocking` from the DB worker.
 
-use crate::board::RemoteIssue;
+use crate::board::{IssuePatch, RemoteIssue};
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -121,74 +121,77 @@ pub fn whoami(cfg: &GhConfig) -> Result<String, String> {
     Ok(v.get("login").and_then(|l| l.as_str()).unwrap_or("?").to_string())
 }
 
-/// All issues and pull requests (open and closed), up to 1000.
-pub fn list_issues(cfg: &GhConfig, repo: &str) -> Result<Vec<RemoteIssue>, String> {
-    let repo = valid_repo(repo)?;
+const PER_PAGE: usize = 100;
+/// Nombre maximal de pages lues pour une liste (100 × 100 = 10 000 éléments).
+pub const MAX_PAGES: usize = 100;
+
+/// Lit une liste paginée jusqu'à la première page incomplète, `max_pages` au plus. Le booléen dit si la limite
+/// a été atteinte alors qu'il restait peut-être des éléments.
+fn paginate<T>(
+    max_pages: usize,
+    mut fetch: impl FnMut(usize) -> Result<Vec<Value>, String>,
+    parse: impl Fn(&Value) -> Option<T>,
+) -> Result<(Vec<T>, bool), String> {
     let mut out = vec![];
-    for page in 1..=10 {
-        let v: Value = request(cfg, "GET", &format!("/repos/{repo}/issues"))
-            .query("state", "all")
-            .query("per_page", "100")
-            .query("page", &page.to_string())
-            .call()
-            .map_err(error)?
-            .into_json()
-            .map_err(|e| e.to_string())?;
-        let arr = v.as_array().cloned().unwrap_or_default();
-        out.extend(arr.iter().filter_map(parse_issue));
-        if arr.len() < 100 {
-            break;
+    for page in 1..=max_pages {
+        let items = fetch(page)?;
+        out.extend(items.iter().filter_map(&parse));
+        if items.len() < PER_PAGE {
+            return Ok((out, false));
         }
     }
-    Ok(out)
+    Ok((out, true))
+}
+
+/// Une page d'une liste de l'API (tableau JSON).
+fn get_page(cfg: &GhConfig, path: &str, query: &[(&str, &str)], page: usize) -> Result<Vec<Value>, String> {
+    let mut req = request(cfg, "GET", path).query("per_page", &PER_PAGE.to_string()).query("page", &page.to_string());
+    for (k, v) in query {
+        req = req.query(k, v);
+    }
+    let v: Value = req.call().map_err(error)?.into_json().map_err(|e| e.to_string())?;
+    Ok(v.as_array().cloned().unwrap_or_default())
+}
+
+/// All issues and pull requests (open and closed). Le booléen est vrai si la liste a été coupée à
+/// `MAX_PAGES` pages : le dépôt en contient peut-être d'autres.
+pub fn list_issues(cfg: &GhConfig, repo: &str) -> Result<(Vec<RemoteIssue>, bool), String> {
+    let repo = valid_repo(repo)?;
+    let path = format!("/repos/{repo}/issues");
+    let (mut issues, truncated) =
+        paginate(MAX_PAGES, |page| get_page(cfg, &path, &[("state", "all")], page), parse_issue)?;
+    // une issue créée pendant la lecture décale les pages : la même peut revenir deux fois
+    let mut seen = std::collections::HashSet::new();
+    issues.retain(|i| seen.insert(i.number));
+    Ok((issues, truncated))
+}
+
+/// Une issue ou une pull request.
+pub fn get_issue(cfg: &GhConfig, repo: &str, number: i32) -> Result<RemoteIssue, String> {
+    let repo = valid_repo(repo)?;
+    let v: Value = request(cfg, "GET", &format!("/repos/{repo}/issues/{number}"))
+        .call()
+        .map_err(error)?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+    parse_issue(&v).ok_or_else(|| "Réponse GitHub inattendue".into())
 }
 
 /// Labels of a repository: (name, colour as "rrggbb").
 pub fn list_labels(cfg: &GhConfig, repo: &str) -> Result<Vec<(String, String)>, String> {
     let repo = valid_repo(repo)?;
-    let mut out = vec![];
-    for page in 1..=5 {
-        let v: Value = request(cfg, "GET", &format!("/repos/{repo}/labels"))
-            .query("per_page", "100")
-            .query("page", &page.to_string())
-            .call()
-            .map_err(error)?
-            .into_json()
-            .map_err(|e| e.to_string())?;
-        let arr = v.as_array().cloned().unwrap_or_default();
-        out.extend(arr.iter().filter_map(|l| {
-            Some((
-                l.get("name")?.as_str()?.to_string(),
-                l.get("color").and_then(|c| c.as_str()).unwrap_or("").to_string(),
-            ))
-        }));
-        if arr.len() < 100 {
-            break;
-        }
-    }
-    Ok(out)
+    let path = format!("/repos/{repo}/labels");
+    let label = |l: &Value| {
+        Some((l.get("name")?.as_str()?.to_string(), l.get("color").and_then(|c| c.as_str()).unwrap_or("").to_string()))
+    };
+    Ok(paginate(20, |page| get_page(cfg, &path, &[], page), label)?.0)
 }
 
 /// Repositories the token can see ("owner/name"), most recently updated first.
 pub fn list_repos(cfg: &GhConfig) -> Result<Vec<String>, String> {
-    let mut out = vec![];
-    for page in 1..=5 {
-        let v: Value = request(cfg, "GET", "/user/repos")
-            .query("per_page", "100")
-            .query("page", &page.to_string())
-            .query("sort", "updated")
-            .query("affiliation", "owner,collaborator,organization_member")
-            .call()
-            .map_err(error)?
-            .into_json()
-            .map_err(|e| e.to_string())?;
-        let arr = v.as_array().cloned().unwrap_or_default();
-        out.extend(arr.iter().filter_map(|r| r.get("full_name")?.as_str().map(str::to_string)));
-        if arr.len() < 100 {
-            break;
-        }
-    }
-    Ok(out)
+    let query = [("sort", "updated"), ("affiliation", "owner,collaborator,organization_member")];
+    let name = |r: &Value| r.get("full_name")?.as_str().map(str::to_string);
+    Ok(paginate(20, |page| get_page(cfg, "/user/repos", &query, page), name)?.0)
 }
 
 pub fn create_issue(
@@ -207,23 +210,29 @@ pub fn create_issue(
     parse_issue(&v).ok_or_else(|| "Réponse GitHub inattendue".into())
 }
 
-pub fn update_issue(
-    cfg: &GhConfig,
-    repo: &str,
-    number: i32,
-    title: &str,
-    body: &str,
-    open: Option<bool>,
-    labels: &[String],
-) -> Result<RemoteIssue, String> {
-    let repo = valid_repo(repo)?;
-    let mut patch = json!({ "title": title, "body": body, "labels": labels });
-    // None : on ne touche pas à l'état (pull requests : ne jamais fermer une PR depuis Mnemo)
-    if let Some(open) = open {
-        patch["state"] = json!(if open { "open" } else { "closed" });
+/// Corps du PATCH : uniquement les champs à modifier (un champ absent n'est pas touché par GitHub).
+fn patch_json(patch: &IssuePatch) -> Value {
+    let mut v = json!({});
+    if let Some(t) = &patch.title {
+        v["title"] = json!(t);
     }
+    if let Some(b) = &patch.body {
+        v["body"] = json!(b);
+    }
+    if let Some(l) = &patch.labels {
+        v["labels"] = json!(l);
+    }
+    if let Some(open) = patch.open {
+        v["state"] = json!(if open { "open" } else { "closed" });
+    }
+    v
+}
+
+/// Modifie les champs donnés d'une issue (ou d'une pull request) et renvoie son nouvel état.
+pub fn update_issue(cfg: &GhConfig, repo: &str, number: i32, patch: &IssuePatch) -> Result<RemoteIssue, String> {
+    let repo = valid_repo(repo)?;
     let v: Value = request(cfg, "PATCH", &format!("/repos/{repo}/issues/{number}"))
-        .send_json(patch)
+        .send_json(patch_json(patch))
         .map_err(error)?
         .into_json()
         .map_err(|e| e.to_string())?;
@@ -250,6 +259,38 @@ mod tests {
         assert!(no_proxy_matches("api.github.com", "*"));
         assert!(!no_proxy_matches("api.github.com", "github.io,localhost"));
         assert!(!no_proxy_matches("evilgithub.com", "github.com"));
+    }
+
+    #[test]
+    fn pagination() {
+        // 250 éléments : trois pages, la dernière incomplète
+        let page = |n: usize| -> Vec<Value> { (0..n).map(|i| json!({"number": i, "title": "t"})).collect() };
+        let mut calls = vec![];
+        let fetch = |p: usize| {
+            calls.push(p);
+            Ok(page(if p < 3 { 100 } else { 50 }))
+        };
+        let (items, truncated) = paginate(MAX_PAGES, fetch, parse_issue).unwrap();
+        assert_eq!((items.len(), truncated, calls), (250, false, vec![1, 2, 3]));
+        // plus de 10 pages (l'ancienne limite) : tout est lu
+        let (items, truncated) = paginate(MAX_PAGES, |p| Ok(page(if p < 25 { 100 } else { 0 })), parse_issue).unwrap();
+        assert_eq!((items.len(), truncated), (2400, false));
+        // limite atteinte : signalée
+        let (items, truncated) = paginate(3, |_| Ok(page(100)), parse_issue).unwrap();
+        assert_eq!((items.len(), truncated), (300, true));
+        // une erreur arrête tout
+        let r = paginate(5, |p| if p == 2 { Err("boum".to_string()) } else { Ok(page(100)) }, parse_issue);
+        assert_eq!(r.err().as_deref(), Some("boum"));
+    }
+
+    #[test]
+    fn patch_body() {
+        // seuls les champs modifiés sont envoyés : un titre corrigé ne rouvre pas l'issue
+        let p = IssuePatch { title: Some("T".into()), ..Default::default() };
+        assert_eq!(patch_json(&p), json!({"title": "T"}));
+        let p =
+            IssuePatch { open: Some(false), labels: Some(vec!["bug".into()]), body: Some(String::new()), title: None };
+        assert_eq!(patch_json(&p), json!({"state": "closed", "labels": ["bug"], "body": ""}));
     }
 
     #[test]
