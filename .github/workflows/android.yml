@@ -29,6 +29,11 @@ jobs:
         env:
           MNEMO_TEST_PG: postgres://postgres:postgres@localhost:5432
         run: ./gradlew --no-daemon testDebugUnitTest recordRoborazziDebug assembleRelease
+      - name: Aucune API Java absente d'Android dans l'APK
+        run: |
+          if unzip -p app/build/outputs/apk/release/*.apk 'classes*.dex' | grep -aq "Ljava/lang/management"; then
+            echo "L'APK référence java.lang.management (absent d'Android)"; exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -65,7 +65,23 @@ android {
     }
 }
 
+// Le pilote PostgreSQL lit la taille du tas via java.lang.management, absent d'Android (plantage à la
+// connexion). On le reconditionne sans PGPropertyMaxResultBufferParser, remplacée par la copie corrigée
+// de src/main/java/org/postgresql/util.
+val pgjdbc: Configuration by configurations.creating { isTransitive = false }
+val pgjdbcAndroid = tasks.register<Jar>("pgjdbcAndroid") {
+    archiveFileName.set("postgresql-android.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("pgjdbc"))
+    from({ pgjdbc.map { zipTree(it) } }) {
+        exclude("org/postgresql/util/PGPropertyMaxResultBufferParser*.class")
+        exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 dependencies {
+    pgjdbc("org.postgresql:postgresql:42.2.29")
+
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
 
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
@@ -80,8 +96,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // PostgreSQL (même base que Mnemo sur ordinateur)
-    implementation("org.postgresql:postgresql:42.2.29")
+    // PostgreSQL (même base que Mnemo sur ordinateur) : pilote retouché pour Android, voir pgjdbcAndroid
+    implementation(files(pgjdbcAndroid))
     // affichage Markdown
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
@@ -90,7 +106,6 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
-    testImplementation("org.postgresql:postgresql:42.2.29")
     testImplementation("org.robolectric:robolectric:4.14.1")
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("androidx.compose.ui:ui-test-junit4")

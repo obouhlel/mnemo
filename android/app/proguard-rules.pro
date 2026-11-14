@@ -11,3 +11,4 @@
 -dontwarn org.slf4j.**
 # Markwon
 -dontwarn org.commonmark.**
+-dontwarn org.checkerframework.**
