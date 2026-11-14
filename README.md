@@ -67,6 +67,7 @@ Variables d'environnement utiles :
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | organisation du code, flux de synchronisation, recettes (ajouter une commande…) |
 | [docs/plugins.md](docs/plugins.md) | écrire un plugin Rhai : `plugin.toml`, hooks, API |
 | [docs/themes.md](docs/themes.md) | thèmes et snippets CSS au format Obsidian |
+| [docs/AUDIT.md](docs/AUDIT.md) | audit de novembre 2026 : écriture simultanée, bugs corrigés et à faire |
 | [docs/RAPPORT_TESTS.md](docs/RAPPORT_TESTS.md) | ce qui a été testé et comment |
 
 ## Installation
