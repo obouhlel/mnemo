@@ -133,6 +133,8 @@ pub struct MnemoApp {
     sent_save: Option<(Uuid, String, String)>,
     /// heure de la frame en cours
     now: f64,
+    /// pièces jointes en cours d'enregistrement pour une note : (chemin demandé, note où l'intégrer)
+    embed_targets: Vec<(String, Uuid)>,
 }
 
 /// Lowercase and strip French accents, for fuzzy matching ("theme" finds "Thème").
@@ -238,6 +240,7 @@ impl MnemoApp {
             cursor_fix: None,
             sent_save: None,
             now: 0.0,
+            embed_targets: vec![],
             cfg,
         };
         if let Some(e) = app.cfg.load_error.take() {
@@ -439,8 +442,8 @@ impl eframe::App for MnemoApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        // whiteboards modifiés : enregistrés tout de suite (le stockage local écrit avant de quitter)
-        self.tick_whiteboards(0.0, true);
+        // whiteboards modifiés (texte en cours de saisie compris) : écrits ici même, avant de quitter
+        self.tick_whiteboards(self.now, true);
         // Unresolved conflict: never lose the local text, keep it as a separate note
         if let Some(n) = self.open.as_ref().filter(|n| n.conflict.is_some()) {
             let path = format!("{} (conflit {})", n.path, chrono::Local::now().format("%Y-%m-%d %H-%M"));
@@ -489,6 +492,8 @@ impl eframe::App for MnemoApp {
                 break;
             }
         }
+        // titre / description d'un ticket en cours de saisie
+        self.flush_ticket_on_exit();
         self.cfg.save();
     }
 }

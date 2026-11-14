@@ -98,7 +98,13 @@ impl MnemoApp {
                 continue;
             };
             let uri = match self.resolve_embed(&target, &path) {
-                Some(markdown::Embed::Image(uri)) => uri,
+                // (adresse encodée pour le chargeur d'images, pas celle de l'aperçu Markdown)
+                Some(markdown::Embed::Image(_)) => {
+                    match self.find_file(&target, &path).and_then(|rel| self.file_abs(&rel)) {
+                        Some(abs) => super::attachments::file_uri(&abs),
+                        None => continue,
+                    }
+                }
                 // whiteboard : aperçu du dessin, cliquable (« board:<chemin> »)
                 Some(markdown::Embed::Board(rel)) => {
                     let h = self
@@ -111,13 +117,17 @@ impl MnemoApp {
                 }
                 None => continue,
             };
+            let placeholder = egui::vec2(max_w.min(400.0), 160.0);
             let size = match ui.ctx().try_load_texture(&uri, egui::TextureOptions::default(), egui::SizeHint::default())
             {
                 Ok(egui::load::TexturePoll::Ready { texture }) => texture.size,
-                _ => {
+                // en cours de chargement : on redemande une frame pour prendre sa vraie taille
+                Ok(egui::load::TexturePoll::Pending { .. }) => {
                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
-                    egui::vec2(max_w.min(400.0), 160.0)
+                    placeholder
                 }
+                // image illisible ou absente : rien à attendre (elle sera réessayée quand les fichiers changent)
+                Err(_) => placeholder,
             };
             let scale = (max_w / size.x).min(1.0).min(600.0 / size.y.max(1.0));
             out.insert(no, (uri, size * scale));
@@ -195,6 +205,10 @@ impl MnemoApp {
 
     pub(super) fn editor_area(&mut self, ui: &mut egui::Ui, now: f64) {
         self.tab_bar(ui);
+        // le tableau de bord n'est plus affiché (autre onglet, onglet fermé) : la saisie d'un ticket est enregistrée
+        if !self.tabs[self.active_tab].dashboard {
+            self.flush_ticket_edit(true);
+        }
         if self.tabs[self.active_tab].dashboard {
             self.dashboard_ui(ui, now);
             return;
@@ -202,6 +216,10 @@ impl MnemoApp {
         if self.tabs[self.active_tab].graph {
             self.graph_ui(ui);
             return;
+        }
+        // un whiteboard d'un onglet caché attend son enregistrement : il lui faut une frame
+        if self.boards_pending() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
         }
         if let Some(rel) = self.tabs[self.active_tab].board.clone() {
             self.whiteboard_ui(ui, &rel, now);
@@ -215,7 +233,9 @@ impl MnemoApp {
         self.view_header(ui);
 
         // ---- conflict banner
-        if let Some(c) = self.open.as_mut().and_then(|n| n.conflict.as_mut()) {
+        if let Some(n) = self.open.as_mut()
+            && let Some(c) = n.conflict.as_mut()
+        {
             let (total, left) = merge::conflict_count(&c.blocks);
             egui::Frame::new()
                 .fill(Color32::from_rgba_unmultiplied(0xe9, 0x97, 0x3f, 36))
@@ -224,8 +244,13 @@ impl MnemoApp {
                     ui.set_width(ui.available_width());
                     ui.horizontal_wrapped(|ui| {
                         ui.label(theme::icon_text(icon::ALERT, 15.0).color(Color32::from_rgb(0xe9, 0x97, 0x3f)));
-                        ui.label(format!("Conflit avec une modification distante : {left} / {total} bloc(s) à résoudre. L'édition est en pause."));
+                        ui.label(format!(
+                            "Conflit avec une modification distante : {left} / {total} bloc(s) à résoudre. Vous pouvez \
+                             continuer à écrire ; l'enregistrement reprendra une fois le conflit résolu."
+                        ));
                         if ui.button("Résoudre le conflit…").clicked() {
+                            // la fenêtre part du texte tel qu'il est maintenant dans l'éditeur
+                            c.rebuild(&n.saved, &n.content);
                             c.window_open = true;
                         }
                     });
@@ -352,10 +377,9 @@ impl MnemoApp {
             ui.ctx().fonts_mut(|f| f.layout_job(job))
         };
         let bg_slot = ui.painter().add(egui::Shape::Noop);
+        // (un conflit en attente ne bloque pas la frappe : seul l'enregistrement est suspendu)
         let n = self.open.as_mut().unwrap();
-        let editable = n.conflict.is_none();
         let out = egui::TextEdit::multiline(&mut n.content)
-            .interactive(editable)
             .id(id)
             .layouter(&mut layouter)
             .frame(egui::Frame::NONE)
@@ -422,7 +446,7 @@ impl MnemoApp {
             && let Some((_, b)) = boxes.iter().find(|(r, _)| r.expand(3.0).contains(pointer))
         {
             let n = self.open.as_mut().unwrap();
-            if n.conflict.is_none() && n.content.is_char_boundary(*b) && n.content.is_char_boundary(b + 1) {
+            if n.content.is_char_boundary(*b) && n.content.is_char_boundary(b + 1) {
                 let checked = &n.content[*b..b + 1] != " ";
                 n.content.replace_range(*b..b + 1, if checked { " " } else { "x" });
                 n.last_edit = Some(now);
