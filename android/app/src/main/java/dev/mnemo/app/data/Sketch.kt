@@ -98,9 +98,13 @@ data class Sketch(val elements: List<Element> = emptyList()) {
     fun hit(p: Pt, tol: Float): Int? = elements.indices.reversed().firstOrNull { elements[it].hit(p, tol) }
 
     companion object {
+        /**
+         * Lit un whiteboard. Un fichier illisible (à moitié écrit, pas du JSON, sans `elements`) lève une exception :
+         * il ne doit pas être pris pour un dessin vide, que le premier trait écraserait.
+         */
         fun parse(s: String): Sketch {
             if (s.isBlank()) return Sketch()
-            val arr = JSONObject(s).optJSONArray("elements") ?: return Sketch()
+            val arr = JSONObject(s).getJSONArray("elements")
             return Sketch((0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let(Element::fromJson) })
         }
     }

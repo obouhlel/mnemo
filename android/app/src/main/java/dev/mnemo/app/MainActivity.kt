@@ -3,6 +3,7 @@ package dev.mnemo.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import dev.mnemo.app.ui.AppModel
 import dev.mnemo.app.ui.MnemoApp
@@ -12,6 +13,9 @@ class MainActivity : ComponentActivity() {
     private val model: AppModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // bord à bord sur toutes les versions (imposé à partir d'Android 15) : les écrans gèrent eux-mêmes les barres
+        // système et le clavier (imePadding), qui sinon recouvrirait l'éditeur
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         android.util.Log.i("Mnemo", "activité créée" + if (savedInstanceState != null) " (recréée)" else "")
         setContent { MnemoTheme { MnemoApp(model) } }

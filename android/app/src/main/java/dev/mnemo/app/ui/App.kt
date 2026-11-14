@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
@@ -15,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,15 +60,16 @@ fun MnemoApp(model: AppModel) {
         } else {
             Detail(model, screen, onBack = { model.open(Screen.List) })
         }
-        SnackbarHost(snack, Modifier.align(Alignment.BottomCenter))
+        SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding())
     }
 }
 
 @Composable
 private fun Detail(model: AppModel, screen: Screen, onBack: (() -> Unit)?) {
     when (screen) {
-        is Screen.Note -> NoteScreen(model, screen.id, onBack)
-        is Screen.Board -> BoardScreen(model, screen.path, onBack)
+        // key : changer de note (tablette) repart d'un écran neuf, l'ancien enregistre sa saisie en se fermant
+        is Screen.Note -> key(screen.id) { NoteScreen(model, screen.id, onBack) }
+        is Screen.Board -> key(screen.path) { BoardScreen(model, screen.path, onBack) }
         is Screen.Image -> ImageScreen(model, screen.path, onBack)
         Screen.Dashboard -> DashboardScreen(model, onBack)
         Screen.Settings -> SettingsScreen(model, firstRun = false, onBack = onBack ?: { model.open(Screen.List) })

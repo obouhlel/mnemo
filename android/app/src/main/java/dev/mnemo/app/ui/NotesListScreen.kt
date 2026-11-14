@@ -50,6 +50,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -58,9 +59,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.mnemo.app.data.SearchHit
 import dev.mnemo.app.data.basename
 import dev.mnemo.app.data.parentOf
 import dev.mnemo.app.markdown.Preprocess
+import kotlinx.coroutines.delay
 
 /** Un élément de l'arborescence : dossier, note ou pièce jointe. */
 private sealed class Entry(val path: String, val depth: Int) {
@@ -126,23 +129,37 @@ fun NotesListScreen(model: AppModel) {
                 )
             }
             if (query.isNotBlank()) {
-                val q = query.trim().lowercase()
-                val hits = notes.filter { it.path.lowercase().contains(q) || it.content.lowercase().contains(q) }
+                // recherche hors du fil principal, un instant après la dernière frappe (null : en cours)
+                var found by remember { mutableStateOf<List<SearchHit>?>(null) }
+                LaunchedEffect(query, notes) {
+                    delay(250)
+                    found = model.search(query)
+                }
+                val hits = found.orEmpty()
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(hits, key = { it.id }) { n ->
-                        val i = n.content.lowercase().indexOf(q)
-                        val snippet = if (i >= 0) n.content.substring((i - 40).coerceAtLeast(0), (i + 80).coerceAtMost(n.content.length)).replace('\n', ' ') else ""
+                        val snippet = n.snippet
                         Column(Modifier.fillMaxWidth().clickable { model.open(Screen.Note(n.id)) }.padding(horizontal = 16.dp, vertical = 10.dp)) {
                             Text(basename(n.path), style = MaterialTheme.typography.bodyLarge)
                             if (snippet.isNotEmpty()) Text(snippet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
                         }
                     }
-                    if (hits.isEmpty()) item { Text("Aucun résultat.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    if (found != null && hits.isEmpty()) item { Text("Aucun résultat.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             } else {
-                val entries = buildTree(notes.map { Triple(it.path, it.id, it.dirty) }, folders, files.map { it.path }, expanded)
+                val open = expanded.toMap()
+                val entries = remember(notes, folders, files, open) {
+                    buildTree(notes.map { Triple(it.path, it.id, it.dirty) }, folders, files.map { it.path }, open)
+                }
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 88.dp)) {
-                    items(entries, key = { (if (it is Entry.Note) "n:" else if (it is Entry.Folder) "d:" else "f:") + it.path }) { e ->
+                    items(entries, key = {
+                        // une note est désignée par son identifiant : deux notes peuvent avoir le même chemin (avant synchronisation)
+                        when (it) {
+                            is Entry.Note -> "n:" + it.id
+                            is Entry.Folder -> "d:" + it.path
+                            is Entry.File -> "f:" + it.path
+                        }
+                    }) { e ->
                         val selected = when (e) {
                             is Entry.Note -> screen == Screen.Note(e.id)
                             is Entry.File -> screen == Screen.Board(e.path) || screen == Screen.Image(e.path)
@@ -169,14 +186,18 @@ fun NotesListScreen(model: AppModel) {
     }
     if (newNote) {
         var path by remember { mutableStateOf("") }
+        val error = remember(path) { if (path.isBlank()) null else model.pathError(path) }
         AlertDialog(
             onDismissRequest = { newNote = false },
             title = { Text("Nouvelle note") },
             text = {
-                OutlinedTextField(path, { path = it }, label = { Text("Dossier/Nom") }, singleLine = true)
+                OutlinedTextField(
+                    path, { path = it }, label = { Text("Dossier/Nom") }, singleLine = true,
+                    isError = error != null, supportingText = error?.let { { Text(it) } },
+                )
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = path.isNotBlank() && error == null, onClick = {
                     model.createNote(path)?.let { model.open(Screen.Note(it)) }
                     newNote = false
                 }) { Text("Créer") }
@@ -259,7 +280,8 @@ private fun buildTree(
     files.forEach { addParents(it) }
     val out = mutableListOf<Entry>()
     fun visit(dir: String?, depth: Int) {
-        val inDir = { p: String -> parentOf(p) == dir }
+        // sans casse : « École/a » et « école/b » sont dans le même dossier
+        val inDir = { p: String -> parentOf(p)?.lowercase() == dir?.lowercase() }
         dirs.filter(inDir).forEach { d ->
             val open = expanded[d.lowercase()] == true
             out += Entry.Folder(d, depth, open)

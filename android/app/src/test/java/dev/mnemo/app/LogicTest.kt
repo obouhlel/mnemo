@@ -3,12 +3,24 @@ package dev.mnemo.app
 import dev.mnemo.app.data.Element
 import dev.mnemo.app.data.Pt
 import dev.mnemo.app.data.Sketch
+import dev.mnemo.app.data.DbIdentity
+import dev.mnemo.app.data.conflictName
+import dev.mnemo.app.data.fileConflictBase
 import dev.mnemo.app.data.fileHash
+import dev.mnemo.app.data.firstFree
+import dev.mnemo.app.data.isSafeNotePath
+import dev.mnemo.app.data.isSafeRelPath
+import dev.mnemo.app.data.newNotePath
+import dev.mnemo.app.data.normalizePath
+import dev.mnemo.app.data.percentDecode
+import dev.mnemo.app.data.portableName
 import dev.mnemo.app.data.parseDbUrl
 import dev.mnemo.app.data.simplify
 import dev.mnemo.app.markdown.Preprocess
+import dev.mnemo.app.ui.sampleSize
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,13 +40,119 @@ class LogicTest {
         assertEquals("bob", c.user)
         assertEquals("p@ss", c.password)
         assertTrue(c.ssl)
-        assertTrue(c.jdbcUrl.startsWith("jdbc:postgresql://db.example.com:5432/vault?ssl=true"))
+        assertTrue(c.jdbcUrl.startsWith("jdbc:postgresql://db.example.com:5432/vault?sslmode=require&"))
         val local = parseDbUrl("postgresql://postgres:postgres@localhost/vault")!!
         assertFalse(local.ssl)
         assertTrue(local.jdbcUrl.contains("sslmode=disable"))
         assertEquals("postgres://postgres@localhost/vault", local.display)
         assertNull(parseDbUrl("mysql://x"))
         assertNull(parseDbUrl("postgres://"))
+    }
+
+    /** `+` dans un mot de passe reste `+` (URLDecoder en faisait une espace). */
+    @Test
+    fun passwordWithPlusAndPercent() {
+        val c = parseDbUrl("postgres://a+b:p+w%2B%20%C3%A9%25@h/db")!!
+        assertEquals("a+b", c.user)
+        assertEquals("p+w+ é%", c.password)
+        assertEquals("100%", percentDecode("100%"))
+        assertEquals("%zz+", percentDecode("%zz+"))
+        assertEquals("a@b", parseDbUrl("postgres://u:a%40b@h/db")!!.password)
+    }
+
+    /** Seul `require` (et moins) se passe de vérifier le certificat ; `verify-*` utilise les autorités du système. */
+    @Test
+    fun sslModes() {
+        fun jdbc(mode: String) = parseDbUrl("postgres://u:p@h/db?sslmode=$mode")?.jdbcUrl.orEmpty()
+        assertTrue(jdbc("require").contains("sslmode=require&sslfactory=org.postgresql.ssl.NonValidatingFactory"))
+        for (mode in listOf("verify-ca", "verify-full")) {
+            assertTrue(jdbc(mode).contains("sslmode=$mode&sslfactory=org.postgresql.ssl.DefaultJavaSSLFactory"))
+            assertFalse(jdbc(mode).contains("NonValidating"))
+        }
+        assertTrue(jdbc("disable").contains("sslmode=disable"))
+        assertFalse(parseDbUrl("postgres://u:p@h/db?sslmode=disable")!!.ssl)
+        assertTrue(parseDbUrl("postgres://u:p@h/db?sslmode=verify-full")!!.ssl)
+        assertNull(parseDbUrl("postgres://u:p@h/db?sslmode=verify_full")) // faute de frappe : pas de repli silencieux
+        // même base sous une adresse réécrite
+        assertEquals(parseDbUrl("postgres://u:p@H/db")!!.identity, parseDbUrl("postgresql://autre:x@h:5432/db?sslmode=require")!!.identity)
+        assertTrue(DbIdentity("h:5432/db", "A").sameAs(DbIdentity("autre:5432/db", "A")))
+        assertFalse(DbIdentity("h:5432/db", "A").sameAs(DbIdentity("h:5432/db", "B")))
+        assertTrue(DbIdentity("h:5432/db", null).sameAs(DbIdentity("h:5432/db", "B"))) // identifiant apparu depuis
+        assertFalse(DbIdentity("h:5432/db", null).sameAs(DbIdentity("h:5432/autre", null)))
+    }
+
+    /** Mêmes règles que `normalize_path` et `portable_name` (src/model.rs). */
+    @Test
+    fun notePathsLikeDesktop() {
+        assertEquals("a/b/c", normalizePath(" a// b /c.md ").getOrThrow())
+        assertEquals("a/b", normalizePath("/a/b.MD").getOrThrow())
+        for (bad in listOf("  / ", "", "x[y]", "a|b", "a#b", "a^b", "a\\b", "a/../b", "./a", "a/.caché", "a\tb", "x".repeat(501), "é".repeat(126))) {
+            assertTrue(bad, normalizePath(bad).isFailure)
+        }
+        assertTrue(normalizePath("é".repeat(125)).isSuccess) // 250 octets
+        assertEquals("Le nom ne peut pas être vide", normalizePath(".md").exceptionOrNull()!!.message)
+        assertNull(portableName("Projets/Plan (v2)"))
+        for (bad in listOf("a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "fin./x", "CON", "con.txt", "x/Com1", "LPT9.md", "nul")) {
+            assertNotNull(bad, portableName(bad))
+        }
+        for (ok in listOf("COM0", "COM10", "Console", "LPT", "a.b")) assertNull(ok, portableName(ok))
+        assertEquals("Réunion", newNotePath(" Réunion.md ").getOrThrow())
+        assertTrue(newNotePath("Réunion : plan").isFailure)
+        assertTrue(newNotePath("a/ ../b").isFailure)
+    }
+
+    @Test
+    fun pathsFromTheDatabase() {
+        for (ok in listOf("a.png", "Pièces jointes/a b.png", "a/b/c.mnemo-board")) assertTrue(ok, isSafeRelPath(ok))
+        for (bad in listOf("", "../a", "a/../b", "/a", "a/", "a//b", "a\\b", "c:a", "C:/a", ".git/config", "a/.caché", "a/ /b", "a\u0000b")) {
+            assertFalse(bad, isSafeRelPath(bad))
+        }
+        assertTrue(isSafeNotePath("Réunion : plan"))
+        assertFalse(isSafeNotePath("../Réunion"))
+    }
+
+    @Test
+    fun conflictNames() {
+        val at = java.util.Date(0)
+        val name = conflictName("Dossier/Note", at)
+        assertTrue(name.matches(Regex("Dossier/Note \\(conflit mobile \\d{4}-\\d{2}-\\d{2} \\d{6}\\)"))) // à la seconde
+        assertTrue(name != conflictName("Dossier/Note", java.util.Date(1000)))
+        assertNull(portableName(name))
+        val taken = mutableSetOf<String>()
+        val names = (1..3).map { firstFree(name) { it in taken }.also { n -> taken += n } }
+        assertEquals(listOf(name, "$name 2", "$name 3"), names)
+        assertEquals("a/d (conflit mobile)" to ".mnemo-board", fileConflictBase("a/d.mnemo-board"))
+        assertEquals("a.b/sans (conflit mobile)" to "", fileConflictBase("a.b/sans"))
+        assertEquals("d (conflit mobile) 2.png", firstFree("d (conflit mobile)", ".png") { it == "d (conflit mobile).png" })
+    }
+
+    /** Une intégration sans fichier affichable ne devient jamais un lien qui crée une note. */
+    @Test
+    fun unresolvedEmbeds() {
+        assertEquals("[doc.pdf](mnemo://embed/doc.pdf)", Preprocess.process("![[doc.pdf]]"))
+        assertEquals("[absente.png](mnemo://embed/absente.png)", Preprocess.process("![[absente.png|300]]"))
+        assertEquals("[Note](mnemo://note/Note)", Preprocess.process("[[Note]]"))
+        assertTrue(Preprocess.isImage("Schémas/plan.SVG"))
+        assertFalse(Preprocess.isImage("doc.pdf"))
+    }
+
+    @Test
+    fun imagesAreDecodedAtABoundedSize() {
+        assertEquals(1, sampleSize(1920, 1080, 2048))
+        assertEquals(2, sampleSize(4000, 3000, 2048))
+        assertEquals(8, sampleSize(12000, 9000, 2048))
+        assertEquals(1, sampleSize(0, 0, 2048))
+    }
+
+    /** Un whiteboard illisible n'est pas un whiteboard vide. */
+    @Test
+    fun unreadableSketchIsNotEmpty() {
+        assertTrue(Sketch.parse("").elements.isEmpty())
+        assertTrue(Sketch.parse("{\"version\": 1, \"elements\": []}").elements.isEmpty())
+        for (bad in listOf("{\"version\": 1, \"elem", "pas du json", "{}", "[]", "{\"elements\": 3}")) {
+            assertTrue(bad, runCatching { Sketch.parse(bad) }.isFailure)
+        }
+        assertEquals(fileHash("hello".toByteArray()), fileHash("hello".byteInputStream()))
     }
 
     @Test
