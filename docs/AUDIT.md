@@ -3,8 +3,8 @@
 Revue complète du code (bureau Rust, appli Android, paquets) et tests d'écriture simultanée sur une vraie base
 PostgreSQL 16, avec deux instances de Mnemo pilotées au clavier sur deux écrans virtuels.
 
-« Corrigé » : corrigé dans cette branche, avec un test. Tout le reste est **à faire**. Sauf mention « reproduit »,
-les constats viennent de la lecture du code, chemin suivi de bout en bout.
+Les défauts trouvés ont été corrigés dans la version 0.5.0 ; ce document garde la trace de ce qui a été trouvé,
+de ce qui a été vérifié, et de ce qui reste.
 
 ## 1. Écriture simultanée sur la même note
 
@@ -21,144 +21,90 @@ Capture avant correction (B a tapé sur la ligne 9, A sur la ligne 2) : [audit/a
 
 Tests : `MNEMO_TEST_PG=postgres://… cargo test sync_tests` (7 tests, 6 échouent sur l'ancien code).
 
-Limite restante : quand la fenêtre « Résoudre le conflit » s'ouvre pendant la frappe (même ligne modifiée des deux
-côtés), les touches tapées ensuite ne vont plus dans la note.
+Même ligne modifiée des deux côtés : un bandeau « Conflit à résoudre » apparaît, la frappe continue, et la fenêtre
+de résolution ne s'ouvre qu'à la demande avec le texte du moment.
 
-## 2. Corrigé dans cette branche
+## 2. Vérifications
 
-- `db/vault_sync.rs` : fusion à 3 voies quand fichier et base ont changé ; `UPDATE` / `DELETE` seulement si la
-  version en base est celle attendue ; l'état connu n'avance qu'après le `COMMIT` (avant : un passage interrompu
-  pouvait réécrire un fichier avec l'ancien texte ou mettre une pièce jointe à la corbeille) ; état gardé dans
-  `.mnemo/sync.json` et `.mnemo/base/` ; copies de conflit jamais écrasées ; à la première rencontre le texte
-  écarté va dans `.trash/`.
-- Chemins venus de la base (`..`, chemin absolu, `\`, `C:`) : ignorés au lieu d'être écrits hors du dossier des
-  notes. Une note au nom refusé par le bureau (créée sur le téléphone, ex. « Réunion #3 ») n'est plus supprimée
-  de la base.
-- `local/mod.rs` : fichier relu avant chaque enregistrement, création et renommage.
-- Éditeur : un enregistrement en échec est réessayé (avant : plus aucune sauvegarde de la note jusqu'au
-  redémarrage) ; le texte d'un conflit non résolu, ou refusé après avoir quitté la note, est gardé dans une note
-  « (conflit date) » ; idem si la note ouverte est supprimée ailleurs ; à la fermeture, le texte tapé pendant un
-  enregistrement en cours est enregistré.
+| Quoi | Résultat |
+|---|---|
+| `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` | propres |
+| `cargo test` avec `MNEMO_TEST_PG` (PostgreSQL 16) | 73 tests verts, dont 7 à deux appareils et un GitHub de bout en bout (faux serveur) |
+| Android : `./gradlew testDebugUnitTest lintDebug` avec `MNEMO_TEST_PG` | 46 tests verts, lint propre |
+| Deux instances à l'écran (Xvfb), frappe simultanée | scénarios du tableau ci-dessus |
+| `schema.sql` | rejoué deux fois sur base vide, migration d'une base 0.4.0 avec données, ancien schéma rejoué par-dessus |
+| `.deb` 0.4.0 publié | installé et lancé sous Ubuntu 24.04 |
 
-## 3. Bureau — à faire
+**Non vérifié** : aucun essai sur un vrai Windows, macOS, Arch ou téléphone (ni émulateur). Les corrections
+propres à ces systèmes (adresses `file:///C:/…`, noms réservés, chiffrement Keystore, clavier Android 15,
+vérification TLS du téléphone, tâche `arch` de la CI) sont compilées et testées en unitaire seulement.
 
-### Perte de données
-1. Whiteboard illisible (JSON invalide, type d'élément inconnu, fichier verrouillé) ouvert comme vide puis
-   écrasé par l'enregistrement automatique — `app/whiteboard.rs:70-77, 306-320`.
-2. Whiteboard : l'enregistrement écrase les traits ajoutés par un autre appareil pendant un tracé ; Ctrl+Z après
-   un rechargement les efface — `app/whiteboard.rs:114-120, 315-331`.
-3. Renommer une note réécrit les liens qui pointent vers une *autre* note de même nom (`Plan` et `Archive/Plan`),
-   y compris au déplacement d'un dossier (reproduit) — `local/index.rs:240-250`, `db/notes.rs:400-420`.
-4. Renommage : les liens dans les blocs de code sont réécrits (`if [[ old ]]` en shell) (reproduit) ;
-   `[[école]]` et `[[École.md]]` ne suivent pas le renommage de `École` (reproduit) — mêmes fichiers.
-5. Titre et description d'un ticket enregistrés seulement à la perte du focus : perdus avec Ctrl+W ou à la
-   fermeture — `app/dashboard/ticket.rs:45-56, 139-143`.
-6. Whiteboard ouvert dont le fichier ou le dossier est déplacé : l'onglet devient vide et recrée l'ancien
-   chemin — `app/whiteboard.rs:326-336`.
-7. `config.toml` invalide : remplacé par les valeurs par défaut au lancement (URL, jeton, dossier perdus) —
-   `config.rs:80-109`.
+## 3. Bureau — corrigé
 
-### Plantages
-8. Bibliothèque graphique manquante sous Linux : panique au lieu du message d'aide annoncé (reproduit avec
-   `libxkbcommon-x11`) — `main.rs:38`.
-9. Format de date invalide dans un réglage de plugin (`%Q`, `100%`) : plantage (reproduit) — `plugins.rs:196-199`.
-10. Touche d'outil pendant un coup de gomme sur le whiteboard : index hors limites — `app/whiteboard.rs:466`.
-11. Thème CSS : `var()` auto-référencé (gel de plus d'une minute, reproduit), `calc(((((…` (débordement de pile,
-    reproduit) — `css.rs:174-304`.
-12. `&path[from.len()..]` après comparaison en minuscules : découpe fausse ou panique sur `İ` —
-    `local/mod.rs` (`rename_folder`), `local/shared.rs:62`.
+**Synchronisation** (`db/vault_sync.rs`, `local/mod.rs`) : fusion à 3 voies ; mises à jour conditionnées à la
+version ; état connu avancé après le `COMMIT` et gardé dans `.mnemo/sync.json` + `.mnemo/base/` ; copies de
+conflit jamais écrasées ; fichier relu avant chaque enregistrement ; chemins `..`, absolus ou `\` venus de la base
+ignorés ; une note au nom refusé par le bureau n'est plus supprimée de la base.
 
-### Sécurité
-13. `DATABASE_URL` de l'environnement (autre projet, direnv) adoptée : Mnemo s'y connecte, y crée ses tables
-    (`notes`, `projects`, `tickets`…) et enregistre l'URL — `config.rs:92`. Ne garder que `MNEMO_DATABASE_URL`.
-14. Mot de passe de la base et jeton GitHub en clair dans `config.toml` ; `MNEMO_GITHUB_TOKEN` y est recopié ;
-    `redact_url` ne masque pas la forme `host=… password=…` — `config.rs`.
-15. Sans `sslmode`, connexion en clair même vers un serveur distant ; `sslmode=verify-full` refusé par le pilote
-    — `db/connection.rs:35-37, 90`.
-16. Plugins Rhai : pas de limite de taille des tableaux (mémoire), `import` de fichiers hors du dossier du
-    plugin, `main = "../../x"` accepté — `plugins.rs:150-154, 238`.
-17. Le `CHECK` du schéma accepte encore `..` et `\` dans `notes.path` / `files.path` (le bureau les ignore
-    maintenant, le téléphone non) — `schema.sql:5, 21, 118`.
+**Éditeur et onglets** : enregistrement en échec réessayé ; texte d'un conflit non résolu ou refusé gardé dans
+une note « (conflit date) » ; curseur stable quand du texte arrive ; conflit signalé par un bandeau sans
+interrompre la frappe ; onglets et historique nettoyés quand une note est supprimée ; raccourcis inactifs derrière
+les fenêtres ; image collée seulement si l'éditeur a le focus et dans la note d'origine ; fichier déposé sur
+l'éditeur intégré à la note.
 
-### GitHub et tableau de bord
-18. Un ticket garde son numéro d'issue en changeant de projet ou de dépôt : la synchro écrase une issue sans
-    rapport dans l'autre dépôt — `db/board.rs:35-87`, `db/github_sync.rs:64-85`.
-19. Modifier un ticket rouvre et écrase une issue fermée ou modifiée entre-temps sur GitHub —
-    `db/board.rs:88-104`.
-20. Déplacer un ticket vers un autre projet échoue presque toujours (`tickets_number_uniq`) — `schema.sql:163`.
-21. Import limité à 1000 issues sans avertissement ; les tags « Amélioration » / « Tâche technique » reviennent
-    en `enhancement` / `chore` ; issue créée en double si la fermeture échoue après la création —
-    `github.rs:125-144`, `board.rs:125, 290`, `db/github_sync.rs:97-113`.
+**Whiteboard** : fichier illisible ouvert en lecture seule (plus écrasé) ; éléments inconnus conservés ; fusion
+avec les traits d'un autre appareil avant chaque enregistrement ; plus de plantage à la gomme ; onglets suivis au
+déplacement d'un dossier ; texte en cours et dernier trait enregistrés à la fermeture ; annuler / rétablir cohérents.
 
-### Autres
-22. Images des notes jamais affichées sous Windows (`file://C:\…` au lieu de `file:///C:/…`) ; une image en
-    échec redemande un affichage toutes les 100 ms — `app/attachments.rs:43, 145`, `app/editor.rs:117-120`.
-23. Noms acceptés mais impossibles sous Windows (`: * ? " < >`, `CON`, point final) ; notes dont un dossier
-    commence par `.` créées puis invisibles — `model.rs:87-104`.
-24. Tags et liens lus dans les blocs de code : `#include`, `#fff`, `[[ -z "$x" ]]` (reproduit) —
-    `local/index.rs:15-67`.
-25. Onglets et historique gardent les notes supprimées avec leur dossier ; l'onglet affiche alors la note d'un
-    autre onglet — `app/sync.rs`, `app/dialogs.rs:211-218`.
-26. Raccourcis globaux actifs derrière les fenêtres (Paramètres, icônes) ; image collée insérée dans la note
-    même quand le focus est dans la recherche ; `![[…]]` inséré dans la note ouverte à l'arrivée de la réponse —
-    `app/commands.rs:268`, `app/attachments.rs:88`.
-27. Fichier déposé sur l'éditeur parfois importé à la racine au lieu d'être intégré — `app/sidebar.rs:370`.
-28. Une note de plus de ~1 Mo de mots distincts fait échouer toute la synchro (colonne `search` inutilisée) ;
-    le schéma rejoué à chaque connexion verrouille toutes les tables — `schema.sql:11-17, 56-58`.
-29. `@media print` d'un thème appliqué à l'écran ; `content: "\""` arrête la lecture du thème — `css.rs`.
-30. Une ligne ```` ```code``` ```` masque les liens du reste de l'aperçu — `markdown.rs:68-73`.
-31. `Msg::Renamed` change `last_note` même pour une note non ouverte — `app/sync.rs`.
-32. `db/notes.rs` : commandes SQL des notes jamais appelées (tout passe par le stockage local), à supprimer.
+**Liens et tags** (`local/index.rs`, `markdown.rs`) : le renommage ne réécrit que les liens qui désignaient la
+note renommée, suit `[[école]]` et `[[École.md]]`, ne touche pas le code ; rétroliens résolus comme au clic ;
+tags et liens ignorés dans le code ; `#123` n'est pas un tag ; ```` ```code``` ```` sur une ligne ne masque plus
+la suite.
 
-## 4. Android — à faire
+**Noms et configuration** : nouveaux noms refusés s'ils sont impossibles sous Windows ou cachés ; `config.toml`
+invalide gardé à côté, écrit en 0600 ; `DATABASE_URL` ignoré (seul `MNEMO_DATABASE_URL` compte) ; jeton de
+l'environnement jamais recopié ; `sslmode=verify-full` accepté ; message d'aide quand une bibliothèque
+graphique manque ; images affichées sous Windows.
 
-### Perte de données
-1. L'état local est noté « envoyé » avant le `COMMIT` PostgreSQL : une coupure pendant la synchro fait écraser
-   ou supprimer les modifications du téléphone au passage suivant — `SyncEngine.kt:64-81`.
-2. Changer l'adresse de la base (même pour ajouter `?sslmode=require`) efface toutes les notes locales, y
-   compris celles jamais envoyées — `AppModel.kt:174`, `LocalDb.kt:197-203`.
-3. Enregistrement automatique de 800 ms sans enregistrement à la sortie : texte perdu en quittant la note juste
-   après la frappe ou en tournant l'écran — `NoteScreen.kt:97-103`.
-4. Une modification du bureau arrivée pendant la frappe est écrasée sans copie de conflit —
-   `NoteScreen.kt:88-103`, `SyncEngine.kt:147-155`.
-5. Enregistrement pendant un envoi : la note (ou le trait de whiteboard) reste « envoyée » avec l'ancien
-   contenu — `SyncEngine.kt:97-126, 210-223`.
-6. Whiteboard illisible ouvert comme vide puis envoyé à la place du dessin — `BoardScreen.kt:176-196`.
-7. Copie de conflit perdue si deux conflits dans la même minute (`ON CONFLICT DO NOTHING`) —
-   `SyncEngine.kt:85-86, 130`.
+**GitHub et tickets** : lien GitHub effacé quand un ticket change de dépôt ; fusion champ par champ avant chaque
+envoi (une issue fermée sur GitHub n'est plus rouverte) ; déplacement de ticket entre projets ; plus de limite à
+1000 issues ; tags intégrés conservés à l'aller-retour ; plus d'issue en double ; titre et description d'un
+ticket enregistrés pendant la frappe.
 
-### Blocages et plantages
-8. Renommer vers un nom déjà pris ou vide bloque toute la synchro (erreur SQL toutes les 15 s) —
-   `SyncEngine.kt:119-124`, `AppModel.kt:211-217`.
-9. Deux notes de même chemin : plantage de la liste à chaque lancement (clé dupliquée) —
-   `NotesListScreen.kt:145`.
-10. Noms `[ ] | # ^ \` et `..` acceptés alors que le bureau les refuse — `AppModel.kt:201-217`.
-11. Images décodées en pleine taille sur le fil principal, toutes les notes relues à chaque enregistrement,
-    pièce jointe entière en mémoire : lenteurs et manque de mémoire — `NoteScreen.kt:246`, `AppModel.kt:94-99`,
-    `SyncEngine.kt:237-243`.
-12. Modification annulée (taper puis effacer) vue comme un conflit — `SyncEngine.kt:119-133`.
-13. Clavier probablement par-dessus l'éditeur sous Android 15 (`targetSdk 35`, pas d'`imePadding`).
+**Thèmes, plugins, schéma** : `var()` cyclique et `calc()` profond bornés ; `@media print` ignoré ; chaînes CSS
+avec `\"` ; format de date invalide d'un plugin sans plantage ; bac à sable Rhai durci (tailles, `import`
+désactivé, `main` dans le dossier) ; contraintes sur les chemins ; colonne `search` neutralisée ; schéma rejoué
+sans verrou de table.
 
-### Sécurité
-14. TLS jamais vérifié, même avec `sslmode=verify-full` — `Util.kt:38-40`.
-15. Adresse de la base avec mot de passe en clair dans les préférences et dans les sauvegardes Android
-    (`allowBackup="true"`).
-16. Chemin de pièce jointe `../…` venu de la base écrit hors du dossier — `LocalDb.kt:170`.
-17. `+` dans le mot de passe transformé en espace — `Util.kt:30-31`.
+## 4. Android — corrigé
 
-### Divers
-18. `![[doc.pdf]]` ou image manquante : un appui crée une note « doc.pdf » ; `.svg` non reconnu ; images en
-    ligne non affichées — `Preprocess.kt`.
-19. Pièces jointes de 20 à 50 Mo listées mais jamais téléchargées ; `lower()` de SQLite limité à l'ASCII
-    (« École » / « école » en double).
+État local appliqué après le `COMMIT` ; changement d'adresse sans effacer les notes non envoyées ; enregistrement
+à la sortie de la note ; une modification du bureau n'écrase plus un texte en cours (copie « conflit mobile ») ;
+envoi et enregistrement simultanés sans perte ; whiteboard illisible protégé ; copies de conflit uniques ;
+renommage en double ou vide refusé, une erreur sur une note ne bloque plus la synchro ; mêmes règles de noms que
+le bureau ; images réduites et décodées hors du fil principal ; modification annulée sans faux conflit ; marges
+clavier ; `verify-full` réellement vérifié ; adresse chiffrée (Keystore) et exclue des sauvegardes ; chemins
+`../` ignorés ; `+` dans le mot de passe ; plus de note créée en touchant `![[doc.pdf]]` ; limite de 50 Mo.
 
-## 5. Paquets
+## 5. Reste à faire
 
-- La version publiée (v0.4.0) contient `.deb`, `.tar.gz` x86_64 et aarch64, binaire Linux seul, `.dmg`, `.exe`.
-  Le `.deb` a été installé et lancé ici sous Ubuntu 24.04 : il fonctionne.
-- Pas d'APK ni de paquet Arch dans v0.4.0 (le README annonce `mnemo-android.apk`) : il faut publier une
-  nouvelle version ; ajouter `make arch` au workflow `release.yml` (conteneur `archlinux`) fournirait le
-  `.pkg.tar.zst`.
-- macOS : signature ad hoc, pas de notarisation ; sous macOS 15 le clic droit › Ouvrir ne suffit plus (voir
-  l'installation). Windows : exécutable non signé (SmartScreen), pas d'installeur.
-- `.deb` pour amd64 seulement.
+1. Sans `sslmode`, la connexion à la base n'est toujours pas chiffrée, sur le bureau comme sur le téléphone
+   (le changer casserait les serveurs à certificat auto-signé) ; les réglages le disent maintenant.
+2. Le mot de passe de la base et le jeton GitHub restent en clair dans `config.toml` (lisible par
+   l'utilisateur seul).
+3. Whiteboard : une écriture d'un autre appareil qui tombe dans les quelques millisecondes entre la
+   vérification et l'écriture peut encore être perdue (`Cmd::WriteFile` n'a pas de contrôle de version).
+4. Quitter une note avec un conflit non résolu crée une note « (conflit date) » à chaque fois.
+5. Android : images au milieu d'une ligne et SVG non affichés ; pas de fusion (copie de conflit seulement) ;
+   la position du curseur n'est pas gardée à la rotation.
+6. Une ancienne version du bureau branchée sur la même base écrase encore les issues GitHub à sa façon :
+   mettre tous les postes à jour.
+7. Tri des noms accentués après « z » sur Android ; `lower()` de PostgreSQL dépend de la collation de la base.
+8. macOS non notarisé et Windows non signé : avertissement au premier lancement (voir le README).
+
+## 6. Paquets
+
+- v0.4.0 publiée : `.deb`, `.tar.gz` x86_64 et aarch64, binaire Linux seul, `.dmg`, `.exe`. Ni APK, ni paquet
+  Arch, ni les corrections ci-dessus.
+- La release suivante (Actions › build › Run workflow, version `0.5.0`) ajoute `mnemo-android.apk` et
+  `mnemo-0.5.0-1-x86_64.pkg.tar.zst` (tâche `arch`, jamais encore exécutée).
