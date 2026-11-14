@@ -249,6 +249,9 @@ class SyncSafetyTest {
     @Test
     fun hostilePathsStayOutside() {
         val data = byteArrayOf(1, 2, 3)
+        // lignes d'avant les contraintes « *_path_safe » (posées NOT VALID : les anciennes lignes restent), ou écrites à la main
+        pc.exec("ALTER TABLE files DROP CONSTRAINT IF EXISTS files_path_safe")
+        pc.exec("ALTER TABLE notes DROP CONSTRAINT IF EXISTS notes_path_safe")
         for (p in listOf("../evil.png", "a/../../evil.png", ".cache/x.png", "c:evil.png", "a\\b.png")) {
             pc.exec("INSERT INTO files (path, data, hash, size) VALUES (?, ?, ?, 3)", p, data, fileHash(data))
         }
