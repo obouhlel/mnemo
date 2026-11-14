@@ -14,3 +14,4 @@ packaging/arch/pkg/
 .idea/
 .vscode/
 .DS_Store
+.claude/worktrees/

@@ -414,6 +414,12 @@ impl Store {
                 }
             }
             Cmd::Create { path, content, open, if_missing } => {
+                if self.by_path(&path).is_none()
+                    && let Err(e) = portable_name(&path)
+                {
+                    self.error(e);
+                    return;
+                }
                 // fichier créé à côté depuis moins d'une seconde : on l'indexe au lieu de l'écraser
                 if self.by_path(&path).is_none() && self.file(&path).is_some_and(|f| f.exists()) {
                     self.rescan();
@@ -479,6 +485,10 @@ impl Store {
                 self.emit(Msg::Deleted(id));
             }
             Cmd::CreateFolder(path) => {
+                if let Err(e) = portable_name(&path) {
+                    self.error(e);
+                    return;
+                }
                 let root = self.root.clone().expect("root");
                 match std::fs::create_dir_all(root.join(&path)) {
                     Ok(()) => {
@@ -623,6 +633,10 @@ impl Store {
         if old == new_path {
             return;
         }
+        if let Err(e) = portable_name(&new_path) {
+            self.error(e);
+            return;
+        }
         if self.by_path(&new_path).is_some_and(|other| other != id) {
             self.error(format!("« {new_path} » existe déjà"));
             return;
@@ -675,6 +689,10 @@ impl Store {
             self.error("Impossible de déplacer un dossier dans lui-même");
             return;
         }
+        if let Err(e) = portable_name(&to) {
+            self.error(e);
+            return;
+        }
         self.rescan(); // même raison que pour le renommage d'une note
         let root = self.root.clone().expect("root");
         if root.join(&to).exists() {
@@ -690,11 +708,15 @@ impl Store {
             self.error(format!("Renommage du dossier impossible : {e}"));
             return;
         }
+        // ce qui suit le nom du dossier, compté en caractères : une majuscule et sa minuscule n'ont pas toujours
+        // le même nombre d'octets (« İ »)
+        let skip = from.chars().count();
+        let tail = |p: &str| p.chars().skip(skip).collect::<String>();
         let moved: Vec<(Uuid, String, String)> = self
             .notes
             .iter()
             .filter(|(_, n)| n.path.to_lowercase().starts_with(&format!("{f}/")))
-            .map(|(id, n)| (*id, n.path.clone(), format!("{to}{}", &n.path[from.len()..])))
+            .map(|(id, n)| (*id, n.path.clone(), format!("{to}{}", tail(&n.path))))
             .collect();
         for (id, _, np) in &moved {
             let file = crate::db::note_file(&root, np);
@@ -708,7 +730,7 @@ impl Store {
             .iter()
             .map(|d| {
                 let l = d.to_lowercase();
-                if l == f || l.starts_with(&format!("{f}/")) { format!("{to}{}", &d[from.len()..]) } else { d.clone() }
+                if l == f || l.starts_with(&format!("{f}/")) { format!("{to}{}", tail(d)) } else { d.clone() }
             })
             .collect();
         self.move_icons(&from, Some(&to));

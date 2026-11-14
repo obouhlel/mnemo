@@ -240,6 +240,9 @@ impl MnemoApp {
             now: 0.0,
             cfg,
         };
+        if let Some(e) = app.cfg.load_error.take() {
+            app.notices.push((e, 20.0, true));
+        }
         app.css.obsidian_input = app.cfg.obsidian_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         app.vault_input = app.cfg.vault_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         app.install_example_snippet();

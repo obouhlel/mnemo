@@ -652,7 +652,8 @@ impl Worker {
             let key = path.to_lowercase();
             // chemin que Mnemo n'accepte pas (« .. », « \\ », « # »… écrit par un autre client ou en SQL) :
             // la note reste dans la base, mais rien n'est écrit ni supprimé pour elle sur ce disque
-            if normalize_path(&path).as_deref() != Ok(path.as_str()) {
+            if normalize_path(&path).as_deref() != Ok(path.as_str()) || (cfg!(windows) && portable_name(&path).is_err())
+            {
                 seen.insert(key);
                 stats.skipped += 1;
                 continue;
