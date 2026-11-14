@@ -94,6 +94,10 @@ jobs:
             mkdir -p device
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell svc power stayon true
+            adb shell input keyevent KEYCODE_WAKEUP
+            adb shell wm dismiss-keyguard || true
+            adb shell input keyevent 82
             adb shell am instrument -w -e dbUrl postgres://postgres:postgres@10.0.2.2:5432/mnemo_ci dev.mnemo.app.test/androidx.test.runner.AndroidJUnitRunner | tee device/instrument.txt
             adb pull /sdcard/Android/data/dev.mnemo.app/files/ device/ || true
             adb logcat -d > device/logcat.txt || true

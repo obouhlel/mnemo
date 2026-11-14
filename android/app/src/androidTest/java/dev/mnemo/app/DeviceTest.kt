@@ -85,6 +85,20 @@ class DeviceTest {
         org.junit.Assert.assertTrue(local.fileOnDisk("Pièces jointes/schema.png").exists())
     }
 
+    /** Écran allumé et déverrouillé pendant le test : sinon l'activité ne dessine plus et l'écran ne suit pas. */
+    @org.junit.Before
+    fun awake() {
+        compose.runOnUiThread {
+            @Suppress("DEPRECATION")
+            compose.activity.window.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD,
+            )
+        }
+    }
+
     @Test
     fun connectSyncAndRead() {
         waitText("Base de synchronisation")
