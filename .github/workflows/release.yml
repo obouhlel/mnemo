@@ -34,6 +34,22 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: mnemo-linux, path: dist/* }
 
+  # Paquet Arch Linux (.pkg.tar.zst), construit dans un conteneur Arch avec le PKGBUILD du dépôt.
+  arch:
+    needs: check
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - run: pacman -Syu --noconfirm git rust libx11 libxkbcommon-x11 libglvnd wayland libxcursor libxrandr libxi
+      - uses: actions/checkout@v4
+      - name: Paquet (makepkg refuse de tourner en root)
+        run: |
+          useradd -m build
+          chown -R build .
+          su build -c "make arch"
+      - uses: actions/upload-artifact@v4
+        with: { name: mnemo-arch, path: dist/*.pkg.tar.zst }
+
   windows:
     needs: check
     runs-on: ubuntu-24.04
@@ -86,7 +102,7 @@ jobs:
   # Sur un tag v* : page Releases publique avec les fichiers à télécharger directement.
   publish:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
-    needs: [linux, windows, macos, android]
+    needs: [linux, arch, windows, macos, android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
