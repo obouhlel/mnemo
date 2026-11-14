@@ -1,6 +1,7 @@
 package dev.mnemo.app
 
 import android.graphics.Bitmap
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
