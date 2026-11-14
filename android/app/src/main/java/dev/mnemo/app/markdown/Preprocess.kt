@@ -10,13 +10,15 @@ object Preprocess {
     const val NOTE = "mnemo://note/"
     const val TAG = "mnemo://tag/"
     const val BOARD = "mnemo://board/"
+    /** intégration `![[…]]` dont le fichier n'est pas (encore) sur l'appareil : ouvre ce qui existe, ne crée jamais de note */
+    const val EMBED = "mnemo://embed/"
 
     sealed class Embed {
         data class Image(val uri: String) : Embed()
         data class Board(val path: String) : Embed()
     }
 
-    private val imageExts = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
+    private val imageExts = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg") // IMAGE_EXTS de src/markdown.rs
 
     fun isImage(path: String): Boolean = path.substringAfterLast('.', "").lowercase() in imageExts
 
@@ -88,7 +90,9 @@ object Preprocess {
                         out.append(line, last, start)
                         val (target, display) = parseWikilink(inner)
                         val md = if (embed) embedMarkdown(inner.substringBefore('|').trim(), target, resolve) else null
-                        out.append(md ?: "[${display.replace("[", "\\[").replace("]", "\\]")}]($NOTE${encode(target)})")
+                        // intégration non affichable : lien qui ne crée pas de note (après `|` : une taille, pas un libellé)
+                        val (scheme, label) = if (embed) EMBED to target else NOTE to display
+                        out.append(md ?: "[${label.replace("[", "\\[").replace("]", "\\]")}]($scheme${encode(target)})")
                         i = end + 2
                         last = i
                     } else {

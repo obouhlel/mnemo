@@ -1,28 +1,48 @@
 package dev.mnemo.app.data
 
-/** Caractères refusés dans un nom : syntaxe des liens (`[ ] | # ^ \`) et noms invalides sous Windows. */
-private const val FORBIDDEN = "[]|#^\\:*?\"<>"
+private fun fail(message: String): Result<Nothing> = Result.failure(IllegalArgumentException(message))
 
 /**
- * Normalise un chemin de note saisi par l'utilisateur, avec les règles de Mnemo sur ordinateur
- * (`normalize_path`, src/model.rs) : espaces et `.md` retirés, segments vides ignorés, 500 caractères au plus,
- * caractères interdits, pas de segment `.`/`..`, ni commençant ou finissant par un point.
+ * Normalise un chemin de note saisi par l'utilisateur, exactement comme Mnemo sur ordinateur (`normalize_path`,
+ * src/model.rs) : espaces et `.md` retirés, segments vides ignorés, 500 caractères au plus et 250 octets par nom,
+ * pas de `[ ] | # ^ \` ni de caractère de contrôle, pas de segment commençant par un point (donc ni `.` ni `..`).
  * Échec : message en français.
  */
 fun normalizePath(raw: String): Result<String> {
     val trimmed = raw.trim().let { t -> if (t.endsWith(".md") || t.endsWith(".MD")) t.dropLast(3) else t }
     val segments = trimmed.split('/').map { it.trim() }.filter { it.isNotEmpty() }
     val p = segments.joinToString("/")
-    val error = when {
-        p.isEmpty() -> "Le nom ne peut pas être vide"
-        p.codePointCount(0, p.length) > 500 -> "Nom trop long"
-        p.any { it in FORBIDDEN || it.isISOControl() } -> "Caractères interdits : [ ] | # ^ \\ : * ? \" < >"
-        segments.any { it.startsWith('.') } -> "Un nom ne peut pas commencer par un point"
-        segments.any { it.endsWith('.') } -> "Un nom ne peut pas finir par un point"
-        else -> return Result.success(p)
+    return when {
+        p.isEmpty() -> fail("Le nom ne peut pas être vide")
+        p.codePointCount(0, p.length) > 500 -> fail("Nom trop long")
+        p.any { it in "[]|#^\\" || it.isISOControl() } -> fail("Caractères interdits : [ ] | # ^ \\")
+        segments.any { it.startsWith('.') } -> fail("Un nom ne peut pas commencer par un point")
+        segments.any { it.toByteArray(Charsets.UTF_8).size > 250 } -> fail("Nom trop long")
+        else -> Result.success(p)
     }
-    return Result.failure(IllegalArgumentException(error))
 }
+
+private val RESERVED = setOf("CON", "PRN", "AUX", "NUL")
+
+/**
+ * Vérifie qu'un nouveau nom existe sur tous les systèmes (`portable_name`, src/model.rs) : pas de `: * ? " < >`,
+ * pas de point ou d'espace final, pas de nom réservé par Windows. Renvoie le message d'erreur, ou null.
+ */
+fun portableName(path: String): String? {
+    for (seg in path.split('/')) {
+        if (seg.any { it in ":*?\"<>" }) return "Caractères interdits dans un nom : : * ? \" < >"
+        if (seg.endsWith('.') || seg.endsWith(' ')) return "Un nom ne peut pas finir par un point ou un espace"
+        val stem = seg.substringBefore('.').uppercase(java.util.Locale.ROOT)
+        val reserved = stem in RESERVED ||
+            (stem.length == 4 && (stem.startsWith("COM") || stem.startsWith("LPT")) && stem[3] in '1'..'9')
+        if (reserved) return "« $seg » est un nom réservé par Windows"
+    }
+    return null
+}
+
+/** Chemin d'une note créée ou renommée sur l'appareil : normalisé, et valable sur tous les systèmes. */
+fun newNotePath(raw: String): Result<String> =
+    normalizePath(raw).fold({ p -> portableName(p)?.let { fail(it) } ?: Result.success(p) }, { Result.failure(it) })
 
 /**
  * Chemin relatif sûr pour un fichier du coffre : il vient de la base, donc d'une autre machine, et ne doit jamais
@@ -36,7 +56,7 @@ fun isSafeRelPath(path: String): Boolean {
 
 /**
  * Chemin de note acceptable venant de la base : mêmes règles, sauf `:` (une note n'est jamais un fichier sur
- * l'appareil, et d'anciennes versions du bureau acceptaient ce caractère dans un nom).
+ * l'appareil, et les notes déjà nommées ainsi sur ordinateur restent lisibles).
  */
 fun isSafeNotePath(path: String): Boolean = isSafeRelPath(path.replace(':', '_'))
 

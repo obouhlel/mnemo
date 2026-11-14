@@ -50,7 +50,7 @@ fun percentDecode(s: String): String {
     val out = java.io.ByteArrayOutputStream(s.length)
     var i = 0
     while (i < s.length) {
-        val hi = if (s[i] == '%' && i + 2 < s.length + 0) hexDigit(s[i + 1]) else -1
+        val hi = if (s[i] == '%' && i + 2 < s.length) hexDigit(s[i + 1]) else -1
         val lo = if (hi >= 0) hexDigit(s[i + 2]) else -1
         if (lo >= 0) {
             out.write(hi * 16 + lo)

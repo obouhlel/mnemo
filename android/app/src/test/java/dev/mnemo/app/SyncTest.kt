@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import dev.mnemo.app.data.LocalDb
 import dev.mnemo.app.data.Sketch
@@ -150,10 +151,10 @@ class SyncTest {
         app.getSharedPreferences("mnemo", 0).edit().clear().apply()
         val model = dev.mnemo.app.ui.AppModel(app, "ui-${UUID.randomUUID()}.db")
         compose.setContent { dev.mnemo.app.ui.MnemoTheme { dev.mnemo.app.ui.MnemoApp(model) } }
-        compose.onNodeWithText("Afficher l'adresse").performClick()
+        compose.onNodeWithText("Afficher l'adresse").performScrollTo().performClick()
         compose.onNodeWithText("Masquer l'adresse").assertExists()
         compose.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("$server/$dbName")
-        compose.onNodeWithText("Connecter").performClick()
+        compose.onNodeWithText("Connecter").performScrollTo().performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithText("Projets").fetchSemanticsNodes().isNotEmpty() }
         assertEquals("$server/$dbName", model.dbUrl())
     }

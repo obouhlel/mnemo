@@ -76,6 +76,7 @@ import dev.mnemo.app.data.INK
 import dev.mnemo.app.data.Pt
 import dev.mnemo.app.data.Sketch
 import dev.mnemo.app.data.basename
+import dev.mnemo.app.data.fileHash
 import dev.mnemo.app.data.simplify
 import kotlin.math.max
 import kotlin.math.min
@@ -164,6 +165,11 @@ fun BoardScreen(model: AppModel, path: String, onBack: (() -> Unit)?) {
     var drawing by remember { mutableStateOf<Element?>(null) }
     var textAt by remember { mutableStateOf<Pt?>(null) }
     var undoCount by remember { mutableStateOf(0) } // pour rafraîchir l'état des boutons
+    // Tant que le dessin n'est pas chargé (pas téléchargé, illisible), on ne dessine pas et surtout on n'enregistre
+    // pas : un fichier illisible n'est pas un dessin vide, le premier trait l'écraserait.
+    var problem by remember(path) { mutableStateOf<String?>("Chargement…") }
+    /** empreinte du fichier tel que chargé ou enregistré ici : s'il a changé ailleurs, l'enregistrement part dans une copie */
+    var loadedHash by remember(path) { mutableStateOf<String?>(null) }
 
     fun fit() {
         val b = Sketch(elements.toList()).bounds()
@@ -174,7 +180,11 @@ fun BoardScreen(model: AppModel, path: String, onBack: (() -> Unit)?) {
     }
 
     fun save() {
-        model.writeFile(path, Sketch(elements.toList()).toJson().toByteArray())
+        if (problem != null) return
+        val bytes = Sketch(elements.toList()).toJson().toByteArray()
+        val target = model.writeFile(path, bytes, loadedHash)
+        loadedHash = fileHash(bytes)
+        if (target != path) model.open(Screen.Board(target)) // modifié ailleurs entre-temps : on continue dans la copie
     }
 
     fun commit(change: () -> Unit) {
@@ -188,11 +198,21 @@ fun BoardScreen(model: AppModel, path: String, onBack: (() -> Unit)?) {
     // chargement, et rechargement quand le whiteboard change sur un autre appareil
     LaunchedEffect(path, revision) {
         if (drawing != null) return@LaunchedEffect
-        val bytes = model.readFile(path) ?: return@LaunchedEffect
-        val sk = runCatching { Sketch.parse(String(bytes)) }.getOrNull() ?: return@LaunchedEffect
-        if (sk.elements != elements.toList()) {
-            elements.clear(); elements.addAll(sk.elements)
+        val bytes = model.readFile(path)
+        if (bytes == null) {
+            problem = if (model.knowsFile(path)) "Ce whiteboard n'est pas encore téléchargé." else "Ce whiteboard n'existe plus."
+            return@LaunchedEffect
         }
+        val hash = fileHash(bytes)
+        if (hash == loadedHash) return@LaunchedEffect
+        val sk = runCatching { Sketch.parse(String(bytes)) }.getOrNull()
+        if (sk == null) {
+            problem = "Whiteboard illisible (fichier incomplet ou endommagé). Il est laissé tel quel : rien ne sera enregistré par-dessus."
+            return@LaunchedEffect
+        }
+        elements.clear(); elements.addAll(sk.elements)
+        loadedHash = hash
+        problem = null
     }
     // cadrage sur le dessin à l'ouverture, dès que la taille de l'écran et le dessin sont connus
     LaunchedEffect(size, elements.size) {
@@ -216,7 +236,8 @@ fun BoardScreen(model: AppModel, path: String, onBack: (() -> Unit)?) {
             Canvas(
                 Modifier.fillMaxSize()
                     .onSizeChanged { size = it }
-                    .pointerInput(tool, color, width) {
+                    .pointerInput(tool, color, width, problem) {
+                        if (problem != null) return@pointerInput
                         awaitEachGesture {
                             val down = awaitFirstDown()
                             val start = toWorld(down.position)
@@ -300,6 +321,12 @@ fun BoardScreen(model: AppModel, path: String, onBack: (() -> Unit)?) {
                 drawing?.let { drawElements(listOf(it), toScreen, zoom, ink) }
             }
 
+            problem?.let {
+                Text(
+                    it, Modifier.align(Alignment.Center).padding(32.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium,
+                )
+            }
             // barre d'outils (en bas, défilable sur petit écran)
             Surface(
                 Modifier.align(Alignment.BottomCenter).padding(12.dp),

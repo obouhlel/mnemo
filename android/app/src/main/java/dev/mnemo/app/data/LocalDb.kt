@@ -79,6 +79,10 @@ class LocalDb(context: Context, name: String = "mnemo.db") :
         }
     }
 
+    /** Comme [tx], pour un lot qui touche aussi aux fichiers (même ordre de verrous que les écritures de fichiers). */
+    @Synchronized
+    fun <T> exclusive(block: () -> T): T = tx(block)
+
     private fun update(sql: String, vararg args: Any?): Int =
         writableDatabase.compileStatement(sql).use { st ->
             args.forEachIndexed { i, a ->
