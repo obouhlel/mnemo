@@ -23,21 +23,15 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Clé fournie par la CI (secrets) ; sinon la clé de débogage de la machine, pour une installation directe de l'APK
+    val keystore = System.getenv("MNEMO_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
     signingConfigs {
-        // Clé fournie par la CI (secrets) ; sinon la clé de débogage, pour une installation directe de l'APK
-        create("release") {
-            val ks = System.getenv("MNEMO_KEYSTORE")
-            if (ks != null && file(ks).exists()) {
-                storeFile = file(ks)
+        if (keystore != null) {
+            create("release") {
+                storeFile = keystore
                 storePassword = System.getenv("MNEMO_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("MNEMO_KEY_ALIAS")
                 keyPassword = System.getenv("MNEMO_KEY_PASSWORD")
-            } else {
-                val debug = signingConfigs.getByName("debug")
-                storeFile = debug.storeFile
-                storePassword = debug.storePassword
-                keyAlias = debug.keyAlias
-                keyPassword = debug.keyPassword
             }
         }
     }
@@ -46,7 +40,7 @@ android {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName(if (keystore != null) "release" else "debug")
         }
     }
     compileOptions {

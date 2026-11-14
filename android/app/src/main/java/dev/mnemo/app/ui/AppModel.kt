@@ -42,7 +42,8 @@ sealed class Screen {
     data object Settings : Screen()
 }
 
-class AppModel(app: Application, dbName: String = "mnemo.db") : AndroidViewModel(app) {
+// @JvmOverloads : Android crée le ViewModel par réflexion avec le seul constructeur (Application)
+class AppModel @JvmOverloads constructor(app: Application, dbName: String = "mnemo.db") : AndroidViewModel(app) {
     val local = LocalDb(app, dbName)
     private val prefs = app.getSharedPreferences("mnemo", Context.MODE_PRIVATE)
     private val engine = SyncEngine(local, clientId())

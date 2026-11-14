@@ -123,6 +123,15 @@ class ScreensTest {
     @Config(qualifiers = "w1280dp-h800dp-mdpi")
     fun tabletDashboard() = shot(seeded(), "tablet-dashboard", Screen.Dashboard)
 
+    /** L'activité démarre comme sur un téléphone (ViewModel créé par Android, par réflexion). */
+    @Test
+    fun activityStarts() {
+        androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java).use { sc ->
+            sc.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            sc.onActivity { a -> org.junit.Assert.assertFalse(a.isFinishing) }
+        }
+    }
+
     @Test
     @Config(qualifiers = "w411dp-h891dp-xxhdpi")
     fun phoneFirstRun() {

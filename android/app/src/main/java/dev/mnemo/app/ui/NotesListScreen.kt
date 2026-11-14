@@ -26,7 +26,7 @@ import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.InsertDriveFile
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -217,7 +217,7 @@ private fun TreeRow(e: Entry, selected: Boolean, onClick: () -> Unit) {
         is Entry.File -> when {
             e.path.endsWith(".mnemo-board", true) -> Icons.Outlined.Draw
             Preprocess.isImage(e.path) -> Icons.Outlined.Image
-            else -> Icons.Outlined.InsertDriveFile
+            else -> Icons.AutoMirrored.Outlined.InsertDriveFile
         }
     }
     val bg = if (selected) MaterialTheme.colorScheme.surfaceVariant else androidx.compose.ui.graphics.Color.Transparent
