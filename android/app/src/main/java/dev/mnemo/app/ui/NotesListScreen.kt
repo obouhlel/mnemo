@@ -131,7 +131,7 @@ fun NotesListScreen(model: AppModel) {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(hits, key = { it.id }) { n ->
                         val i = n.content.lowercase().indexOf(q)
-                        val snippet = if (i >= 0) n.content.substring((i - 40).coerceAtLeast(0), (i + 80).coerceAtMost(n.content.length)).replace('\n', ' ') else ""
+                        val snippet = if (i >= 0) searchSnippet(n.content, i) else ""
                         Column(Modifier.fillMaxWidth().clickable { model.open(Screen.Note(n.id)) }.padding(horizontal = 16.dp, vertical = 10.dp)) {
                             Text(basename(n.path), style = MaterialTheme.typography.bodyLarge)
                             if (snippet.isNotEmpty()) Text(snippet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
@@ -270,4 +270,14 @@ private fun buildTree(
     }
     visit(null, 0)
     return out
+}
+
+/** Extrait autour d'un résultat de recherche : coupé aux mots, lignes et titres Markdown aplatis. */
+internal fun searchSnippet(content: String, at: Int): String {
+    var start = (at - 40).coerceAtLeast(0)
+    while (start in 1 until at && !content[start - 1].isWhitespace()) start++
+    var end = (at + 80).coerceAtMost(content.length)
+    while (end < content.length && !content[end].isWhitespace() && end - at < 100) end++
+    val text = content.substring(start, end).lines().map { it.trim().trimStart('#', '>', ' ') }.filter { it.isNotEmpty() }.joinToString("  ")
+    return (if (start > 0) "… " else "") + text + (if (end < content.length) " …" else "")
 }
