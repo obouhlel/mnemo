@@ -77,6 +77,7 @@ class DeviceTest {
         waitText("Base de synchronisation")
         shot("1-premier-lancement")
         compose.onNodeWithText("Afficher l'adresse").performClick()
+        waitText("Masquer l'adresse", 5_000)
         compose.onNode(hasSetTextAction()).performTextInput(url)
         compose.waitForIdle()
         compose.onNode(hasSetTextAction()).assert(hasText(url))

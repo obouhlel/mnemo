@@ -150,6 +150,8 @@ class SyncTest {
         app.getSharedPreferences("mnemo", 0).edit().clear().apply()
         val model = dev.mnemo.app.ui.AppModel(app, "ui-${UUID.randomUUID()}.db")
         compose.setContent { dev.mnemo.app.ui.MnemoTheme { dev.mnemo.app.ui.MnemoApp(model) } }
+        compose.onNodeWithText("Afficher l'adresse").performClick()
+        compose.onNodeWithText("Masquer l'adresse").assertExists()
         compose.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("$server/$dbName")
         compose.onNodeWithText("Connecter").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithText("Projets").fetchSemanticsNodes().isNotEmpty() }
