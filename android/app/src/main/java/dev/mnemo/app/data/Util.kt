@@ -108,3 +108,13 @@ fun parseDbUrl(raw: String): DbConfig? {
     val hostKey = host.lowercase().let { if (it.contains(':')) it else "$it:5432" }
     return DbConfig(jdbc, user, password, ssl, display, "$hostKey/$db")
 }
+
+/** Extrait autour d'un résultat de recherche : coupé aux mots, lignes et titres Markdown aplatis. */
+internal fun searchSnippet(content: String, at: Int): String {
+    var start = (at - 40).coerceAtLeast(0)
+    while (start in 1 until at && !content[start - 1].isWhitespace()) start++
+    var end = (at + 80).coerceAtMost(content.length)
+    while (end < content.length && !content[end].isWhitespace() && end - at < 100) end++
+    val text = content.substring(start, end).lines().map { it.trim().trimStart('#', '>', ' ') }.filter { it.isNotEmpty() }.joinToString("  ")
+    return (if (start > 0) "… " else "") + text + (if (end < content.length) " …" else "")
+}

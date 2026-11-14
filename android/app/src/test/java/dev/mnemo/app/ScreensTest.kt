@@ -5,7 +5,12 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.github.takahirom.roborazzi.captureRoboImage
 import dev.mnemo.app.data.Element
@@ -35,9 +40,9 @@ class ScreensTest {
 
     private fun seeded(): AppModel {
         val app = ApplicationProvider.getApplicationContext<Application>()
+        app.getSharedPreferences("mnemo", 0).edit().putString("db_url", "postgres://moi@db.exemple.fr/vault").apply()
         val model = AppModel(app, "screens-${UUID.randomUUID()}.db")
         val db = model.local
-        app.getSharedPreferences("mnemo", 0).edit().putString("db_url", "postgres://moi@db.exemple.fr/vault").apply()
         fun note(path: String, content: String) = db.putRemote(UUID.randomUUID().toString(), path, content, 1, 0)
         note("Accueil", "Bienvenue dans **Mnemo** sur mobile.\n\n- [x] Synchronisation\n- [ ] Écrire depuis la tablette\n\nVoir [[Plan]] et #projet")
         note("Projets/Plan", "# Plan\n\n![[schema.png]]\n\nÉtapes suivantes : *Android*.")
@@ -138,5 +143,64 @@ class ScreensTest {
         val app = ApplicationProvider.getApplicationContext<Application>()
         app.getSharedPreferences("mnemo", 0).edit().clear().apply()
         shot(AppModel(app, "empty-${UUID.randomUUID()}.db"), "phone-first-run")
+    }
+
+    private fun snap(name: String) {
+        if (!compose.mainClock.autoAdvance) {
+            compose.mainClock.advanceTimeBy(600)
+            compose.onRoot().captureRoboImage("build/screens/tour/$name.png")
+            return
+        }
+        compose.waitForIdle()
+        repeat(5) {
+            Thread.sleep(150)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            compose.waitForIdle()
+        }
+        compose.onRoot().captureRoboImage("build/screens/tour/$name.png")
+    }
+
+    /** Visite guidée sur téléphone : les captures de build/screens/tour/ montrent l'appli pas à pas. */
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun tour() {
+        val model = seeded()
+        compose.setContent { MnemoTheme(dark = true) { MnemoApp(model) } }
+        snap("01-liste")
+        compose.onNodeWithText("Projets").performClick()
+        snap("02-dossier-ouvert")
+        compose.onNodeWithContentDescription("Rechercher").performClick()
+        compose.onNode(hasSetTextAction()).performTextInput("android")
+        snap("03-recherche")
+        compose.onNodeWithContentDescription("Rechercher").performClick()
+        compose.onNodeWithContentDescription("Créer").performClick()
+        snap("04-menu-creer")
+        // champs avec curseur clignotant : horloge figée pour ces captures
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("Nouvelle note").performClick()
+        snap("05-nouvelle-note")
+        compose.onNodeWithText("Annuler").performClick()
+        compose.mainClock.advanceTimeBy(600)
+        compose.onNodeWithText("Plan").performClick()
+        snap("06-note")
+        compose.onNodeWithContentDescription("Modifier").performClick()
+        snap("07-edition")
+        compose.onNodeWithContentDescription("Lecture").performClick()
+        compose.mainClock.advanceTimeBy(600)
+        compose.onNodeWithContentDescription("Plus").performClick()
+        snap("08-menu-note")
+        compose.onNodeWithText("Renommer / déplacer").performClick()
+        snap("09-renommer")
+        compose.onNodeWithText("Annuler").performClick()
+        compose.mainClock.advanceTimeBy(600)
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithContentDescription("schema.png").performClick()
+        snap("10-image")
+        model.open(Screen.Board("Projets/Schéma.mnemo-board"))
+        snap("11-whiteboard")
+        model.open(Screen.Dashboard)
+        snap("12-tableau-de-bord")
+        model.open(Screen.Settings)
+        snap("13-parametres")
     }
 }

@@ -239,8 +239,7 @@ class LocalDb(context: Context, name: String = "mnemo.db") :
                     val content = c.getString(2)
                     val i = content.indexOf(q, ignoreCase = true)
                     if (i < 0 && !path.contains(q, ignoreCase = true)) continue
-                    val snippet = if (i < 0) "" else
-                        content.substring((i - 40).coerceAtLeast(0), (i + 80).coerceAtMost(content.length)).replace('\n', ' ')
+                    val snippet = if (i < 0) "" else searchSnippet(content, i)
                     add(SearchHit(c.getString(0), path, snippet))
                 }
             }

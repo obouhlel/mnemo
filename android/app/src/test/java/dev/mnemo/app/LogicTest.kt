@@ -228,4 +228,14 @@ class LogicTest {
         assertEquals(listOf(Pt(0f, 0f), Pt(100f, 0f)), simplify(line, 0.5f))
         assertEquals(3, simplify(listOf(Pt(0f, 0f), Pt(5f, 0.1f), Pt(10f, 0f), Pt(10f, 10f)), 0.5f).size)
     }
+
+    @Test
+    fun searchSnippets() {
+        val c = "# Plan\n\n![[schema.png]]\n\nÉtapes suivantes : *Android*."
+        val s = dev.mnemo.app.data.searchSnippet(c, c.lowercase().indexOf("android"))
+        org.junit.Assert.assertEquals("… ![[schema.png]]  Étapes suivantes : *Android*.", s)
+        val long = "mot ".repeat(30) + "cible " + "fin ".repeat(40)
+        val t = dev.mnemo.app.data.searchSnippet(long, long.indexOf("cible"))
+        org.junit.Assert.assertTrue(t, t.startsWith("… mot") && t.endsWith(" …") && "cible" in t)
+    }
 }
