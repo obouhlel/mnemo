@@ -294,6 +294,17 @@ impl MnemoApp {
 
     pub(super) fn editor(&mut self, ui: &mut egui::Ui, note_id: Uuid, now: f64) {
         let id = editor_id(note_id);
+        // texte remplacé depuis la dernière frame (autre appareil, fusion) : le curseur reste sur sa ligne
+        if let Some((nid, old)) = self.cursor_fix.take()
+            && nid == note_id
+            && let Some(new) = self.open.as_ref().map(|n| n.content.clone())
+            && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id)
+            && let Some(r) = state.cursor.char_range()
+        {
+            let fix = |c: CCursor| CCursor::new(merge::remap_cursor(&old, &new, c.index.into()));
+            state.cursor.set_char_range(Some(CCursorRange::two(fix(r.secondary), fix(r.primary))));
+            state.store(ui.ctx(), id);
+        }
         // Autocomplete keyboard handling must run before the TextEdit consumes the keys
         let mut accept: Option<String> = None;
         if let Some(ac) = &mut self.autocomplete

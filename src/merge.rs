@@ -102,6 +102,43 @@ pub fn assemble(blocks: &[Block]) -> Option<String> {
     Some(out)
 }
 
+/// Position du curseur (en caractères) après le remplacement de `old` par `new` (texte arrivé d'un autre
+/// appareil, fusion) : le curseur reste sur la même ligne, à la même colonne, même si des lignes ont été
+/// ajoutées ou retirées au-dessus. Si sa ligne a elle-même été remplacée, il va sur la ligne qui la remplace.
+pub fn remap_cursor(old: &str, new: &str, pos: usize) -> usize {
+    // ligne et colonne du curseur dans l'ancien texte
+    let before: String = old.chars().take(pos).collect();
+    let line = before.matches('\n').count();
+    let col = before.chars().rev().take_while(|c| *c != '\n').count();
+    let diff = TextDiff::from_lines(old, new);
+    let mut new_line = new.split('\n').count().saturating_sub(1);
+    for op in diff.ops() {
+        let (o, n) = (op.old_range(), op.new_range());
+        if line < o.start {
+            break;
+        }
+        if o.contains(&line) || (o.is_empty() && o.start == line) {
+            new_line = match op.tag() {
+                similar::DiffTag::Equal => n.start + (line - o.start),
+                _ if n.is_empty() => n.start,
+                _ => (n.start + (line - o.start)).min(n.end - 1),
+            };
+            if o.contains(&line) {
+                break;
+            }
+        }
+    }
+    let mut idx = 0;
+    for (i, l) in new.split('\n').enumerate() {
+        let len = l.chars().count();
+        if i == new_line {
+            return idx + col.min(len);
+        }
+        idx += len + 1;
+    }
+    new.chars().count()
+}
+
 pub fn conflict_count(blocks: &[Block]) -> (usize, usize) {
     let total = blocks.iter().filter(|b| matches!(b, Block::Conflict { .. })).count();
     let open = blocks.iter().filter(|b| matches!(b, Block::Conflict { choice: Choice::Unresolved, .. })).count();
@@ -188,6 +225,23 @@ mod tests {
             }
         }
         assert_eq!(assemble(&blocks).unwrap(), "# J\n- a local\n- a\n- distant");
+    }
+
+    #[test]
+    fn cursor_follows_its_line() {
+        let old = "un\ndeux\ntrois";
+        let pos = "un\ndeux\ntro".chars().count();
+        // une ligne allongée et une ligne ajoutée au-dessus : même ligne, même colonne
+        let new = "un et demi\nnouvelle\ndeux\ntrois";
+        assert_eq!(remap_cursor(old, new, pos), "un et demi\nnouvelle\ndeux\ntro".chars().count());
+        // lignes retirées au-dessus
+        assert_eq!(remap_cursor(old, "trois", pos), 3);
+        // rien n'a changé avant le curseur
+        assert_eq!(remap_cursor(old, "un\ndeux\ntrois\nquatre", pos), pos);
+        // la ligne du curseur est remplacée : il reste dessus, colonne bornée
+        assert_eq!(remap_cursor("a\nbcdef", "a\nXY", 6), 4);
+        assert_eq!(remap_cursor("", "abc", 0), 0);
+        assert_eq!(remap_cursor("é\nà", "x\né\nà", 3), 5);
     }
 
     #[test]

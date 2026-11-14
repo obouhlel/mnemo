@@ -42,7 +42,7 @@ run: db ## Lance Mnemo en release, connecté à la base locale
 	MNEMO_DATABASE_URL="$(DB_URL)" cargo run --release
 
 .PHONY: test
-test: ## Lance les tests
+test: ## Lance les tests (avec MNEMO_TEST_PG=postgres://… : aussi la synchronisation à deux appareils)
 	cargo test
 
 .PHONY: fmt

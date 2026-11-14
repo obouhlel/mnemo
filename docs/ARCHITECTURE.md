@@ -117,6 +117,12 @@ Dans l'ordre :
 3. **Autres appareils** : `listen_loop` reçoit le NOTIFY (`Msg::Event`) ; l'interface demande aussitôt un passage
    (`Cmd::VaultScan`) qui écrit le fichier. Leur stockage local le voit (≤ 1 s) et envoie `Msg::LocalEvent` :
    la note ouverte est rechargée (`apply_refresh`), fusionnée si elle était en cours de modification.
+   Si le fichier et la base ont changé tous les deux depuis le dernier passage (deux appareils écrivent en même
+   temps, ou l'un était hors ligne), `vault_sync` fusionne à 3 voies avec le texte du dernier passage
+   (`.mnemo/base/<id>.md`) ; mêmes lignes changées : la base l'emporte et le texte local va dans une note
+   « (conflit disque) ». L'état du dernier passage (`.mnemo/sync.json`) n'avance qu'après la validation de la
+   transaction et survit au redémarrage. Le stockage local relit le fichier avant chaque enregistrement et les
+   deux threads prennent `shared.io_lock` pour « vérifier puis écrire » : aucun n'écrase le texte de l'autre.
 4. **Perte de connexion** : le worker passe hors ligne (`Msg::ConnectionFailed`, une seule alerte), réessaie toutes
    les 30 s et, au retour, recompare tout le dossier avec la base.
 

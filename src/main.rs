@@ -15,6 +15,8 @@ mod merge;
 mod model;
 mod plugins;
 mod sketch;
+#[cfg(test)]
+mod sync_tests;
 mod theme;
 
 fn main() -> eframe::Result {

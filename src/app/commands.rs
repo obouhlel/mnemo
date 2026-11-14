@@ -212,7 +212,7 @@ impl MnemoApp {
                 self.cfg.save();
             }
             CoreCmd::NewTab => {
-                self.flush_save();
+                self.leave_note();
                 self.tabs.push(Tab::default());
                 self.active_tab = self.tabs.len() - 1;
                 self.open = None;

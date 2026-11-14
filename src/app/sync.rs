@@ -148,6 +148,9 @@ impl MnemoApp {
                 Msg::Loaded { note, purpose: LoadPurpose::Refresh } => self.apply_refresh(note, now),
                 Msg::Created { .. } => {}
                 Msg::Saved(note) => {
+                    if self.sent_save.as_ref().is_some_and(|s| s.0 == note.id) {
+                        self.sent_save = None;
+                    }
                     if let Some(n) = self.open.as_mut().filter(|n| n.id == note.id) {
                         n.version = note.version;
                         if let Some(s) = n.saving.take() {
@@ -162,6 +165,15 @@ impl MnemoApp {
                     }
                 }
                 Msg::Conflict(current) => {
+                    if !self.open.as_ref().is_some_and(|n| n.id == current.id) {
+                        // enregistrement refusé alors que la note n'est plus ouverte : le texte n'est pas perdu
+                        if let Some((_, path, content)) = self.sent_save.take_if(|s| s.0 == current.id)
+                            && content != current.content
+                        {
+                            self.rescue_copy(&path, content);
+                        }
+                        continue;
+                    }
                     let mut diverged = None;
                     if let Some(n) = self.open.as_mut().filter(|n| n.id == current.id) {
                         n.saving = None;
@@ -241,7 +253,15 @@ impl MnemoApp {
                 Msg::GithubUser(r) => self.dash.github_user = Some(r),
                 Msg::GithubRepos(r) => self.dash.repos = Some(r),
                 Msg::VaultSynced { stats, first } => self.on_vault_synced(stats, first, now),
-                Msg::Error(e) => self.notice(e, true, now),
+                Msg::Error(e) => {
+                    // un enregistrement qui a échoué (fichier verrouillé, disque plein) est réessayé plus tard,
+                    // au lieu de rester « en cours » pour toujours
+                    if let Some(n) = self.open.as_mut().filter(|n| n.saving.is_some()) {
+                        n.saving = None;
+                        n.last_edit = Some(now + 5.0);
+                    }
+                    self.notice(e, true, now);
+                }
             }
         }
     }
@@ -266,6 +286,11 @@ impl MnemoApp {
                         if !mine {
                             let p = n.path.clone();
                             let id = n.id;
+                            // texte pas encore enregistré : gardé dans une note à part
+                            if n.dirty() {
+                                let content = n.content.clone();
+                                self.rescue_copy(&p, content);
+                            }
                             self.open = None;
                             self.forget_note(id);
                             self.notice(format!("« {p} » a été supprimée depuis un autre appareil"), true, now);
