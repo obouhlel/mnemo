@@ -400,6 +400,7 @@ impl<'a> Resolver<'a> {
 
 /// Resolves every `var(--x[, fallback])` in `value`. Les cycles et les valeurs démesurées (plus de
 /// `MAX_RESOLVED` octets ou de `MAX_EXPANSIONS` variables développées) donnent `None`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn resolve(value: &str, vars: &HashMap<String, String>) -> Option<String> {
     Resolver { vars, stack: vec![], expansions: 0, cycle: None, exhausted: false }.value(value)
 }
