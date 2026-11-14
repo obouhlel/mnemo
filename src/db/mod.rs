@@ -20,13 +20,10 @@ use uuid::Uuid;
 mod board;
 mod connection;
 mod github_sync;
-mod notes;
 mod vault_sync;
 
 use board::*;
 use connection::*;
-pub use notes::rewrite_links;
-use notes::*;
 pub use vault_sync::VaultStats;
 pub(crate) use vault_sync::{DiskFile, note_file, walk, walk_files};
 
@@ -504,8 +501,22 @@ impl Worker {
             | Cmd::UnlinkReport { .. }
             | Cmd::CreateReport { .. } => self.board_cmd(cmd, &em).await,
             Cmd::GithubPublish(_) | Cmd::GithubSync(_) => self.github_cmd(cmd, &em).await,
-            cmd => self.note_cmd(cmd, &em).await,
+            // notes, dossiers, recherche… : traités par le stockage local (`Cmd::is_local`), jamais envoyés ici
+            _ => Ok(()),
         }
+    }
+}
+
+pub(super) const NOTE_COLS: &str = "id, path, content, version, updated_by, updated_at";
+
+pub(super) fn note_from(r: &Row) -> Note {
+    Note {
+        id: r.get(0),
+        path: r.get(1),
+        content: r.get(2),
+        version: r.get(3),
+        updated_by: r.get(4),
+        updated_at: r.get(5),
     }
 }
 

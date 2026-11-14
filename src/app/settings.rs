@@ -142,8 +142,8 @@ impl MnemoApp {
                     ui.add(
                         egui::Label::new(
                             RichText::new(
-                                "Ajoutez ?sslmode=require pour un serveur distant (Neon, Supabase…). \
-                                 MNEMO_DATABASE_URL a priorité sur ce réglage.",
+                                "Serveur distant (Neon, Supabase…) : ajoutez ?sslmode=require, sinon la connexion et le mot de \
+                                 passe ne sont pas chiffrés. MNEMO_DATABASE_URL a priorité sur ce réglage.",
                             )
                             .size(12.5)
                             .color(p.muted),

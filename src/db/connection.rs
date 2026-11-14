@@ -37,6 +37,19 @@ pub(super) fn wants_tls(url: &str) -> bool {
     ["sslmode=require", "sslmode=verify-ca", "sslmode=verify-full"].iter().any(|m| u.contains(m))
 }
 
+/// Le pilote ne connaît que `disable`, `prefer` et `require`. `verify-ca` et `verify-full` (courants dans les
+/// adresses des bases hébergées) deviennent `require` : avec `tls()` ci-dessous, le certificat et le nom du
+/// serveur sont de toute façon toujours vérifiés.
+pub(super) fn pg_url(url: &str) -> String {
+    let mut out = url.to_string();
+    for mode in ["sslmode=verify-full", "sslmode=verify-ca"] {
+        while let Some(i) = out.to_lowercase().find(mode) {
+            out.replace_range(i..i + mode.len(), "sslmode=require");
+        }
+    }
+    out
+}
+
 pub(super) fn tls() -> tokio_postgres_rustls::MakeRustlsConnect {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -87,7 +100,7 @@ pub(super) async fn open_client(url: &str) -> Res<Client> {
 }
 
 pub(super) async fn connect_with(url: &str, events: Option<EventSink>) -> Res<(Client, tokio::task::JoinHandle<()>)> {
-    let mut config: tokio_postgres::Config = url.parse()?;
+    let mut config: tokio_postgres::Config = pg_url(url).parse()?;
     config.connect_timeout(Duration::from_secs(10));
     if wants_tls(url) {
         let (c, conn) = config.connect(tls()).await?;
@@ -125,5 +138,19 @@ pub(super) async fn listen_loop(url: String, out: std::sync::mpsc::Sender<Msg>, 
         let delay = Duration::from_millis((500u64 << attempt.min(6)).min(30_000));
         attempt += 1;
         tokio::time::sleep(delay).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_modes_are_accepted() {
+        let url = pg_url("postgres://u:p@h/db?sslmode=verify-full&application_name=x");
+        assert_eq!(url, "postgres://u:p@h/db?sslmode=require&application_name=x");
+        assert!(url.parse::<tokio_postgres::Config>().is_ok());
+        assert!(wants_tls("postgres://h/db?sslmode=verify-full"));
+        assert!(pg_url("host=h sslmode=VERIFY-CA").parse::<tokio_postgres::Config>().is_ok());
     }
 }

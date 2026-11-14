@@ -125,6 +125,14 @@ pub struct MnemoApp {
     /// dossier des notes créé à ce lancement (note de bienvenue)
     fresh_vault: bool,
     vault_last: Option<(crate::db::VaultStats, chrono::DateTime<chrono::Local>)>,
+    /// le texte de la note ouverte vient d'être remplacé (autre appareil, fusion) : note et texte d'avant,
+    /// pour remettre le curseur sur sa ligne
+    cursor_fix: Option<(Uuid, String)>,
+    /// dernier enregistrement envoyé (note, chemin, texte) : s'il est refusé alors que la note n'est plus
+    /// ouverte, ce texte est gardé dans une note à part
+    sent_save: Option<(Uuid, String, String)>,
+    /// heure de la frame en cours
+    now: f64,
 }
 
 /// Lowercase and strip French accents, for fuzzy matching ("theme" finds "Thème").
@@ -227,8 +235,14 @@ impl MnemoApp {
             local_ready: false,
             fresh_vault: false,
             vault_last: None,
+            cursor_fix: None,
+            sent_save: None,
+            now: 0.0,
             cfg,
         };
+        if let Some(e) = app.cfg.load_error.take() {
+            app.notices.push((e, 20.0, true));
+        }
         app.css.obsidian_input = app.cfg.obsidian_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         app.vault_input = app.cfg.vault_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         app.install_example_snippet();
@@ -307,6 +321,7 @@ impl eframe::App for MnemoApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
+        self.now = now;
         self.watch_css(&ctx, now);
         self.apply_theme(&ctx);
         self.handle_messages(now);
@@ -438,16 +453,40 @@ impl eframe::App for MnemoApp {
                 }
             }
         }
-        // Last chance to persist unsaved text
-        self.flush_save();
-        if self.open.as_ref().is_some_and(|n| n.saving.is_some()) {
+        // Last chance to persist unsaved text (two rounds: text typed while a save was already in flight)
+        for _ in 0..2 {
+            self.flush_save();
+            if !self.open.as_ref().is_some_and(|n| n.saving.is_some()) {
+                break;
+            }
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            let mut rejected = false;
             while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
                 match self.rx.recv_timeout(left) {
-                    Ok(Msg::Saved(_)) | Ok(Msg::Conflict(_)) | Ok(Msg::Error(_)) => break,
+                    Ok(Msg::Saved(note)) => {
+                        if let Some(n) = self.open.as_mut().filter(|n| n.id == note.id) {
+                            n.version = note.version;
+                            n.saved = n.saving.take().unwrap_or_default();
+                        }
+                        break;
+                    }
+                    Ok(Msg::Conflict(_)) | Ok(Msg::Error(_)) => {
+                        rejected = true;
+                        break;
+                    }
                     Ok(_) => {}
                     Err(_) => break,
                 }
+            }
+            if rejected {
+                // the file changed on disk meanwhile, or could not be written: keep the text in a separate note
+                if let Some(n) = &self.open {
+                    let path = format!("{} (conflit {})", n.path, chrono::Local::now().format("%Y-%m-%d %H-%M-%S"));
+                    self.db.send(Cmd::Create { path, content: n.content.clone(), open: false, if_missing: false });
+                    let _ = self.rx.recv_timeout(std::time::Duration::from_secs(2));
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                break;
             }
         }
         self.cfg.save();

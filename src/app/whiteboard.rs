@@ -261,7 +261,7 @@ pub(super) fn paint_preview(painter: &egui::Painter, sketch: &Sketch, rect: egui
 impl MnemoApp {
     /// Ouvre un whiteboard dans un onglet (réutilise l'onglet s'il est déjà ouvert).
     pub(super) fn open_whiteboard(&mut self, rel: &str) {
-        self.flush_save();
+        self.leave_note();
         match self.tabs.iter().position(|t| t.board.as_deref() == Some(rel)) {
             Some(i) => self.active_tab = i,
             None => {

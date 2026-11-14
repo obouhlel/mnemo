@@ -120,7 +120,7 @@ fn progress_bar(ui: &mut egui::Ui, p: &theme::Palette, done: usize, total: usize
 
 impl MnemoApp {
     pub(super) fn open_dashboard(&mut self, select: Option<Uuid>) {
-        self.flush_save();
+        self.leave_note();
         match self.tabs.iter().position(|t| t.dashboard) {
             Some(i) => self.active_tab = i,
             None => {

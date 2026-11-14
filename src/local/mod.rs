@@ -175,6 +175,27 @@ impl Store {
         Ok(())
     }
 
+    /// Relit le fichier d'une note s'il a changé depuis la dernière comparaison avec le disque (autre éditeur,
+    /// synchronisation) : l'index, puis la version, suivent tout de suite au lieu d'attendre le prochain passage.
+    fn refresh_from_disk(&mut self, id: Uuid) {
+        let Some(root) = self.root.clone() else { return };
+        let Some(n) = self.notes.get_mut(&id) else { return };
+        let file = crate::db::note_file(&root, &n.path);
+        let m = mtime(&file);
+        if m == n.mtime {
+            return;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else { return };
+        n.mtime = m;
+        if text != n.content {
+            n.content = text;
+            n.version += 1;
+            n.updated_at = chrono::Utc::now();
+            let (path, v) = (n.path.clone(), n.version);
+            self.event("note", "update", Some(id), &path, Some(v), false);
+        }
+    }
+
     fn set_root(&mut self, root: PathBuf) {
         let _ = std::fs::create_dir_all(&root);
         self.shared.ids.lock().expect("ids").load(&root);
@@ -393,6 +414,16 @@ impl Store {
                 }
             }
             Cmd::Create { path, content, open, if_missing } => {
+                if self.by_path(&path).is_none()
+                    && let Err(e) = portable_name(&path)
+                {
+                    self.error(e);
+                    return;
+                }
+                // fichier créé à côté depuis moins d'une seconde : on l'indexe au lieu de l'écraser
+                if self.by_path(&path).is_none() && self.file(&path).is_some_and(|f| f.exists()) {
+                    self.rescan();
+                }
                 if let Some(id) = self.by_path(&path) {
                     if if_missing {
                         if open {
@@ -415,6 +446,11 @@ impl Store {
                 }
             }
             Cmd::Save { id, content, base_version } => {
+                // le fichier a pu changer depuis le dernier passage (autre éditeur, synchronisation) : on le relit
+                // avant de comparer les versions, sinon l'enregistrement écraserait ce changement sans le voir
+                let shared = self.shared.clone();
+                let _io = shared.io_lock.lock().expect("io lock");
+                self.refresh_from_disk(id);
                 let Some(cur) = self.note(id) else {
                     self.error("La note a été supprimée entre-temps");
                     return;
@@ -449,6 +485,10 @@ impl Store {
                 self.emit(Msg::Deleted(id));
             }
             Cmd::CreateFolder(path) => {
+                if let Err(e) = portable_name(&path) {
+                    self.error(e);
+                    return;
+                }
                 let root = self.root.clone().expect("root");
                 match std::fs::create_dir_all(root.join(&path)) {
                     Ok(()) => {
@@ -587,8 +627,14 @@ impl Store {
     }
 
     fn rename_note(&mut self, id: Uuid, new_path: String) {
+        // les autres notes sont réécrites (liens) à partir de l'index : il doit refléter le disque
+        self.rescan();
         let Some(old) = self.notes.get(&id).map(|n| n.path.clone()) else { return };
         if old == new_path {
+            return;
+        }
+        if let Err(e) = portable_name(&new_path) {
+            self.error(e);
             return;
         }
         if self.by_path(&new_path).is_some_and(|other| other != id) {
@@ -643,6 +689,11 @@ impl Store {
             self.error("Impossible de déplacer un dossier dans lui-même");
             return;
         }
+        if let Err(e) = portable_name(&to) {
+            self.error(e);
+            return;
+        }
+        self.rescan(); // même raison que pour le renommage d'une note
         let root = self.root.clone().expect("root");
         if root.join(&to).exists() {
             self.error(format!("« {to} » existe déjà"));
@@ -657,11 +708,15 @@ impl Store {
             self.error(format!("Renommage du dossier impossible : {e}"));
             return;
         }
+        // ce qui suit le nom du dossier, compté en caractères : une majuscule et sa minuscule n'ont pas toujours
+        // le même nombre d'octets (« İ »)
+        let skip = from.chars().count();
+        let tail = |p: &str| p.chars().skip(skip).collect::<String>();
         let moved: Vec<(Uuid, String, String)> = self
             .notes
             .iter()
             .filter(|(_, n)| n.path.to_lowercase().starts_with(&format!("{f}/")))
-            .map(|(id, n)| (*id, n.path.clone(), format!("{to}{}", &n.path[from.len()..])))
+            .map(|(id, n)| (*id, n.path.clone(), format!("{to}{}", tail(&n.path))))
             .collect();
         for (id, _, np) in &moved {
             let file = crate::db::note_file(&root, np);
@@ -675,7 +730,7 @@ impl Store {
             .iter()
             .map(|d| {
                 let l = d.to_lowercase();
-                if l == f || l.starts_with(&format!("{f}/")) { format!("{to}{}", &d[from.len()..]) } else { d.clone() }
+                if l == f || l.starts_with(&format!("{f}/")) { format!("{to}{}", tail(d)) } else { d.clone() }
             })
             .collect();
         self.move_icons(&from, Some(&to));

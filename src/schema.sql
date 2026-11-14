@@ -29,6 +29,13 @@ CREATE TABLE IF NOT EXISTS links (
 );
 CREATE INDEX IF NOT EXISTS links_target_idx ON links (lower(target));
 
+-- Identité de la base : chaque appareil note avec quelle base son dossier a été synchronisé (.mnemo/sync.json)
+CREATE TABLE IF NOT EXISTS mnemo_meta (
+  key   text PRIMARY KEY,
+  value text NOT NULL
+);
+INSERT INTO mnemo_meta (key, value) VALUES ('db_id', gen_random_uuid()::text) ON CONFLICT (key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS plugin_state (
   id       text PRIMARY KEY,
   enabled  boolean NOT NULL DEFAULT false,

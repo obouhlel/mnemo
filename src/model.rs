@@ -100,7 +100,38 @@ pub fn normalize_path(raw: &str) -> Result<String, String> {
     if p.split('/').any(|s| s == "." || s == "..") {
         return Err("Segment de chemin invalide".into());
     }
+    // un nom qui commence par un point est un fichier caché : il n'apparaîtrait pas dans l'explorateur
+    if p.split('/').any(|s| s.starts_with('.')) {
+        return Err("Un nom ne peut pas commencer par un point".into());
+    }
+    // limite des systèmes de fichiers : 255 octets par nom (avec « .md »)
+    if p.split('/').any(|s| s.len() > 250) {
+        return Err("Nom trop long".into());
+    }
     Ok(p)
+}
+
+/// Vérifie qu'un nouveau nom existe sur tous les systèmes (les notes voyagent entre Linux, macOS, Windows et
+/// Android) : pas de `: * ? " < >`, pas de point ou d'espace final, pas de nom réservé par Windows.
+/// Les fichiers déjà présents dans le dossier ne sont pas concernés : ils restent lisibles tels quels.
+pub fn portable_name(path: &str) -> Result<(), String> {
+    for seg in path.split('/') {
+        if seg.chars().any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>')) {
+            return Err("Caractères interdits dans un nom : : * ? \" < >".into());
+        }
+        if seg.ends_with('.') || seg.ends_with(' ') {
+            return Err("Un nom ne peut pas finir par un point ou un espace".into());
+        }
+        let stem = seg.split('.').next().unwrap_or(seg).to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (stem.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.ends_with(|c: char| c.is_ascii_digit() && c != '0'));
+        if reserved {
+            return Err(format!("« {seg} » est un nom réservé par Windows"));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -113,6 +144,13 @@ mod tests {
         assert!(normalize_path("  / ").is_err());
         assert!(normalize_path("x[y]").is_err());
         assert!(normalize_path("a/../b").is_err());
+        assert!(normalize_path(".brouillon").is_err() && normalize_path("a/.cache/b").is_err());
+        assert!(normalize_path("v1.2 notes").is_ok());
+        assert!(portable_name("Réunions/Point d'étape v1.2").is_ok());
+        for bad in ["Quoi ?", "a:b", "Projets./x", "fin ", "CON", "dir/nul.txt", "COM1", "a*b", "<x>"] {
+            assert!(portable_name(bad).is_err(), "{bad}");
+        }
+        assert!(portable_name("COM0").is_ok() && portable_name("Console").is_ok());
         assert_eq!(basename("a/b/c"), "c");
         assert_eq!(parent("a/b/c"), Some("a/b"));
         assert_eq!(parent("c"), None);
