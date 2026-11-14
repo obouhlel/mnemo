@@ -94,8 +94,7 @@ impl MnemoApp {
                         icons: true,
                         files: true,
                     };
-                    // la base a pu changer pendant la coupure : comparaison immédiate avec le dossier
-                    self.db.send(Cmd::VaultScan);
+                    // la comparaison dossier ↔ base est relancée par le worker lui-même
                 }
                 Msg::Notes(notes) => {
                     self.notes = notes;
@@ -215,13 +214,11 @@ impl MnemoApp {
                     self.plugin_changed();
                 }
                 // événements de la base (autres appareils) : notes, dossiers, icônes et plugins passent par le
-                // dossier local (synchronisation immédiate) ; le tableau de bord est lu directement dans la base
+                // dossier local (le worker lance lui-même le passage de synchronisation, même fenêtre cachée) ;
+                // le tableau de bord est lu directement dans la base
                 Msg::Event(ev) => {
-                    let mine = ev.updated_by.as_deref().is_some_and(|u| u.starts_with(self.client_id.as_str()));
-                    match ev.kind.as_str() {
-                        "board" => self.handle_event(ev, now),
-                        _ if !mine => self.db.send(Cmd::VaultScan),
-                        _ => {}
+                    if ev.kind == "board" {
+                        self.handle_event(ev, now);
                     }
                 }
                 Msg::Board(b) => {

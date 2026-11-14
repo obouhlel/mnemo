@@ -47,6 +47,10 @@ egui_commonmark_backend = { path = "vendor/egui_commonmark_backend" }
 [build-dependencies]
 winresource = "0.1.34"
 
+[dev-dependencies]
+# horloge virtuelle (`start_paused`) pour tester la cadence des passages de synchronisation
+tokio = { version = "1.54.1", features = ["test-util"] }
+
 # Debian / Ubuntu package (cargo deb)
 [package.metadata.deb]
 name = "mnemo"

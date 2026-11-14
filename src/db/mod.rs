@@ -35,6 +35,9 @@ pub fn walk_markdown(root: &std::path::Path) -> (Vec<(String, std::path::PathBuf
 
 const SCHEMA: &str = include_str!("../schema.sql");
 
+/// Intervalle entre deux comparaisons dossier ↔ base faites par le worker.
+const SCAN_EVERY: Duration = Duration::from_secs(2);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadPurpose {
     Open,
@@ -289,6 +292,8 @@ pub fn spawn(
     shared: crate::local::shared::SharedState,
 ) -> DbHandle {
     let (tx, rx) = mpsc::unbounded_channel();
+    // NOTIFY d'un autre appareil → passage de synchronisation, sans attendre l'interface
+    let (wake_tx, wake_rx) = mpsc::unbounded_channel();
     let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(notify);
     let (local_tx, local_rx) = std::sync::mpsc::channel();
     crate::local::spawn(client_id.clone(), out.clone(), notify.clone(), shared.clone(), local_rx);
@@ -313,8 +318,10 @@ pub fn spawn(
                     shared,
                     want_url: String::new(),
                     last_try: None,
+                    wake: wake_tx,
+                    scanned: false,
                 }
-                .run(rx),
+                .run(rx, wake_rx),
             );
         })
         .expect("spawn db thread");
@@ -334,6 +341,31 @@ struct Worker {
     /// base demandée par l'utilisateur (vide : local uniquement) ; le worker s'y reconnecte tout seul
     want_url: String,
     last_try: Option<std::time::Instant>,
+    /// donné à `listen_loop` : un NOTIFY venu d'un autre appareil réveille la boucle du worker
+    wake: mpsc::UnboundedSender<()>,
+    /// un passage vient d'avoir lieu : le prochain passage périodique repart de zéro
+    scanned: bool,
+}
+
+/// Cadence des passages périodiques. Le worker traite tout à la suite (jamais deux passages à la fois) ;
+/// après chaque passage, `done` repousse le suivant d'un intervalle entier : un passage plus long que
+/// l'intervalle fait sauter le tick manqué au lieu d'enchaîner aussitôt un nouveau passage.
+struct Pacer(tokio::time::Interval);
+
+impl Pacer {
+    fn new(period: Duration) -> Self {
+        let mut tick = tokio::time::interval(period);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Pacer(tick)
+    }
+
+    async fn tick(&mut self) {
+        self.0.tick().await;
+    }
+
+    fn done(&mut self) {
+        self.0.reset();
+    }
 }
 
 type Res<T> = Result<T, tokio_postgres::Error>;
@@ -344,20 +376,34 @@ impl Worker {
         (self.notify)();
     }
 
-    /// Boucle du worker : les commandes de l'interface, et toutes les 2 s, sans dépendre de l'affichage
-    /// (fenêtre réduite ou cachée), la synchronisation dossier ↔ base et la reconnexion si elle est coupée.
-    async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Cmd>) {
-        let mut tick = tokio::time::interval(Duration::from_secs(2));
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    /// Boucle du worker, indépendante de l'affichage (fenêtre réduite, cachée ou sur un autre espace de
+    /// travail) : les commandes de l'interface, les NOTIFY des autres appareils (passage immédiat), et
+    /// toutes les 2 s la synchronisation dossier ↔ base et la reconnexion si elle est coupée.
+    async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Cmd>, mut wake: mpsc::UnboundedReceiver<()>) {
+        let mut pacer = Pacer::new(SCAN_EVERY);
         loop {
             tokio::select! {
                 cmd = rx.recv() => match cmd {
                     Some(cmd) => self.dispatch(cmd).await,
                     None => break,
                 },
-                _ = tick.tick() => self.tick().await,
+                Some(()) = wake.recv() => {
+                    while wake.try_recv().is_ok() {} // une rafale de NOTIFY → un seul passage
+                    if self.can_scan() {
+                        self.scan_or_go_offline().await;
+                    }
+                }
+                _ = pacer.tick() => self.tick().await,
+            }
+            if std::mem::take(&mut self.scanned) {
+                pacer.done();
             }
         }
+    }
+
+    /// Un coffre est lié et la connexion de requêtes est ouverte.
+    fn can_scan(&self) -> bool {
+        self.vault.is_some() && self.client.as_ref().is_some_and(|c| !c.is_closed())
     }
 
     /// Travail périodique : reconnexion (toutes les 30 s) puis comparaison dossier ↔ base.
@@ -381,7 +427,9 @@ impl Worker {
     /// Passage de synchronisation ; une erreur de connexion fait passer en hors ligne (sans alerte répétée).
     async fn scan_or_go_offline(&mut self) {
         let em = Emitter { out: self.out.clone(), notify: self.notify.clone() };
-        if let Err(e) = self.vault_scan(&em).await {
+        let r = self.vault_scan(&em).await;
+        self.scanned = true;
+        if let Err(e) = r {
             if self.client.as_ref().is_none_or(|c| c.is_closed()) {
                 self.client = None;
                 self.last_try = Some(std::time::Instant::now());
@@ -419,8 +467,8 @@ impl Worker {
             return;
         }
         if let Cmd::VaultScan = cmd {
-            // demandé par l'interface (changement venu d'un autre appareil) : seulement si la base répond
-            if self.vault.is_some() && self.client.as_ref().is_some_and(|c| !c.is_closed()) {
+            // passage immédiat demandé par l'interface (coffre lié, bouton) : seulement si la base répond
+            if self.can_scan() {
                 self.scan_or_go_offline().await;
             }
             return;
@@ -555,5 +603,32 @@ pub(super) fn pg_err(e: &tokio_postgres::Error) -> String {
             }
             s
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::Instant;
+
+    #[tokio::test(start_paused = true)]
+    async fn pacer_ticks_every_period() {
+        let mut p = Pacer::new(SCAN_EVERY);
+        p.tick().await; // premier tick immédiat
+        let t = Instant::now();
+        p.tick().await;
+        p.tick().await;
+        assert_eq!(t.elapsed(), SCAN_EVERY * 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn long_scan_skips_the_missed_tick() {
+        let mut p = Pacer::new(SCAN_EVERY);
+        p.tick().await;
+        tokio::time::sleep(SCAN_EVERY * 3 + Duration::from_millis(500)).await; // passage de 6,5 s
+        p.done();
+        let t = Instant::now();
+        p.tick().await;
+        assert_eq!(t.elapsed(), SCAN_EVERY, "pas de nouveau passage enchaîné aussitôt");
     }
 }
