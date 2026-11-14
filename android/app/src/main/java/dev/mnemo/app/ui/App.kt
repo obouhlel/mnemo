@@ -37,7 +37,7 @@ fun MnemoApp(model: AppModel) {
         }
     }
     // premier lancement : il faut une base pour récupérer les notes
-    if (model.dbUrl().isBlank() && model.notes.collectAsState().value.isEmpty() && screen == Screen.List) {
+    if (model.url.collectAsState().value.isBlank() && model.notes.collectAsState().value.isEmpty() && screen == Screen.List) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             SettingsScreen(model, firstRun = true, onBack = null)
         }

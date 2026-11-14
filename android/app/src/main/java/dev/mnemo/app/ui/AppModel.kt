@@ -46,6 +46,10 @@ sealed class Screen {
 class AppModel @JvmOverloads constructor(app: Application, dbName: String = "mnemo.db") : AndroidViewModel(app) {
     val local = LocalDb(app, dbName)
     private val prefs = app.getSharedPreferences("mnemo", Context.MODE_PRIVATE)
+    /** adresse de la base (vide : notes seulement sur l'appareil), observable par les écrans */
+    private val _url = MutableStateFlow(prefs.getString("db_url", "") ?: "")
+    val url: StateFlow<String> = _url.asStateFlow()
+
     private val engine = SyncEngine(local, clientId())
     private val syncLock = Mutex()
 
@@ -83,7 +87,7 @@ class AppModel @JvmOverloads constructor(app: Application, dbName: String = "mne
         return id
     }
 
-    fun dbUrl(): String = prefs.getString("db_url", "") ?: ""
+    fun dbUrl(): String = _url.value
 
     fun config(): DbConfig? = parseDbUrl(dbUrl())
 
@@ -169,6 +173,7 @@ class AppModel @JvmOverloads constructor(app: Application, dbName: String = "mne
             if (err == null) {
                 if (url.trim() != dbUrl()) withContext(Dispatchers.IO) { local.reset() }
                 prefs.edit().putString("db_url", url.trim()).apply()
+                _url.value = url.trim()
                 reload()
                 stopLoop()
                 startLoop()
@@ -180,6 +185,7 @@ class AppModel @JvmOverloads constructor(app: Application, dbName: String = "mne
     fun disconnect() {
         stopLoop()
         prefs.edit().remove("db_url").apply()
+        _url.value = ""
         _sync.value = SyncState.LocalOnly
     }
 
