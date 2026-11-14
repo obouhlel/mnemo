@@ -463,9 +463,11 @@ impl MnemoApp {
     /// tous, tout de suite, texte en cours de saisie compris, et l'écriture est faite avant de rendre la main.
     pub(super) fn tick_whiteboards(&mut self, now: f64, force: bool) {
         let Some(root) = self.cfg.vault_dir.clone() else { return };
+        let shown = self.tabs.get(self.active_tab).and_then(|t| t.board.clone());
         for (rel, b) in self.boards.iter_mut() {
             let abs = root.join(rel);
-            if force {
+            // onglet caché (ou fermeture) : aucun geste ne peut continuer, le texte en cours de saisie est validé
+            if force || shown.as_deref() != Some(rel.as_str()) {
                 b.commit_text(now);
                 b.after_replace();
             }
