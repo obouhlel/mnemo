@@ -3,14 +3,72 @@
 use super::*;
 
 impl MnemoApp {
+    /// Enregistre le titre et la description en cours de saisie dans le panneau du ticket, s'ils ont été
+    /// modifiés ici depuis leur dernière lecture ou leur dernier envoi. `close` : le panneau n'est plus affiché
+    /// (ticket désélectionné, autre onglet, fermeture), la saisie est oubliée une fois envoyée.
+    /// Renvoie vrai si quelque chose a été envoyé à la base.
+    pub(in crate::app) fn flush_ticket_edit(&mut self, close: bool) -> bool {
+        let Some(e) = self.dash.edit.as_mut() else { return false };
+        e.changed_at = None;
+        let id = e.id;
+        let mut patch = TicketPatch::default();
+        let title = e.title.replace('\n', " ").trim().to_string();
+        if !title.is_empty() && title != e.base_title {
+            e.base_title = title.clone();
+            patch.title = Some(title);
+        }
+        if e.body != e.base_body {
+            e.base_body = e.body.clone();
+            patch.body = Some(e.body.clone());
+        }
+        if close {
+            self.dash.edit = None;
+        }
+        let Some(t) = self.board.tickets.iter_mut().find(|t| t.id == id) else { return false };
+        if patch.title.is_none() && patch.body.is_none() {
+            return false;
+        }
+        // optimiste, comme `DashAction::Patch` : l'événement de la base confirme
+        if let Some(v) = &patch.title {
+            t.title = v.clone();
+        }
+        if let Some(v) = &patch.body {
+            t.body = v.clone();
+        }
+        self.db.send(Cmd::UpdateTicket { id, patch });
+        true
+    }
+
+    /// À la fermeture de l'application : envoie la saisie en cours et attend que la base l'ait prise (le worker
+    /// traite les commandes dans l'ordre : la réponse au rechargement du tableau prouve que la mise à jour est
+    /// passée).
+    pub(in crate::app) fn flush_ticket_on_exit(&mut self) {
+        if !self.flush_ticket_edit(true) || self.conn != ConnState::Connected {
+            return;
+        }
+        self.db.send(Cmd::LoadBoard);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+            match self.rx.recv_timeout(left) {
+                Ok(Msg::Board(_)) | Ok(Msg::Error(_)) | Ok(Msg::ConnectionFailed(_)) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    }
+
     pub(super) fn ticket_detail(&mut self, ui: &mut egui::Ui, t: &Ticket, acts: &mut Vec<DashAction>) {
         let p = self.palette();
+        let now = self.now;
         let fresh = !matches!(&self.dash.edit, Some(e) if e.id == t.id);
         let stale =
             matches!(&self.dash.edit, Some(e) if e.id == t.id && (e.base_title != t.title || e.base_body != t.body));
         let title_id = egui::Id::unique(("ticket-title", t.id));
         let body_id = egui::Id::unique(("ticket-body", t.id));
         let editing = ui.memory(|m| m.has_focus(title_id) || m.has_focus(body_id));
+        if fresh {
+            // un autre ticket était affiché : sa saisie est enregistrée avant de céder la place
+            self.flush_ticket_edit(true);
+        }
         if fresh || (stale && !editing) {
             self.dash.edit = Some(Edit {
                 id: t.id,
@@ -18,6 +76,7 @@ impl MnemoApp {
                 body: t.body.clone(),
                 base_title: t.title.clone(),
                 base_body: t.body.clone(),
+                changed_at: None,
             });
             self.dash.confirm_delete = None;
         }
@@ -43,6 +102,9 @@ impl MnemoApp {
                     .desired_rows(1)
                     .desired_width(f32::INFINITY),
             );
+            if r.changed() {
+                e.changed_at = Some(now);
+            }
             if r.lost_focus() || (r.has_focus() && ui.input(|i| i.key_pressed(Key::Enter))) {
                 let clean = e.title.replace('\n', " ").trim().to_string();
                 if !clean.is_empty() && clean != t.title {
@@ -138,6 +200,9 @@ impl MnemoApp {
             ui.label(RichText::new("Description (Markdown)").color(p.muted));
             let e = self.dash.edit.as_mut().unwrap();
             let r = ui.add(egui::TextEdit::multiline(&mut e.body).id(body_id).desired_rows(6).desired_width(f32::INFINITY).hint_text("Contexte, critères d'acceptation…"));
+            if r.changed() {
+                e.changed_at = Some(now);
+            }
             if r.lost_focus() && e.body != t.body {
                 e.base_body = e.body.clone();
                 acts.push(DashAction::Patch(t.id, TicketPatch { body: Some(e.body.clone()), ..Default::default() }));
@@ -254,6 +319,16 @@ impl MnemoApp {
                 ui.label(RichText::new("L'issue GitHub n'est pas supprimée.").small().color(p.faint));
             }
         });
+        // enregistrement pendant la frappe, peu après la dernière touche : fermer l'onglet ou la fenêtre, ou
+        // changer de vue au clavier, ne fait plus perdre le texte (le focus n'est alors jamais « perdu »)
+        if let Some(t0) = self.dash.edit.as_ref().and_then(|e| e.changed_at) {
+            if now - t0 >= TICKET_SAVE_DELAY {
+                self.flush_ticket_edit(false);
+            } else {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs_f64(TICKET_SAVE_DELAY - (now - t0) + 0.01));
+            }
+        }
     }
 
     /// Right sidebar tab of a note: tickets for which this note is a report.

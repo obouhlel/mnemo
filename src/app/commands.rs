@@ -132,10 +132,13 @@ impl MnemoApp {
                     } else if crate::markdown::is_image(&rel) {
                         self.image_view = Some(rel);
                     } else if let Some(abs) = self.file_abs(&rel) {
-                        ctx.open_url(egui::OpenUrl::new_tab(format!("file://{}", abs.display())));
+                        ctx.open_url(egui::OpenUrl::new_tab(attachments::file_uri(&abs)));
                     }
                 }
-                UiAction::DeleteFile(rel) => self.db.send(Cmd::DeleteFile(rel)),
+                UiAction::DeleteFile(rel) => {
+                    self.boards_deleted(&rel, false);
+                    self.db.send(Cmd::DeleteFile(rel));
+                }
                 UiAction::PickIcon(path) => {
                     self.icon_pick = Some(icons::IconPick { path, query: String::new(), focus: true })
                 }
@@ -212,7 +215,7 @@ impl MnemoApp {
                 self.cfg.save();
             }
             CoreCmd::NewTab => {
-                self.flush_save();
+                self.leave_note();
                 self.tabs.push(Tab::default());
                 self.active_tab = self.tabs.len() - 1;
                 self.open = None;
@@ -268,7 +271,13 @@ impl MnemoApp {
         if self.dialog.is_some() {
             return;
         }
+        // une fenêtre au premier plan (paramètres, choix d'icône, image, projet) : les raccourcis ne doivent pas
+        // agir derrière elle (Ctrl+W fermerait l'onglet caché) ; Ctrl+, referme quand même les paramètres
+        let modal = self.icon_pick.is_some() || self.image_view.is_some() || self.dash.project_form.is_some();
         for (sc, c) in table {
+            if modal || (self.show_settings && *c != CoreCmd::Settings) {
+                continue;
+            }
             if ctx.input_mut(|i| i.consume_shortcut(sc)) {
                 self.actions.push(UiAction::Core(*c));
             }

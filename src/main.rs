@@ -15,6 +15,8 @@ mod merge;
 mod model;
 mod plugins;
 mod sketch;
+#[cfg(test)]
+mod sync_tests;
 mod theme;
 
 fn main() -> eframe::Result {
@@ -34,12 +36,22 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
-    let result = eframe::run_native("Mnemo", options, Box::new(|cc| Ok(Box::new(app::MnemoApp::new(cc, cfg)))));
-    if let Err(e) = &result {
-        let msg = e.to_string();
-        if cfg!(target_os = "linux")
-            && (msg.contains("libX11") || msg.contains("xkbcommon") || msg.contains("Wayland") || msg.contains("EGL"))
-        {
+    // une bibliothèque graphique absente fait paniquer la couche de fenêtrage au lieu de renvoyer une erreur :
+    // les deux cas donnent le même message d'aide
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        eframe::run_native("Mnemo", options, Box::new(|cc| Ok(Box::new(app::MnemoApp::new(cc, cfg)))))
+    }));
+    let (result, panic_msg) = match run {
+        Ok(r) => (r, None),
+        Err(p) => {
+            let msg = p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()));
+            (Ok(()), Some(msg.unwrap_or_default()))
+        }
+    };
+    let failure = panic_msg.clone().or_else(|| result.as_ref().err().map(|e| e.to_string()));
+    if let Some(msg) = failure {
+        let lib = ["libX11", "xkbcommon", "Wayland", "wayland", "EGL", "libGL", "could not be loaded"];
+        if cfg!(target_os = "linux") && lib.iter().any(|l| msg.contains(l)) {
             eprintln!(
                 "Mnemo n'a pas pu ouvrir de fenêtre : une bibliothèque graphique du système manque.\n\
                  Installez-les puis relancez :\n\
@@ -51,6 +63,9 @@ fn main() -> eframe::Result {
         } else {
             eprintln!("Mnemo n'a pas pu démarrer : {msg}");
         }
+    }
+    if panic_msg.is_some() {
+        std::process::exit(1);
     }
     result
 }

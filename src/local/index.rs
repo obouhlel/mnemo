@@ -11,47 +11,147 @@ pub struct Doc<'a> {
     pub content: &'a str,
 }
 
-/// Cibles des liens `[[cible|alias]]` / `[[cible#titre]]` d'un texte (sans doublon, ordre d'apparition).
-pub fn links(content: &str) -> Vec<String> {
-    let mut out: Vec<String> = vec![];
-    let mut rest = content;
-    while let Some(pos) = rest.find("[[") {
-        let after = &rest[pos + 2..];
-        let Some(end) = after.find("]]") else { break };
-        let inner = &after[..end];
-        if !inner.contains('\n') && !inner.contains(']') {
-            let target = inner.split('|').next().unwrap_or("").split('#').next().unwrap_or("").trim();
-            if !target.is_empty() && !out.iter().any(|t| t == target) {
-                out.push(target.to_string());
+/// Copie du texte où le code (blocs ``` / ~~~ et `code en ligne`) est remplacé par des espaces, octet pour
+/// octet : les positions restent celles du texte d'origine. Un lien ou un tag écrit dans du code n'en est pas un.
+pub fn mask_code(content: &str) -> String {
+    let blank = |s: &str, out: &mut String| {
+        for c in s.chars() {
+            if c == '\n' {
+                out.push('\n');
+            } else {
+                out.extend(std::iter::repeat_n(' ', c.len_utf8()));
             }
-            rest = &after[end + 2..];
-        } else {
-            rest = after;
+        }
+    };
+    let mut out = String::with_capacity(content.len());
+    // bloc ouvert : (caractère, longueur de la barrière)
+    let mut fence: Option<(char, usize)> = None;
+    for line in content.split_inclusive('\n') {
+        let t = line.trim_start_matches(' ');
+        let indent = line.len() - t.len();
+        let mark = t.chars().next().filter(|c| matches!(c, '`' | '~'));
+        let run = mark.map(|m| t.chars().take_while(|c| *c == m).count()).unwrap_or(0);
+        let after = &t[run.min(t.len())..];
+        match fence {
+            Some((m, n)) => {
+                if mark == Some(m) && run >= n && indent <= 3 && after.trim().is_empty() {
+                    fence = None;
+                }
+                blank(line, &mut out);
+            }
+            None if indent <= 3 && run >= 3 && !(mark == Some('`') && after.contains('`')) => {
+                fence = mark.map(|m| (m, run));
+                blank(line, &mut out);
+            }
+            None => mask_inline(line, &mut out),
         }
     }
     out
 }
 
-/// Note désignée par un lien : chemin exact, sinon nom de fichier (insensible à la casse) ; le chemin exact
-/// est préféré, puis le plus court.
-pub fn resolve<'a>(docs: &'a [Doc<'a>], link: &str) -> Option<&'a Doc<'a>> {
-    let l = link.trim().trim_end_matches(".md").to_lowercase();
-    docs.iter()
-        .filter(|d| d.path.to_lowercase() == l || basename(d.path).to_lowercase() == l)
-        .min_by_key(|d| (d.path.to_lowercase() != l, d.path.len()))
+/// `code en ligne` d'une ligne : une suite de n accents graves se ferme par une suite de même longueur.
+fn mask_inline(line: &str, out: &mut String) {
+    let b = line.as_bytes();
+    let mut i = 0;
+    let mut copied = 0;
+    while i < b.len() {
+        if b[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let n = b[i..].iter().take_while(|c| **c == b'`').count();
+        // suite fermante de même longueur
+        let mut j = i + n;
+        let mut close = None;
+        while j < b.len() {
+            if b[j] == b'`' {
+                let m = b[j..].iter().take_while(|c| **c == b'`').count();
+                if m == n {
+                    close = Some(j + m);
+                    break;
+                }
+                j += m;
+            } else {
+                j += 1;
+            }
+        }
+        match close {
+            Some(end) => {
+                out.push_str(&line[copied..i]);
+                out.extend(std::iter::repeat_n(' ', end - i));
+                copied = end;
+                i = end;
+            }
+            None => i += n,
+        }
+    }
+    out.push_str(&line[copied..]);
 }
 
-/// Tags `#tag` d'un texte, en minuscules (même règle que l'ancien SQL : précédé d'un début de ligne ou d'un espace,
-/// commence par une lettre ou `_`, puis lettres, chiffres, `_`, `/`, `-`).
+/// Liens `[[cible|alias]]` / `[[cible#titre]]` d'un texte déjà masqué : (début de la cible, fin de la cible)
+/// en octets, la cible étant ce qui précède `|`, `#` ou `]]`.
+fn link_spans(masked: &str) -> Vec<(usize, usize)> {
+    let mut out = vec![];
+    let mut from = 0;
+    while let Some(pos) = masked[from..].find("[[") {
+        let start = from + pos + 2;
+        let after = &masked[start..];
+        let Some(end) = after.find("]]") else { break };
+        let inner = &after[..end];
+        if !inner.contains('\n') && !inner.contains(']') && !inner.contains("[[") {
+            let target = inner.find(['|', '#']).unwrap_or(inner.len());
+            out.push((start, start + target));
+            from = start + end + 2;
+        } else {
+            from = start;
+        }
+    }
+    out
+}
+
+/// Cibles des liens `[[cible|alias]]` / `[[cible#titre]]` d'un texte (sans doublon, ordre d'apparition).
+pub fn links(content: &str) -> Vec<String> {
+    let masked = mask_code(content);
+    let mut out: Vec<String> = vec![];
+    for (a, b) in link_spans(&masked) {
+        let target = content[a..b].trim();
+        if !target.is_empty() && !out.iter().any(|t| t == target) {
+            out.push(target.to_string());
+        }
+    }
+    out
+}
+
+/// Clé de comparaison d'un lien ou d'un chemin : sans `.md`, en minuscules.
+fn link_key(link: &str) -> String {
+    let l = link.trim();
+    l.strip_suffix(".md").or_else(|| l.strip_suffix(".MD")).unwrap_or(l).to_lowercase()
+}
+
+/// Note désignée par un lien parmi des (id, chemin) : chemin exact, sinon nom de fichier (insensible à la casse) ;
+/// le chemin exact est préféré, puis le plus court.
+fn resolve_in<'a>(paths: impl Iterator<Item = (Uuid, &'a str)>, link: &str) -> Option<Uuid> {
+    let l = link_key(link);
+    paths
+        .filter(|(_, p)| p.to_lowercase() == l || basename(p).to_lowercase() == l)
+        .min_by_key(|(_, p)| (p.to_lowercase() != l, p.len(), p.to_string()))
+        .map(|(id, _)| id)
+}
+
+/// Note désignée par un lien (voir `resolve_in`).
+pub fn resolve<'a>(docs: &'a [Doc<'a>], link: &str) -> Option<&'a Doc<'a>> {
+    let id = resolve_in(docs.iter().map(|d| (d.id, d.path)), link)?;
+    docs.iter().find(|d| d.id == id)
+}
+
+/// Tags `#tag` d'un texte, en minuscules, hors du code. Règle d'Obsidian : `#` en début de ligne ou après un
+/// espace, suivi de lettres, chiffres, `_`, `-`, `/`, avec au moins un caractère qui n'est pas un chiffre
+/// (`#123` est un numéro, pas un tag).
 pub fn tags(content: &str) -> Vec<String> {
-    let chars: Vec<char> = content.chars().collect();
+    let chars: Vec<char> = mask_code(content).chars().collect();
     let mut out: Vec<String> = vec![];
     for i in 0..chars.len() {
         if chars[i] != '#' || (i > 0 && !chars[i - 1].is_whitespace()) {
-            continue;
-        }
-        let Some(&first) = chars.get(i + 1) else { continue };
-        if !(first.is_alphabetic() || first == '_') {
             continue;
         }
         let tag: String = chars[i + 1..]
@@ -59,6 +159,9 @@ pub fn tags(content: &str) -> Vec<String> {
             .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '/' | '-'))
             .collect::<String>()
             .to_lowercase();
+        if tag.is_empty() || tag.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
         if !out.contains(&tag) {
             out.push(tag);
         }
@@ -184,23 +287,20 @@ fn snippet(body: &[char], positions: &[(usize, usize)]) -> String {
     out
 }
 
-/// Notes qui pointent vers `target` (par son chemin ou son nom), avec jusqu'à 3 lignes d'extrait.
+/// Notes dont un lien désigne `target` (résolu comme au clic : une autre note de même nom, mais préférée par
+/// la résolution, n'est pas comptée), avec jusqu'à 3 lignes d'extrait.
 pub fn backlinks(docs: &[Doc], target: &Doc) -> Vec<Backlink> {
-    let (pl, bl) = (target.path.to_lowercase(), basename(target.path).to_lowercase());
+    let points = |text: &str| links(text).iter().any(|l| resolve(docs, l).is_some_and(|d| d.id == target.id));
     let mut out: Vec<Backlink> = docs
         .iter()
-        .filter(|d| d.id != target.id)
-        .filter(|d| links(d.content).iter().any(|l| l.to_lowercase() == pl || l.to_lowercase() == bl))
+        .filter(|d| d.id != target.id && points(d.content))
         .map(|d| Backlink {
             id: d.id,
             path: d.path.to_string(),
             snippets: d
                 .content
                 .lines()
-                .filter(|line| {
-                    let l = line.to_lowercase();
-                    [&pl, &bl].iter().any(|t| ["]]", "|", "#"].iter().any(|end| l.contains(&format!("[[{t}{end}"))))
-                })
+                .filter(|line| points(line))
                 .take(3)
                 .map(|l| l.trim().chars().take(200).collect())
                 .collect(),
@@ -235,19 +335,38 @@ pub fn graph(docs: &[Doc]) -> GraphData {
     g
 }
 
-/// Après un renommage `old` → `new` : notes à réécrire et nouveau contenu de chacune.
-/// Le nom seul est utilisé dans les liens, sauf s'il devient ambigu (alors le chemin complet).
+/// Après le renommage `old` → `new` de la note `id` (les autres notes ont leur chemin actuel dans `docs`) :
+/// notes à réécrire et nouveau contenu de chacune. Seuls les liens qui désignaient cette note avant le
+/// renommage sont réécrits, pas ceux d'une autre note de même nom, ni ce qui est écrit dans du code.
+/// Le nom seul est utilisé dans les liens, sauf s'il désigne une autre note (alors le chemin complet).
 pub fn relink(docs: &[Doc], id: Uuid, old: &str, new: &str) -> Vec<(Uuid, String)> {
-    let old_base = basename(old);
-    let ambiguous = docs.iter().any(|d| d.id != id && basename(d.path).eq_ignore_ascii_case(basename(new)));
-    let target = if ambiguous { new } else { basename(new) };
+    let before = |link: &str| resolve_in(docs.iter().map(|d| (d.id, if d.id == id { old } else { d.path })), link);
+    let after = |link: &str| resolve_in(docs.iter().map(|d| (d.id, if d.id == id { new } else { d.path })), link);
+    let target = if after(basename(new)) == Some(id) { basename(new) } else { new };
     docs.iter()
-        .filter(|d| links(d.content).iter().any(|l| l.eq_ignore_ascii_case(old) || l.eq_ignore_ascii_case(old_base)))
         .filter_map(|d| {
-            let next = crate::db::rewrite_links(d.content, &[old, old_base], target);
+            let next = rewrite_links(d.content, |name| before(name) == Some(id), target);
             (next != d.content).then_some((d.id, next))
         })
         .collect()
+}
+
+/// Remplace par `to` la cible des liens `[[cible]]`, `[[cible|alias]]`, `[[cible#titre]]` que `matches` accepte
+/// (alias et titre gardés). Le code n'est pas touché.
+pub fn rewrite_links(content: &str, matches: impl Fn(&str) -> bool, to: &str) -> String {
+    let masked = mask_code(content);
+    let mut out = String::with_capacity(content.len());
+    let mut copied = 0;
+    for (a, b) in link_spans(&masked) {
+        let name = content[a..b].trim();
+        if !name.is_empty() && matches(name) {
+            out.push_str(&content[copied..a]);
+            out.push_str(to);
+            copied = b;
+        }
+    }
+    out.push_str(&content[copied..]);
+    out
 }
 
 #[cfg(test)]
@@ -261,7 +380,7 @@ mod tests {
     #[test]
     fn parse_links_and_tags() {
         assert_eq!(links("a [[B]] [[c|x]] [[Dir/D#t]] [[B]] [[ ]] [[e\n]]"), vec!["B", "c", "Dir/D"]);
-        assert_eq!(tags("#a texte #Été/x-1 pas#ça ## titre\n#_b #1no"), vec!["a", "été/x-1", "_b"]);
+        assert_eq!(tags("#a texte #Été/x-1 pas#ça ## titre\n#_b #1no #123"), vec!["a", "été/x-1", "_b", "1no"]);
     }
 
     #[test]
@@ -287,6 +406,68 @@ mod tests {
         assert!(hits[0].snippet.contains("\u{1}agré\u{2}"));
         assert_eq!(search(&docs, "autre").len(), 1); // trouvé par le chemin
         assert!(search(&docs, "ombre").is_empty()); // dans le texte : début de mot seulement (« sombre »)
+    }
+
+    #[test]
+    fn code_is_not_indexed() {
+        let text = "#vrai `#faux [[Non]]` [[Oui]]\n```c\n#include <x.h>\nif [[ -z \"$x\" ]]; then\n```\n~~~\n[[Non plus]]\n~~~\nfin #fin";
+        assert_eq!(tags(text), vec!["vrai", "fin"]);
+        assert_eq!(links(text), vec!["Oui"]);
+        // ```code``` sur une ligne : du code en ligne, pas un bloc qui avalerait la suite
+        assert_eq!(links("```x``` [[A]]\n[[B]]"), vec!["A", "B"]);
+        // les positions restent alignées avec des accents dans le code
+        assert_eq!(mask_code("é `à` ù").len(), "é `à` ù".len());
+        assert_eq!(links("`é[[x]]è` [[Été]]"), vec!["Été"]);
+    }
+
+    #[test]
+    fn rename_only_touches_links_to_the_renamed_note() {
+        // « Plan » à la racine et « Archive/Plan » : [[Plan]] désigne la première
+        let docs = [
+            doc(1, "Plan", ""),
+            doc(2, "Archive/Vieux plan", ""),
+            doc(3, "Index", "voir [[Plan]], [[Plan#Budget|le plan]] et [[Archive/Plan|l'ancien]]"),
+        ];
+        let r = relink(&docs, Uuid::from_u128(2), "Archive/Plan", "Archive/Vieux plan");
+        assert_eq!(
+            r,
+            vec![(Uuid::from_u128(3), "voir [[Plan]], [[Plan#Budget|le plan]] et [[Vieux plan|l'ancien]]".to_string())]
+        );
+        // le nouveau nom est déjà celui d'une autre note, préférée par la résolution : chemin complet
+        let docs = [doc(1, "Plan", ""), doc(2, "Archive/Plan", ""), doc(3, "Index", "[[Brouillon]]")];
+        let r = relink(&docs, Uuid::from_u128(2), "Archive/Brouillon", "Archive/Plan");
+        assert_eq!(r, vec![(Uuid::from_u128(3), "[[Archive/Plan]]".to_string())]);
+    }
+
+    #[test]
+    fn rename_follows_accents_and_md_but_not_code() {
+        let docs = [
+            doc(1, "Lycée", ""),
+            doc(2, "A", "[[école]] et [[École.md]]\n```sh\nif [[ école ]]; then\n```\n`[[École]]` [[École] x"),
+        ];
+        let r = relink(&docs, Uuid::from_u128(1), "École", "Lycée");
+        assert_eq!(
+            r,
+            vec![(
+                Uuid::from_u128(2),
+                "[[Lycée]] et [[Lycée]]\n```sh\nif [[ école ]]; then\n```\n`[[École]]` [[École] x".to_string()
+            )]
+        );
+        assert_eq!(
+            rewrite_links(
+                "a [[Old]] b [[old|alias]] c [[Dir/Old#h]] d [[Older]]",
+                |n| n.to_lowercase().ends_with("old"),
+                "New"
+            ),
+            "a [[New]] b [[New|alias]] c [[New#h]] d [[Older]]"
+        );
+    }
+
+    #[test]
+    fn backlinks_follow_resolution() {
+        let docs = [doc(1, "Plan", ""), doc(2, "Archive/Plan", ""), doc(3, "Index", "[[Plan]]\n[[Archive/Plan]]")];
+        assert_eq!(backlinks(&docs, &docs[0])[0].snippets, vec!["[[Plan]]"]);
+        assert_eq!(backlinks(&docs, &docs[1])[0].snippets, vec!["[[Archive/Plan]]"]);
     }
 
     #[test]

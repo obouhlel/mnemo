@@ -18,7 +18,7 @@ for s in 16 32 64 128 256 512; do
   d=$((s*2)); [ $d -le 1024 ] && sips -z $d $d assets/icons/mnemo.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/mnemo.icns"
-# ad-hoc signature (lets Apple Silicon run it; Gatekeeper will still ask the first time: right click > Open)
+# ad-hoc signature (lets Apple Silicon run it; Gatekeeper still blocks the first launch: see README, « Premier lancement »)
 codesign --force --deep --sign - "$APP"
 hdiutil create -volname Mnemo -srcfolder "$APP" -ov -format UDZO dist/Mnemo-macos.dmg
 echo "OK : $APP et dist/Mnemo-macos.dmg"

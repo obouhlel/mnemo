@@ -67,6 +67,7 @@ Variables d'environnement utiles :
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | organisation du code, flux de synchronisation, recettes (ajouter une commande…) |
 | [docs/plugins.md](docs/plugins.md) | écrire un plugin Rhai : `plugin.toml`, hooks, API |
 | [docs/themes.md](docs/themes.md) | thèmes et snippets CSS au format Obsidian |
+| [docs/AUDIT.md](docs/AUDIT.md) | audit de novembre 2026 : écriture simultanée, bugs corrigés et à faire |
 | [docs/RAPPORT_TESTS.md](docs/RAPPORT_TESTS.md) | ce qui a été testé et comment |
 
 ## Installation
@@ -81,10 +82,17 @@ curl -LO https://github.com/obouhlel/mnemo/releases/latest/download/mnemo-linux-
 | OS | Installer |
 |---|---|
 | **Debian / Ubuntu** | `sudo apt install ./mnemo_<version>-1_amd64.deb` |
-| **Arch Linux** | `make arch` puis `sudo pacman -U dist/mnemo-*.pkg.tar.zst` |
+| **Arch Linux** | `sudo pacman -U mnemo-<version>-1-x86_64.pkg.tar.zst` (ou, depuis les sources, `make arch`) |
 | **Autres Linux** | archive `mnemo-<version>-linux-x86_64.tar.gz` / `aarch64` (glibc ≥ 2.28) |
-| **Windows 10/11** | `mnemo.exe` |
-| **macOS 11+** (Apple Silicon et Intel) | `Mnemo.app` / `.dmg` |
+| **Windows 10/11** | `mnemo-windows-x86_64.exe` (portable, sans installeur) |
+| **macOS 11+** (Apple Silicon et Intel) | `Mnemo-macos.dmg`, glisser Mnemo dans Applications |
+
+Premier lancement :
+
+- **macOS** : l'application n'est pas notarisée par Apple. Réglages Système › Confidentialité et sécurité ›
+  « Ouvrir quand même », ou dans le Terminal : `xattr -dr com.apple.quarantine /Applications/Mnemo.app`.
+- **Windows** : l'exécutable n'est pas signé. SmartScreen › « Informations complémentaires » › « Exécuter quand même ».
+- **Debian / Ubuntu sur ARM** : pas de `.deb`, prenez l'archive `aarch64`.
 
 Le binaire Linux tourne sur Debian 10+, Ubuntu 18.04+, Arch, Fedora… Bibliothèques nécessaires (présentes sur tout
 poste de bureau) :

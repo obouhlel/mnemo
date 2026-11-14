@@ -1,6 +1,5 @@
 package dev.mnemo.app.ui
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,6 +13,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -44,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -75,7 +77,9 @@ private fun Bar(title: String, onBack: (() -> Unit)?) {
 /** Image en plein écran, zoom et déplacement aux doigts. */
 @Composable
 fun ImageScreen(model: AppModel, path: String, onBack: (() -> Unit)?) {
-    val bitmap = remember(path) { model.readFile(path)?.let { BitmapFactory.decodeByteArray(it, 0, it.size) } }
+    // décodée hors du fil principal, à une taille bornée (assez pour zoomer)
+    var image by remember(path) { mutableStateOf<ImageLoad>(ImageLoad.Loading) }
+    LaunchedEffect(path) { image = model.loadImage(path, 4096) }
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     Scaffold(topBar = { Bar(basename(path), onBack) }, containerColor = MaterialTheme.colorScheme.background) { pad ->
@@ -87,11 +91,15 @@ fun ImageScreen(model: AppModel, path: String, onBack: (() -> Unit)?) {
             },
             contentAlignment = Alignment.Center,
         ) {
-            if (bitmap == null) Text("Image pas encore téléchargée.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else Image(
-                bitmap.asImageBitmap(), basename(path),
+            when (val img = image) {
+                ImageLoad.Loading -> {}
+                ImageLoad.Missing -> Text("Image pas encore téléchargée.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                ImageLoad.Unreadable -> Text("Format d'image non affichable sur cet appareil.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                is ImageLoad.Ready -> Image(
+                img.bitmap.asImageBitmap(), basename(path),
                 Modifier.fillMaxSize().graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y),
-            )
+                )
+            }
         }
     }
 }
@@ -185,7 +193,7 @@ fun SettingsScreen(model: AppModel, firstRun: Boolean, onBack: (() -> Unit)?) {
         }
     }
     Scaffold(topBar = { if (!firstRun) Bar("Paramètres", onBack) }, containerColor = MaterialTheme.colorScheme.background) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.padding(pad).consumeWindowInsets(pad).imePadding().fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp)) {
                 if (firstRun) {
                     Spacer(Modifier.height(32.dp))
@@ -198,8 +206,8 @@ fun SettingsScreen(model: AppModel, firstRun: Boolean, onBack: (() -> Unit)?) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "La même adresse que dans Mnemo sur ordinateur (Paramètres › Synchronisation). La base doit être joignable " +
-                        "depuis cet appareil : base en ligne (Neon, Supabase…), serveur exposé ou VPN. Ajoutez ?sslmode=require " +
-                        "pour une base distante. Les notes restent lisibles et modifiables hors ligne.",
+                        "depuis cet appareil : base en ligne (Neon, Supabase…), serveur exposé ou VPN. Pour une base distante, " +
+                        "ajoutez ?sslmode=verify-full (chiffré, certificat vérifié) ou ?sslmode=require (chiffré seulement). Les notes restent lisibles et modifiables hors ligne.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))

@@ -7,7 +7,10 @@ pub(super) const AUTOSAVE_DELAY: f64 = 0.6;
 
 impl MnemoApp {
     pub(super) fn set_open(&mut self, note: Note, now: f64) {
-        self.flush_save();
+        if self.open.as_ref().is_some_and(|n| n.id != note.id) {
+            self.leave_note();
+        }
+        let _ = now;
         let mut mode = std::mem::replace(&mut self.open_mode, OpenMode::Replace);
         let t = &self.tabs[self.active_tab];
         if mode == OpenMode::Replace && (t.dashboard || t.graph || t.board.is_some()) {
@@ -59,7 +62,6 @@ impl MnemoApp {
         let n = self.open.as_ref().unwrap();
         let (id, path, content) = (n.id.to_string(), n.path.clone(), n.content.clone());
         self.plugins.hook("on_open", Some(&NoteCtx { id, path: &path, content: &content }));
-        let _ = now;
     }
 
     /// A newer version of the open note arrived from the database (another device / window / SQL).
@@ -70,6 +72,7 @@ impl MnemoApp {
         }
         n.path = note.path.clone();
         if !n.dirty() {
+            self.cursor_fix.get_or_insert_with(|| (n.id, n.content.clone()));
             n.content = note.content.clone();
             n.saved = note.content;
             n.version = note.version;
@@ -93,6 +96,7 @@ impl MnemoApp {
         let blocks = merge::build(&n.saved, &n.content, &remote.content);
         let (total, _) = merge::conflict_count(&blocks);
         if total == 0 {
+            self.cursor_fix.get_or_insert_with(|| (n.id, n.content.clone()));
             n.content = merge::assemble(&blocks).unwrap_or_else(|| n.content.clone());
             n.saved = remote.content;
             n.version = remote.version;
@@ -102,14 +106,28 @@ impl MnemoApp {
             self.content_gen += 1;
             self.notice("Modifications distantes fusionnées automatiquement avec les vôtres", false, now);
         } else {
+            // pas de fenêtre qui s'ouvre toute seule au milieu d'une phrase : l'éditeur garde le focus, le
+            // bandeau propose de résoudre ; la fenêtre déjà ouverte le reste, avec la nouvelle version distante
+            let window_open = n.conflict.as_ref().is_some_and(|c| c.window_open);
+            let known = n.conflict.is_some();
             n.conflict = Some(Conflict {
                 remote,
+                mine: n.content.clone(),
                 blocks,
                 tab: ConflictTab::Resolve,
                 diff_against_result: false,
-                window_open: true,
+                window_open,
             });
-            self.notice(format!("Conflit : {total} bloc(s) modifié(s) des deux côtés à résoudre"), true, now);
+            if !known {
+                self.notice(
+                    format!(
+                        "Conflit : {total} bloc(s) modifié(s) des deux côtés. Vous pouvez continuer à écrire ; \
+                         résolvez-le depuis le bandeau de la note."
+                    ),
+                    true,
+                    now,
+                );
+            }
         }
     }
 
@@ -132,19 +150,19 @@ impl MnemoApp {
     pub(super) fn activate_tab(&mut self, i: usize) {
         self.active_tab = i.min(self.tabs.len() - 1);
         if self.tabs[self.active_tab].dashboard {
-            self.flush_save();
+            self.leave_note();
             self.open = None;
             self.need.board = true;
             return;
         }
         if self.tabs[self.active_tab].graph {
-            self.flush_save();
+            self.leave_note();
             self.open = None;
             self.need.graph = true;
             return;
         }
         if let Some(rel) = self.tabs[self.active_tab].board.clone() {
-            self.flush_save();
+            self.leave_note();
             self.open = None;
             if !self.boards.contains_key(&rel)
                 && let Some(abs) = self.file_abs(&rel)
@@ -154,9 +172,16 @@ impl MnemoApp {
             return;
         }
         match self.tabs[self.active_tab].note {
+            // la note de cet onglet n'existe plus (supprimée pendant qu'il était en arrière-plan) : onglet vide,
+            // au lieu de continuer à montrer et modifier la note de l'onglet précédent
+            Some(id) if self.restore_done && !self.notes.iter().any(|n| n.id == id) => {
+                self.forget_note(id);
+                self.leave_note();
+                self.open = None;
+            }
             Some(id) => self.open_in(id, OpenMode::History),
             None => {
-                self.flush_save();
+                self.leave_note();
                 self.open = None;
             }
         }
@@ -250,7 +275,29 @@ impl MnemoApp {
         {
             n.saving = Some(n.content.clone());
             n.last_edit = None;
+            self.sent_save = Some((n.id, n.path.clone(), n.content.clone()));
             self.db.send(Cmd::Save { id: n.id, content: n.content.clone(), base_version: n.version });
+        }
+    }
+
+    /// Garde un texte qui n'a pas pu être enregistré dans sa note (conflit non résolu, enregistrement refusé)
+    /// dans une note à part : « Note (conflit 2026-01-31 14-05-09) ».
+    pub(super) fn rescue_copy(&mut self, path: &str, content: String) {
+        let now = self.now;
+        let copy = format!("{path} (conflit {})", chrono::Local::now().format("%Y-%m-%d %H-%M-%S"));
+        self.notice(format!("Votre texte non enregistré est gardé dans « {copy} »"), true, now);
+        self.db.send(Cmd::Create { path: copy, content, open: false, if_missing: false });
+    }
+
+    /// À appeler avant de quitter la note ouverte : enregistre, et si elle a un conflit non résolu ou un
+    /// enregistrement encore en cours avec du texte plus récent, garde ce texte dans une note à part.
+    pub(super) fn leave_note(&mut self) {
+        self.flush_save();
+        let Some(n) = &self.open else { return };
+        let unsent = n.saving.as_ref().is_some_and(|s| *s != n.content);
+        if (n.conflict.is_some() && n.content != n.saved) || unsent {
+            let (path, content) = (n.path.clone(), n.content.clone());
+            self.rescue_copy(&path, content);
         }
     }
 

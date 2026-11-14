@@ -171,6 +171,7 @@ impl MnemoApp {
                             match normalize_path(input) {
                                 Ok(p) => {
                                     self.flush_save();
+                                    self.boards_moved(from, &p);
                                     self.db.send(Cmd::RenameFolder { from: from.clone(), to: p });
                                     close = true;
                                 }
@@ -215,6 +216,7 @@ impl MnemoApp {
                             {
                                 self.open = None;
                             }
+                            self.boards_deleted(path, true);
                             self.db.send(Cmd::DeleteFolder(path.clone()));
                             close = true;
                         }

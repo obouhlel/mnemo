@@ -2,9 +2,16 @@
 //! sélection et déplacement, couleurs, épaisseurs, annuler / rétablir, zoom et déplacement de la vue.
 //! Le dessin est un fichier `.mnemo-board` du dossier des notes (voir `crate::sketch`), enregistré
 //! automatiquement et synchronisé comme les autres pièces jointes.
+//!
+//! Le fichier peut changer sous nos pieds (autre appareil, synchronisation) : avant chaque enregistrement et à
+//! chaque changement signalé, il est relu et fusionné élément par élément avec ce qui a été tracé ici
+//! (`sketch::merge`, base = dernier état lu ou écrit). Un fichier illisible ou disparu met l'onglet en lecture
+//! seule : rien n'est écrit tant que l'utilisateur n'a pas choisi.
 
 use super::*;
 use crate::sketch::{Element, Sketch, parse_color, simplify};
+use std::path::Path;
+use std::time::SystemTime;
 
 /// Délai entre le dernier trait et l'enregistrement.
 const SAVE_DELAY: f64 = 0.8;
@@ -13,6 +20,7 @@ const SAVE_DELAY: f64 = 0.8;
 pub(super) const INK: &str = "#1e1e1e";
 pub(super) const COLORS: [&str; 6] = [INK, "#e03131", "#1971c2", "#2f9e44", "#f08c00", "#9c36b5"];
 const WIDTHS: [f32; 3] = [2.0, 4.0, 8.0];
+const RED: Color32 = Color32::from_rgb(0xfb, 0x46, 0x4c);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Tool {
@@ -41,9 +49,55 @@ impl Tool {
     ];
 }
 
+/// Le fichier d'un whiteboard tel qu'il est sur le disque.
+enum Disk {
+    Missing,
+    Unreadable(String),
+    Ok(Vec<Element>, Option<SystemTime>),
+}
+
+fn file_mtime(abs: &Path) -> Option<SystemTime> {
+    std::fs::metadata(abs).and_then(|m| m.modified()).ok()
+}
+
+fn read_disk(abs: &Path) -> Disk {
+    match std::fs::read_to_string(abs) {
+        Ok(s) => match Sketch::parse(&s) {
+            Ok(sk) => Disk::Ok(sk.elements, file_mtime(abs)),
+            Err(e) => Disk::Unreadable(e),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Disk::Missing,
+        Err(e) => Disk::Unreadable(format!("Whiteboard illisible : {e}")),
+    }
+}
+
+/// Écriture immédiate (à la fermeture de l'application), par fichier temporaire caché comme le stockage local.
+fn write_now(abs: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = abs.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let name = abs.file_name().and_then(|n| n.to_str()).unwrap_or("f");
+    let tmp = abs.with_file_name(format!(".{name}.mnemo-tmp"));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, abs)
+}
+
+/// Nouveau chemin de `path` quand le dossier `from` devient `to` (même règle que le stockage local : casse
+/// ignorée, comptée en caractères). `None` si `path` n'est pas dans ce dossier.
+fn moved_path(path: &str, from: &str, to: &str) -> Option<String> {
+    let skip = from.chars().count();
+    let head: String = path.chars().take(skip).collect();
+    let tail: String = path.chars().skip(skip).collect();
+    (head.to_lowercase() == from.to_lowercase() && tail.starts_with('/')).then(|| format!("{to}{tail}"))
+}
+
 /// Un whiteboard ouvert.
 pub(super) struct BoardView {
     pub(super) sketch: Sketch,
+    /// éléments tels qu'ils ont été lus ou écrits la dernière fois sur le disque : base de la fusion à 3 voies
+    base: Vec<Element>,
+    /// base d'avant notre écriture en route : tant que le disque la montre, l'écriture n'est pas encore faite
+    sent_from: Option<Vec<Element>>,
     undo: Vec<Vec<Element>>,
     redo: Vec<Vec<Element>>,
     /// déplacement de la vue (coordonnées du dessin) et zoom
@@ -56,27 +110,34 @@ pub(super) struct BoardView {
     selected: Option<usize>,
     /// élément en cours de tracé
     drawing: Option<Element>,
+    /// coup de gomme en cours (un seul « annuler » pour tout le geste)
+    erasing: bool,
+    /// déplacement d'un élément en cours
+    moving: bool,
     /// texte en cours de saisie : position (dessin), contenu, indice s'il remplace un texte existant
     text_edit: Option<([f32; 2], String, Option<usize>)>,
     focus_text: bool,
     /// modifié depuis le dernier enregistrement (moment de la dernière modification)
     dirty: Option<f64>,
-    /// date du fichier au chargement / au dernier enregistrement (pour recharger un changement extérieur)
-    pub(super) mtime: Option<std::time::SystemTime>,
-    pub(super) error: Option<String>,
+    /// date du fichier à sa dernière lecture ; `None` : notre écriture est en route (ou rien n'est encore lu)
+    mtime: Option<SystemTime>,
+    /// le fichier a déjà été vu sur le disque (faux : dessin tout neuf, ou dossier en cours de déplacement)
+    seen: bool,
+    /// le fichier a changé pendant un geste : à relire dès qu'il est fini
+    stale: bool,
+    /// fichier illisible : lecture seule, rien n'est enregistré (le vrai fichier ne doit pas être écrasé)
+    error: Option<String>,
+    /// fichier déplacé ou supprimé hors de Mnemo : lecture seule
+    gone: bool,
 }
 
 impl BoardView {
-    pub(super) fn load(abs: &std::path::Path) -> Self {
-        let (sketch, error) = match std::fs::read_to_string(abs) {
-            Ok(s) => match Sketch::parse(&s) {
-                Ok(sk) => (sk, None),
-                Err(e) => (Sketch::default(), Some(e)),
-            },
-            Err(_) => (Sketch::default(), None),
-        };
+    /// Dessin vide dont le fichier n'existe pas encore (ou pas encore à cet endroit).
+    pub(super) fn empty() -> Self {
         Self {
-            sketch,
+            sketch: Sketch::default(),
+            base: vec![],
+            sent_from: None,
             undo: vec![],
             redo: vec![],
             pan: egui::Vec2::ZERO,
@@ -87,16 +148,46 @@ impl BoardView {
             width: WIDTHS[0],
             selected: None,
             drawing: None,
+            erasing: false,
+            moving: false,
             text_edit: None,
             focus_text: false,
             dirty: None,
-            mtime: std::fs::metadata(abs).and_then(|m| m.modified()).ok(),
-            error,
+            mtime: None,
+            seen: false,
+            stale: false,
+            error: None,
+            gone: false,
         }
+    }
+
+    pub(super) fn load(abs: &Path) -> Self {
+        let mut b = Self::empty();
+        b.seen = true;
+        match read_disk(abs) {
+            Disk::Ok(elements, m) => {
+                b.base = elements.clone();
+                b.sketch.elements = elements;
+                b.mtime = m;
+            }
+            Disk::Unreadable(e) => b.error = Some(e),
+            Disk::Missing => b.gone = true,
+        }
+        b
     }
 
     pub(super) fn is_dirty(&self) -> bool {
         self.dirty.is_some()
+    }
+
+    /// Lecture seule : le fichier est illisible ou a disparu.
+    fn read_only(&self) -> bool {
+        self.error.is_some() || self.gone
+    }
+
+    /// Un geste est en cours (tracé, gomme, déplacement, saisie de texte) : ni relecture ni fusion maintenant.
+    fn busy(&self) -> bool {
+        self.drawing.is_some() || self.erasing || self.moving || self.text_edit.is_some()
     }
 
     fn checkpoint(&mut self) {
@@ -114,7 +205,7 @@ impl BoardView {
     fn undo(&mut self, now: f64) {
         if let Some(prev) = self.undo.pop() {
             self.redo.push(std::mem::replace(&mut self.sketch.elements, prev));
-            self.selected = None;
+            self.after_replace();
             self.changed(now);
         }
     }
@@ -122,8 +213,67 @@ impl BoardView {
     fn redo(&mut self, now: f64) {
         if let Some(next) = self.redo.pop() {
             self.undo.push(std::mem::replace(&mut self.sketch.elements, next));
-            self.selected = None;
+            self.after_replace();
             self.changed(now);
+        }
+    }
+
+    /// La liste des éléments vient d'être remplacée : les indices gardés ne désignent plus rien.
+    fn after_replace(&mut self) {
+        self.selected = None;
+        self.text_edit = None;
+        self.drawing = None;
+        self.erasing = false;
+        self.moving = false;
+    }
+
+    /// Le disque montre `remote`, différent de notre base : un autre appareil a écrit. Fusion avec ce qui a été
+    /// fait ici, et l'historique est oublié (un « annuler » ferait revenir l'état d'avant, sans leurs traits).
+    fn absorb(&mut self, remote: Vec<Element>) {
+        self.sketch.elements = if self.dirty.is_some() || self.sketch.elements != self.base {
+            crate::sketch::merge(&self.base, &self.sketch.elements, &remote)
+        } else {
+            remote.clone()
+        };
+        self.base = remote;
+        self.sent_from = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.after_replace();
+    }
+
+    /// Compare avec le fichier (après un changement signalé dans le dossier) et s'aligne dessus.
+    fn sync_disk(&mut self, abs: &Path) {
+        if self.busy() {
+            self.stale = true;
+            return;
+        }
+        self.stale = false;
+        if !self.read_only() && self.mtime.is_some() && file_mtime(abs) == self.mtime {
+            return;
+        }
+        match read_disk(abs) {
+            // jamais vu : notre première écriture (ou le déplacement du dossier) n'est pas encore faite
+            Disk::Missing => self.gone = self.seen,
+            Disk::Unreadable(e) => {
+                // des traits pas encore enregistrés : on les garde à l'écran, l'enregistrement attendra
+                if self.dirty.is_none() {
+                    self.error = Some(e);
+                    self.gone = false;
+                }
+            }
+            Disk::Ok(remote, m) => {
+                self.error = None;
+                self.gone = false;
+                self.seen = true;
+                if remote == self.base {
+                    self.sent_from = None; // notre écriture est arrivée
+                    self.mtime = m;
+                } else if self.sent_from.as_ref() != Some(&remote) {
+                    self.absorb(remote);
+                    self.mtime = m;
+                }
+            }
         }
     }
 
@@ -146,20 +296,27 @@ impl BoardView {
     fn commit_text(&mut self, now: f64) {
         let Some((pos, text, replace)) = self.text_edit.take() else { return };
         let text = text.trim_end().to_string();
+        // l'indice ne vaut que s'il désigne encore un texte (la liste a pu changer depuis le double-clic)
+        let old = replace.and_then(|i| match self.sketch.elements.get(i) {
+            Some(Element::Text { text, .. }) => Some((i, text.clone())),
+            _ => None,
+        });
+        match &old {
+            Some((_, t)) if *t == text => return,
+            None if text.is_empty() => return,
+            _ => {}
+        }
         self.checkpoint();
-        match replace {
-            Some(i) if i < self.sketch.elements.len() => {
-                if text.is_empty() {
-                    self.sketch.elements.remove(i);
-                } else if let Element::Text { text: t, .. } = &mut self.sketch.elements[i] {
+        match old {
+            Some((i, _)) if text.is_empty() => {
+                self.sketch.elements.remove(i);
+            }
+            Some((i, _)) => {
+                if let Element::Text { text: t, .. } = &mut self.sketch.elements[i] {
                     *t = text;
                 }
             }
-            _ if text.is_empty() => {
-                self.undo.pop();
-                return;
-            }
-            _ => self.sketch.elements.push(Element::Text {
+            None => self.sketch.elements.push(Element::Text {
                 color: self.color.into(),
                 size: 12.0 + self.width * 3.0,
                 x: pos[0],
@@ -167,6 +324,7 @@ impl BoardView {
                 text,
             }),
         }
+        self.selected = None;
         self.changed(now);
     }
 }
@@ -181,9 +339,9 @@ pub(super) fn display_color(c: &str, p: &theme::Palette) -> Color32 {
 }
 
 /// Dessine des éléments ; `to_screen` place un point du dessin, `scale` = taille d'une unité à l'écran.
-pub(super) fn paint_elements(
+pub(super) fn paint_elements<'a>(
     painter: &egui::Painter,
-    elements: &[Element],
+    elements: impl IntoIterator<Item = &'a Element>,
     to_screen: &dyn Fn([f32; 2]) -> egui::Pos2,
     scale: f32,
     p: &theme::Palette,
@@ -234,6 +392,8 @@ pub(super) fn paint_elements(
                 let galley = painter.layout_no_wrap(text.clone(), FontId::proportional((size * scale).max(1.0)), color);
                 painter.galley(to_screen([*x, *y]), galley, color);
             }
+            // élément d'un format plus récent : gardé dans le fichier, pas dessiné
+            Element::Unknown(_) => {}
         }
     }
 }
@@ -261,7 +421,7 @@ pub(super) fn paint_preview(painter: &egui::Painter, sketch: &Sketch, rect: egui
 impl MnemoApp {
     /// Ouvre un whiteboard dans un onglet (réutilise l'onglet s'il est déjà ouvert).
     pub(super) fn open_whiteboard(&mut self, rel: &str) {
-        self.flush_save();
+        self.leave_note();
         match self.tabs.iter().position(|t| t.board.as_deref() == Some(rel)) {
             Some(i) => self.active_tab = i,
             None => {
@@ -295,50 +455,131 @@ impl MnemoApp {
         };
         self.db.send(Cmd::WriteFile { path: rel.clone(), bytes: Sketch::default().to_json().into_bytes() });
         self.files.push(rel.clone());
-        self.boards.insert(rel.clone(), BoardView::load(std::path::Path::new("")));
+        self.boards.insert(rel.clone(), BoardView::empty());
         self.open_whiteboard(&rel);
-        if let Some(b) = self.boards.get_mut(&rel) {
-            b.mtime = None;
-        }
     }
 
-    /// Enregistre les whiteboards modifiés depuis `SAVE_DELAY` (ou tous si `force`).
+    /// Enregistre les whiteboards modifiés depuis `SAVE_DELAY`. Avec `force` (fermeture de l'application) :
+    /// tous, tout de suite, texte en cours de saisie compris, et l'écriture est faite avant de rendre la main.
     pub(super) fn tick_whiteboards(&mut self, now: f64, force: bool) {
-        let due: Vec<String> = self
-            .boards
-            .iter()
-            .filter(|(_, b)| b.dirty.is_some_and(|t| force || now - t >= SAVE_DELAY))
-            .map(|(k, _)| k.clone())
-            .collect();
-        for rel in due {
-            let b = self.boards.get_mut(&rel).expect("board");
-            b.dirty = None;
+        let Some(root) = self.cfg.vault_dir.clone() else { return };
+        let shown = self.tabs.get(self.active_tab).and_then(|t| t.board.clone());
+        for (rel, b) in self.boards.iter_mut() {
+            let abs = root.join(rel);
+            // onglet caché (ou fermeture) : aucun geste ne peut continuer, le texte en cours de saisie est validé
+            if force || shown.as_deref() != Some(rel.as_str()) {
+                b.commit_text(now);
+                b.after_replace();
+            }
+            if b.busy() {
+                continue;
+            }
+            if b.stale {
+                b.sync_disk(&abs);
+            }
+            if b.error.is_some() || !b.dirty.is_some_and(|t| force || now - t >= SAVE_DELAY) {
+                continue;
+            }
+            // fichier disparu : pas recréé à l'ancien endroit sans l'accord de l'utilisateur (sauf à la
+            // fermeture, pour ne pas perdre les derniers traits)
+            if b.gone && !force {
+                continue;
+            }
+            // le fichier a-t-il changé depuis notre dernière lecture ? (autre appareil, synchronisation)
+            if b.mtime.is_none() || file_mtime(&abs) != b.mtime {
+                match read_disk(&abs) {
+                    Disk::Ok(remote, _) => {
+                        b.seen = true;
+                        if remote != b.base && b.sent_from.as_ref() != Some(&remote) {
+                            b.absorb(remote);
+                        }
+                    }
+                    Disk::Missing if b.seen && !force => {
+                        b.gone = true;
+                        continue;
+                    }
+                    // illisible pour l'instant (écriture en cours ailleurs, fichier verrouillé) : on réessaiera
+                    Disk::Unreadable(_) if !force => {
+                        b.dirty = Some(now);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             let bytes = b.sketch.to_json().into_bytes();
-            self.db.send(Cmd::WriteFile { path: rel.clone(), bytes });
-            // la date du fichier sera celle de notre écriture : ne pas le prendre pour un changement extérieur
+            b.dirty = None;
+            b.sent_from = Some(std::mem::replace(&mut b.base, b.sketch.elements.clone()));
+            // la date du fichier sera celle de notre écriture : `sync_disk` la reprendra en la voyant arrivée
             b.mtime = None;
+            if force && write_now(&abs, &bytes).is_ok() {
+                b.sent_from = None;
+                b.mtime = file_mtime(&abs);
+                b.gone = false;
+            } else {
+                self.db.send(Cmd::WriteFile { path: rel.clone(), bytes });
+            }
         }
     }
 
-    /// Un whiteboard ouvert a changé sur le disque (autre appareil) : recharge s'il n'est pas en cours d'édition.
+    /// Un whiteboard ouvert attend un enregistrement ou une relecture (pour redemander une frame même si son
+    /// onglet n'est pas affiché).
+    pub(super) fn boards_pending(&self) -> bool {
+        self.boards.values().any(|b| (b.dirty.is_some() && !b.read_only()) || b.stale)
+    }
+
+    /// Les pièces jointes ont changé sur le disque (autre appareil, synchronisation, notre propre écriture) :
+    /// chaque whiteboard ouvert s'aligne sur son fichier (rechargé, fusionné s'il a des traits non enregistrés,
+    /// en lecture seule s'il est devenu illisible ou a disparu).
     pub(super) fn reload_whiteboards(&mut self) {
-        let root = self.cfg.vault_dir.clone();
+        let Some(root) = self.cfg.vault_dir.clone() else { return };
         for (rel, b) in self.boards.iter_mut() {
-            let Some(abs) = root.as_ref().map(|r| r.join(rel)) else { continue };
-            let m = std::fs::metadata(&abs).and_then(|m| m.modified()).ok();
-            if b.mtime.is_none() {
-                b.mtime = m; // notre propre écriture
-            } else if m != b.mtime && b.dirty.is_none() && b.drawing.is_none() {
-                let fresh = BoardView::load(&abs);
-                b.sketch = fresh.sketch;
-                b.mtime = fresh.mtime;
-                b.selected = None;
+            b.sync_disk(&root.join(rel));
+        }
+    }
+
+    /// Le dossier `from` est renommé ou déplacé en `to` depuis l'interface : les whiteboards ouverts qu'il
+    /// contient suivent (onglets et dessins), au lieu de recréer l'ancien chemin au prochain trait.
+    pub(super) fn boards_moved(&mut self, from: &str, to: &str) {
+        // mêmes refus que le stockage local : le dossier ne bougera pas
+        let exists = self.file_abs(to).is_some_and(|p| p.exists());
+        if exists || portable_name(to).is_err() {
+            return;
+        }
+        for t in &mut self.tabs {
+            if let Some(new) = t.board.as_deref().and_then(|b| moved_path(b, from, to)) {
+                t.board = Some(new);
+            }
+        }
+        let keys: Vec<String> = self.boards.keys().cloned().collect();
+        for k in keys {
+            if let Some(new) = moved_path(&k, from, to)
+                && let Some(mut b) = self.boards.remove(&k)
+            {
+                // le fichier n'est pas encore à sa nouvelle place : ne pas le croire supprimé
+                b.seen = false;
+                b.mtime = None;
+                self.boards.insert(new, b);
+            }
+        }
+    }
+
+    /// Un fichier (ou tout un dossier, `folder`) est supprimé depuis l'interface : les onglets des whiteboards
+    /// concernés sont fermés, sans rien enregistrer.
+    pub(super) fn boards_deleted(&mut self, path: &str, folder: bool) {
+        let hit = |rel: &str| {
+            if folder { moved_path(rel, path, "").is_some() } else { rel.eq_ignore_ascii_case(path) }
+        };
+        self.boards.retain(|rel, _| !hit(rel));
+        for i in (0..self.tabs.len()).rev() {
+            if self.tabs[i].board.as_deref().is_some_and(&hit) {
+                self.close_tab(i);
             }
         }
     }
 
     pub(super) fn whiteboard_ui(&mut self, ui: &mut egui::Ui, rel: &str, now: f64) {
         let p = self.palette();
+        let abs = self.file_abs(rel);
         let Some(b) = self.boards.get_mut(rel) else {
             ui.label("Whiteboard introuvable.");
             return;
@@ -347,7 +588,7 @@ impl MnemoApp {
         let (head, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
         let title = basename(rel).trim_end_matches(&format!(".{}", crate::sketch::EXTENSION)).to_string();
         ui.painter().text(head.center(), egui::Align2::CENTER_CENTER, &title, FontId::proportional(14.0), p.text);
-        if b.dirty.is_some() {
+        if b.dirty.is_some() && !b.read_only() {
             ui.painter().text(
                 egui::pos2(head.right() - 16.0, head.center().y),
                 egui::Align2::RIGHT_CENTER,
@@ -387,10 +628,67 @@ impl MnemoApp {
             }
         }
 
+        // ---- fichier illisible ou disparu : lecture seule, rien n'est enregistré
+        if b.read_only() {
+            paint_elements(&painter, &b.sketch.elements, &to_screen, zoom, &p);
+            let (msg, detail, action) = match &b.error {
+                Some(e) => (
+                    "Ce whiteboard ne peut pas être lu. Il est en lecture seule : son fichier n'est pas modifié.",
+                    e.clone(),
+                    "Recharger",
+                ),
+                None => (
+                    "Le fichier de ce whiteboard a été déplacé ou supprimé en dehors de Mnemo.",
+                    rel.to_string(),
+                    "Recréer le fichier ici",
+                ),
+            };
+            let (mut retry, mut close) = (false, false);
+            let area = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width().min(560.0) - 32.0, 150.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+                egui::Frame::new()
+                    .fill(p.bg2)
+                    .stroke(egui::Stroke::new(1.0, p.border))
+                    .corner_radius(8.0)
+                    .inner_margin(16.0)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.vertical_centered(|ui| {
+                            ui.add(egui::Label::new(RichText::new(msg).color(p.text)).wrap());
+                            ui.add_space(4.0);
+                            ui.add(egui::Label::new(RichText::new(detail).size(12.0).color(RED)).wrap());
+                            ui.add_space(10.0);
+                            retry = ui.button(action).clicked();
+                            ui.add_space(4.0);
+                            close = ui.button("Fermer l'onglet").clicked();
+                        });
+                    });
+            });
+            if retry {
+                if b.error.is_some() {
+                    if let Some(abs) = &abs {
+                        *b = BoardView::load(abs);
+                    }
+                } else {
+                    // l'utilisateur veut le dessin à cet endroit : il y sera écrit au prochain enregistrement
+                    b.gone = false;
+                    b.seen = false;
+                    b.mtime = None;
+                    b.dirty = Some(now - SAVE_DELAY);
+                }
+            }
+            if close {
+                self.boards.remove(rel);
+                self.actions.push(UiAction::CloseTab(self.active_tab));
+            }
+            return;
+        }
+
         // ---- clavier (si aucun champ texte n'a le focus)
         // raccourcis actifs dans tout l'onglet (pointeur sur la barre d'outils compris), sauf pendant une saisie
+        // ou un geste : changer d'outil ou annuler au milieu d'un tracé laisserait un geste à moitié fait
         let typing = b.text_edit.is_some() || ui.ctx().memory(|m| m.focused().is_some());
-        if !typing {
+        if !typing && !b.busy() && !resp.is_pointer_button_down_on() {
             ui.input_mut(|i| {
                 if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
                     || i.consume_key(Modifiers::COMMAND, Key::Y)
@@ -458,17 +756,21 @@ impl MnemoApp {
                     {
                         match el {
                             Element::Stroke { points, .. } => {
-                                let last = points[points.len() - 1];
-                                if (w[0] - last[0]).hypot(w[1] - last[1]) * zoom > 1.5 {
+                                let far = points.last().is_none_or(|l| (w[0] - l[0]).hypot(w[1] - l[1]) * zoom > 1.5);
+                                if far {
                                     points.push(w);
                                 }
                             }
-                            Element::Line { points, .. } | Element::Arrow { points, .. } => points[1] = w,
+                            Element::Line { points, .. } | Element::Arrow { points, .. } => {
+                                if let Some(end) = points.get_mut(1) {
+                                    *end = w;
+                                }
+                            }
                             Element::Rect { x, y, w: ww, h, .. } | Element::Ellipse { x, y, w: ww, h, .. } => {
                                 *ww = w[0] - *x;
                                 *h = w[1] - *y;
                             }
-                            Element::Text { .. } => {}
+                            Element::Text { .. } | Element::Unknown(_) => {}
                         }
                     }
                     if resp.drag_stopped()
@@ -505,16 +807,13 @@ impl MnemoApp {
                         && let Some(w) = world
                         && let Some(i) = b.sketch.hit(w, tol)
                     {
-                        if resp.drag_started() || resp.clicked() || b.drawing.is_none() {
+                        // un seul « annuler » pour tout le coup de gomme
+                        if !b.erasing {
                             b.checkpoint();
-                            // marqueur de geste : un seul « annuler » pour tout le coup de gomme
-                            b.drawing = Some(Element::Line { color: String::new(), width: 0.0, points: vec![] });
+                            b.erasing = true;
                         }
                         b.sketch.elements.remove(i);
                         b.changed(now);
-                    }
-                    if resp.drag_stopped() || resp.clicked() {
-                        b.drawing = None;
                     }
                 }
                 Tool::Select => {
@@ -523,7 +822,7 @@ impl MnemoApp {
                     }
                     if resp.double_clicked()
                         && let Some(i) = b.selected
-                        && let Element::Text { x, y, text, .. } = &b.sketch.elements[i]
+                        && let Some(Element::Text { x, y, text, .. }) = b.sketch.elements.get(i)
                     {
                         b.text_edit = Some(([*x, *y], text.clone(), Some(i)));
                         b.focus_text = true;
@@ -532,14 +831,16 @@ impl MnemoApp {
                         b.selected = world.and_then(|w| b.sketch.hit(w, tol));
                         if b.selected.is_some() {
                             b.checkpoint();
+                            b.moving = true;
                         }
                     }
                     if resp.dragged()
-                        && let Some(i) = b.selected
+                        && b.moving
+                        && let Some(el) = b.selected.and_then(|i| b.sketch.elements.get_mut(i))
                     {
                         let d = resp.drag_delta() / zoom;
-                        b.sketch.elements[i].translate(d.x, d.y);
-                        b.changed(now);
+                        el.translate(d.x, d.y);
+                        b.dirty = Some(now);
                     }
                 }
                 Tool::Text => {
@@ -554,15 +855,18 @@ impl MnemoApp {
                 Tool::Hand => {}
             }
         }
+        // plus de bouton enfoncé sur la surface : aucun geste ne reste « en cours »
+        if !resp.dragged() {
+            b.drawing = None;
+            b.erasing = false;
+            b.moving = false;
+        }
 
         // ---- dessin
         let editing = b.text_edit.as_ref().and_then(|t| t.2);
-        let visible: Vec<Element> =
-            b.sketch.elements.iter().enumerate().filter(|(i, _)| Some(*i) != editing).map(|(_, e)| e.clone()).collect();
-        paint_elements(&painter, &visible, &to_screen, zoom, &p);
-        if let Some(el) = &b.drawing
-            && !el.color().is_empty()
-        {
+        let visible = b.sketch.elements.iter().enumerate().filter(|(i, _)| Some(*i) != editing).map(|(_, e)| e);
+        paint_elements(&painter, visible, &to_screen, zoom, &p);
+        if let Some(el) = &b.drawing {
             paint_elements(&painter, std::slice::from_ref(el), &to_screen, zoom, &p);
         }
         if let Some(i) = b.selected
@@ -633,8 +937,8 @@ impl MnemoApp {
                                 let glyph = theme::lucide(ic).map(String::from).unwrap_or_default();
                                 if theme::icon_button_sized(ui, &glyph, tip, b.tool == t, true, 16.0).clicked() {
                                     b.commit_text(now);
+                                    b.after_replace();
                                     b.tool = t;
-                                    b.selected = None;
                                 }
                             }
                             ui.add_space(6.0);
@@ -647,11 +951,16 @@ impl MnemoApp {
                                 }
                                 if resp.on_hover_text("Couleur").clicked() {
                                     b.color = c;
-                                    if let Some(i) = b.selected
-                                        && let Some(el) = b.sketch.elements.get_mut(i)
-                                    {
-                                        set_color(el, c);
-                                        b.dirty = Some(now);
+                                    // recolorer la sélection est une modification comme une autre : annulable
+                                    let recolor = b.selected.filter(|i| {
+                                        b.sketch.elements.get(*i).is_some_and(|el| {
+                                            !matches!(el, Element::Unknown(_)) && !el.color().eq_ignore_ascii_case(c)
+                                        })
+                                    });
+                                    if let Some(i) = recolor {
+                                        b.checkpoint();
+                                        b.sketch.elements[i].set_color(c);
+                                        b.changed(now);
                                     }
                                 }
                             }
@@ -680,6 +989,8 @@ impl MnemoApp {
                             if theme::icon_button_sized(ui, &undo, "Annuler (Ctrl+Z)", false, !b.undo.is_empty(), 16.0)
                                 .clicked()
                             {
+                                // le texte en cours de saisie est d'abord validé (puis annulé avec le reste)
+                                b.commit_text(now);
                                 b.undo(now);
                             }
                             if theme::icon_button_sized(
@@ -692,6 +1003,7 @@ impl MnemoApp {
                             )
                             .clicked()
                             {
+                                b.commit_text(now);
                                 b.redo(now);
                             }
                             if theme::icon_button_sized(ui, &fit, "Tout afficher", false, true, 16.0).clicked() {
@@ -700,28 +1012,127 @@ impl MnemoApp {
                         });
                     });
             });
-        if let Some(e) = &b.error {
-            painter.text(
-                egui::pos2(rect.center().x, rect.bottom() - 20.0),
-                egui::Align2::CENTER_CENTER,
-                e,
-                FontId::proportional(12.0),
-                Color32::from_rgb(0xfb, 0x46, 0x4c),
-            );
-        }
-        if b.dirty.is_some() || b.drawing.is_some() {
+        if b.dirty.is_some() || b.busy() || b.stale {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
         }
     }
 }
 
-fn set_color(el: &mut Element, c: &str) {
-    match el {
-        Element::Stroke { color, .. }
-        | Element::Rect { color, .. }
-        | Element::Ellipse { color, .. }
-        | Element::Line { color, .. }
-        | Element::Arrow { color, .. }
-        | Element::Text { color, .. } => *color = c.to_string(),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stroke(x: f32) -> Element {
+        Element::Stroke { color: INK.into(), width: 2.0, points: vec![[x, 0.0], [x, 5.0]] }
+    }
+
+    /// Chemin d'un fichier de test dans un dossier temporaire neuf.
+    fn tmp_board() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("mnemo-board-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("b.mnemo-board")
+    }
+
+    fn write(path: &Path, elements: &[Element]) {
+        std::fs::write(path, Sketch { version: 1, elements: elements.to_vec() }.to_json()).unwrap();
+    }
+
+    #[test]
+    fn folder_move_remaps_paths() {
+        let moved = |p: &str, from: &str, to: &str| moved_path(p, from, to);
+        assert_eq!(moved("Projets/a.mnemo-board", "projets", "Archive/P").as_deref(), Some("Archive/P/a.mnemo-board"));
+        assert_eq!(moved("Projets/Sous/a.mnemo-board", "Projets", "X").as_deref(), Some("X/Sous/a.mnemo-board"));
+        assert_eq!(moved("Projets2/a.mnemo-board", "Projets", "X"), None);
+        assert_eq!(moved("Projets", "Projets", "X"), None);
+        assert_eq!(moved("Été/b.mnemo-board", "été", "X").as_deref(), Some("X/b.mnemo-board"));
+    }
+
+    #[test]
+    fn unreadable_board_is_read_only_and_kept() {
+        let abs = tmp_board();
+        std::fs::write(&abs, "{ pas du json").unwrap();
+        let mut b = BoardView::load(&abs);
+        assert!(b.error.is_some() && b.read_only());
+        // un changement signalé ne fait pas oublier l'erreur tant que le fichier reste illisible
+        b.sync_disk(&abs);
+        assert!(b.error.is_some());
+        // réparé ailleurs : le dessin revient
+        write(&abs, &[stroke(1.0)]);
+        b.sync_disk(&abs);
+        assert!(b.error.is_none() && !b.read_only());
+        assert_eq!(b.sketch.elements, vec![stroke(1.0)]);
+        // fichier supprimé hors de Mnemo : lecture seule, pas d'erreur de lecture
+        std::fs::remove_file(&abs).unwrap();
+        b.sync_disk(&abs);
+        assert!(b.gone && b.read_only());
+        assert!(BoardView::load(&abs).gone);
+    }
+
+    #[test]
+    fn remote_change_is_merged_and_history_dropped() {
+        let abs = tmp_board();
+        write(&abs, &[stroke(1.0)]);
+        let mut b = BoardView::load(&abs);
+        // un trait ici, pas encore enregistré
+        b.checkpoint();
+        b.sketch.elements.push(stroke(2.0));
+        b.changed(0.0);
+        // pendant ce temps un autre appareil ajoute le sien
+        write(&abs, &[stroke(1.0), stroke(3.0)]);
+        b.mtime = None; // (la date du fichier peut ne pas avoir bougé dans la même seconde)
+        b.sync_disk(&abs);
+        assert_eq!(b.sketch.elements, vec![stroke(1.0), stroke(3.0), stroke(2.0)]);
+        assert!(b.undo.is_empty() && b.redo.is_empty() && b.is_dirty());
+        // sans rien de local : simple rechargement
+        b.dirty = None;
+        b.base = b.sketch.elements.clone();
+        write(&abs, &[stroke(3.0)]);
+        b.mtime = None;
+        b.sync_disk(&abs);
+        assert_eq!(b.sketch.elements, vec![stroke(3.0)]);
+        // pendant un geste : rien ne bouge, relecture remise à plus tard
+        b.erasing = true;
+        write(&abs, &[]);
+        b.mtime = None;
+        b.sync_disk(&abs);
+        assert!(b.stale && b.sketch.elements == vec![stroke(3.0)]);
+    }
+
+    #[test]
+    fn own_write_in_flight_is_not_a_remote_change() {
+        let abs = tmp_board();
+        write(&abs, &[stroke(1.0)]);
+        let mut b = BoardView::load(&abs);
+        // enregistrement envoyé (pas encore écrit par le stockage local)
+        b.sketch.elements.push(stroke(2.0));
+        b.sent_from = Some(std::mem::replace(&mut b.base, b.sketch.elements.clone()));
+        b.mtime = None;
+        b.sync_disk(&abs);
+        assert_eq!(b.sketch.elements, vec![stroke(1.0), stroke(2.0)]);
+        assert!(b.mtime.is_none());
+        // l'écriture arrive
+        write(&abs, &[stroke(1.0), stroke(2.0)]);
+        b.sync_disk(&abs);
+        assert!(b.mtime.is_some() && b.sent_from.is_none());
+    }
+
+    #[test]
+    fn stale_text_index_never_overwrites_another_element() {
+        let mut b = BoardView::empty();
+        b.sketch.elements = vec![stroke(1.0)];
+        // l'indice désignait un texte qui n'est plus là : le texte saisi devient un nouvel élément
+        b.text_edit = Some(([0.0, 0.0], "bonjour".into(), Some(0)));
+        b.commit_text(1.0);
+        assert_eq!(b.sketch.elements.len(), 2);
+        assert_eq!(b.sketch.elements[0], stroke(1.0));
+        assert!(matches!(&b.sketch.elements[1], Element::Text { text, .. } if text == "bonjour"));
+        // annuler oublie la saisie en cours
+        b.text_edit = Some(([0.0, 0.0], "x".into(), Some(1)));
+        b.undo(2.0);
+        assert!(b.text_edit.is_none() && b.sketch.elements == vec![stroke(1.0)]);
+        // texte vide sans cible : aucun point d'annulation, « rétablir » reste possible
+        b.text_edit = Some(([0.0, 0.0], "  ".into(), None));
+        b.commit_text(3.0);
+        assert_eq!(b.redo.len(), 1);
     }
 }

@@ -84,6 +84,8 @@ pub(super) enum ConflictTab {
 /// resolved hunk by hunk (three-way merge, base = last known saved version).
 pub(super) struct Conflict {
     pub(super) remote: Note,
+    /// texte de l'éditeur pour lequel `blocks` a été calculé (on peut continuer à écrire pendant le conflit)
+    pub(super) mine: String,
     pub(super) blocks: Vec<Block>,
     pub(super) tab: ConflictTab,
     pub(super) diff_against_result: bool,
@@ -163,7 +165,8 @@ pub(super) struct TreeFolder {
     pub(super) name: String,
     pub(super) path: String,
     pub(super) folders: BTreeMap<String, TreeFolder>,
-    pub(super) notes: Vec<(String, Uuid, chrono::DateTime<chrono::Utc>)>,
+    /// (nom, identifiant, date de modification, chemin réel : le dossier affiché fusionne les casses)
+    pub(super) notes: Vec<(String, Uuid, chrono::DateTime<chrono::Utc>, String)>,
     /// pièces jointes du dossier (chemins relatifs complets)
     pub(super) files: Vec<String>,
 }

@@ -60,6 +60,7 @@ impl MnemoApp {
         self.cfg.vault_dir = Some(dir.clone());
         self.vault_last = None;
         self.cfg.save();
+        self.leave_note();
         self.open = None;
         self.tabs = vec![Tab::default()];
         self.active_tab = 0;

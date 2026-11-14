@@ -40,7 +40,6 @@ Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle
 | `schema.sql` | tables, triggers (version, liens, `pg_notify`). Rejoué à chaque connexion : il doit rester **idempotent** |
 | `db/mod.rs` | `Cmd`, `Msg`, `DbHandle`, `spawn`, `Worker::run` et l'aiguillage `handle` |
 | `db/connection.rs` | ouverture (TLS si `sslmode=require`), migration sous verrou consultatif, boucle `LISTEN` avec backoff |
-| `db/notes.rs` | commandes notes / dossiers / recherche / graphe / plugins, réécriture des `[[liens]]` au renommage |
 | `db/board.rs` | commandes projets / tickets / rapports, chargement du tableau de bord |
 | `db/vault_sync.rs` | synchro dossier ↔ base : notes, dossiers, renommages, suppressions, icônes, plugins et pièces jointes (table `files`) |
 | `local/mod.rs` | stockage local : commandes des notes sur les fichiers, relecture du disque |
@@ -117,6 +116,12 @@ Dans l'ordre :
 3. **Autres appareils** : `listen_loop` reçoit le NOTIFY (`Msg::Event`) ; l'interface demande aussitôt un passage
    (`Cmd::VaultScan`) qui écrit le fichier. Leur stockage local le voit (≤ 1 s) et envoie `Msg::LocalEvent` :
    la note ouverte est rechargée (`apply_refresh`), fusionnée si elle était en cours de modification.
+   Si le fichier et la base ont changé tous les deux depuis le dernier passage (deux appareils écrivent en même
+   temps, ou l'un était hors ligne), `vault_sync` fusionne à 3 voies avec le texte du dernier passage
+   (`.mnemo/base/<id>.md`) ; mêmes lignes changées : la base l'emporte et le texte local va dans une note
+   « (conflit disque) ». L'état du dernier passage (`.mnemo/sync.json`) n'avance qu'après la validation de la
+   transaction et survit au redémarrage. Le stockage local relit le fichier avant chaque enregistrement et les
+   deux threads prennent `shared.io_lock` pour « vérifier puis écrire » : aucun n'écrase le texte de l'autre.
 4. **Perte de connexion** : le worker passe hors ligne (`Msg::ConnectionFailed`, une seule alerte), réessaie toutes
    les 30 s et, au retour, recompare tout le dossier avec la base.
 
@@ -134,16 +139,24 @@ Dans `src/app/commands.rs` :
 ### Ajouter une commande au worker
 
 1. `src/db/mod.rs` : ajouter la variante à `Cmd` (et, si elle renvoie un résultat, à `Msg`).
-2. Implémenter la branche dans `note_cmd` (`db/notes.rs`), `board_cmd` (`db/board.rs`) ou `github_cmd`
-   (`db/github_sync.rs`). Pour une commande projets / tickets / GitHub, l'ajouter aussi à l'aiguillage
-   de `Worker::handle`. Les autres commandes vont à `note_cmd` par défaut.
+2. Implémenter la branche dans `board_cmd` (`db/board.rs`) ou `github_cmd` (`db/github_sync.rs`) et l'ajouter
+   à l'aiguillage de `Worker::handle`. Une commande sur les notes va dans le stockage local
+   (`local/mod.rs`, et `Cmd::is_local`).
 3. Les écritures passent par `tagged_tx` pour que les autres instances sachent d'où vient la modification.
 4. `src/app/sync.rs` : traiter le nouveau `Msg` dans `handle_messages`.
 
 ### Modifier le schéma
 
-`schema.sql` est rejoué à **chaque** connexion (sous `pg_advisory_lock`). N'utilisez que des instructions
-idempotentes : `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`…
+`schema.sql` est rejoué à **chaque** connexion (sous `pg_advisory_lock`), par toutes les versions de Mnemo
+branchées sur la base, anciennes comprises. Il doit rester idempotent et ne prendre aucun verrou de table
+quand il n'y a rien à faire :
+
+- tables : `CREATE TABLE IF NOT EXISTS` ; fonctions : `CREATE OR REPLACE FUNCTION` ;
+- colonnes, index, contraintes et triggers : par les fonctions `mnemo_ensure_column / index / check / trigger`,
+  qui ne créent l'objet que s'il manque ;
+- pour changer un trigger existant, créez-en un sous un **nouveau nom** : les anciennes versions recréent
+  les leurs à chaque connexion ;
+- ne supprimez pas une colonne ou un index qu'une version publiée référence dans son propre schéma.
 
 ## Le patch `vendor/egui_commonmark_backend`
 

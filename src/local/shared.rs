@@ -88,12 +88,15 @@ pub struct Shared {
     pub ids: Mutex<IdMap>,
     /// pris pendant toute lecture-modification-écriture de `.mnemo/icons.json` / `plugins.json`
     pub state_lock: Mutex<()>,
+    /// pris par le stockage local et par la synchronisation autour de « vérifier que le fichier d'une note n'a pas
+    /// changé, puis l'écrire » : aucun des deux n'écrase un texte que l'autre vient d'enregistrer
+    pub io_lock: Mutex<()>,
 }
 
 pub type SharedState = Arc<Shared>;
 
 pub fn new_shared() -> SharedState {
-    Arc::new(Shared { ids: Mutex::new(IdMap::default()), state_lock: Mutex::new(()) })
+    Arc::new(Shared { ids: Mutex::new(IdMap::default()), state_lock: Mutex::new(()), io_lock: Mutex::new(()) })
 }
 
 /// Écrit via un fichier temporaire caché puis renomme (jamais de fichier à moitié écrit).

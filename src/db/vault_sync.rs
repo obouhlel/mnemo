@@ -7,16 +7,18 @@
 //!   (les fichiers supprimés depuis Mnemo vont dans `.trash/` du coffre, comme dans Obsidian) ;
 //! - les dossiers vides sont créés / supprimés des deux côtés.
 //!
-//! L'état connu (`Known` : version en base, date de modification du fichier, empreinte du
-//! contenu) sert à savoir de quel côté vient chaque changement. Si les deux côtés ont changé
-//! depuis la dernière synchronisation, la base l'emporte et le texte du disque est conservé
-//! dans une note « (conflit disque) ».
+//! L'état connu (`Known` : version en base et date de modification du fichier au dernier passage) sert à savoir
+//! de quel côté vient chaque changement. Il est enregistré dans `.mnemo/sync.json`, avec le texte de chaque note
+//! à ce moment-là dans `.mnemo/base/` : il survit donc à un redémarrage et à une coupure de la base.
+//! Si les deux côtés ont changé depuis la dernière synchronisation, les deux textes sont fusionnés (fusion à
+//! 3 voies, comme dans l'éditeur). S'ils ont changé les mêmes lignes, la base l'emporte et le texte du disque est
+//! conservé dans une note « (conflit disque) ». Rien n'est noté comme synchronisé avant la validation de la
+//! transaction : un passage interrompu est simplement refait.
 //! Les dossiers cachés (`.obsidian`, `.trash`, `.git`…) et les fichiers autres que `.md` sont ignorés.
 
 use super::*;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -45,34 +47,96 @@ pub(super) struct Vault {
     known: HashMap<Uuid, Known>,
     /// dossiers (en minuscules) présents des deux côtés au dernier passage
     folders: HashSet<String>,
+    /// premier passage depuis la connexion (résumé affiché une fois)
     first: bool,
+    /// un passage a déjà abouti avec cette base (maintenant ou avant un redémarrage) : une absence d'un côté
+    /// est alors une suppression à recopier, plus une première rencontre
+    synced: bool,
+    /// identifiant de la base avec laquelle l'état connu a été établi
+    db_id: String,
+    db_checked: bool,
     /// icônes / réglages des plugins tels qu'au dernier passage (base de la fusion à 3 voies)
-    kv_known: HashMap<&'static str, Map<String, Value>>,
+    kv_known: HashMap<String, Map<String, Value>>,
     /// pièces jointes au dernier passage : chemin → (empreinte, date de modification du fichier)
     file_known: HashMap<String, (String, Option<SystemTime>)>,
 }
 
+/// Contenu de `.mnemo/sync.json`.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct SavedState {
+    db: String,
+    notes: HashMap<Uuid, Known>,
+    folders: HashSet<String>,
+    kv: HashMap<String, Map<String, Value>>,
+    files: HashMap<String, (String, Option<SystemTime>)>,
+}
+
+fn state_file(root: &Path) -> PathBuf {
+    root.join(crate::local::shared::STATE_DIR).join("sync.json")
+}
+
+fn base_dir(root: &Path) -> PathBuf {
+    root.join(crate::local::shared::STATE_DIR).join("base")
+}
+
+/// Texte d'une note au dernier passage (base de la fusion à 3 voies).
+fn read_base(root: &Path, id: Uuid) -> Option<String> {
+    std::fs::read_to_string(base_dir(root).join(format!("{id}.md"))).ok()
+}
+
 impl Vault {
     pub(super) fn new(root: PathBuf) -> Self {
+        let saved: Option<SavedState> =
+            std::fs::read_to_string(state_file(&root)).ok().and_then(|s| serde_json::from_str(&s).ok());
+        let synced = saved.is_some();
+        let s = saved.unwrap_or_default();
         Self {
             root,
-            known: HashMap::new(),
-            folders: HashSet::new(),
+            known: s.notes,
+            folders: s.folders,
             first: true,
-            kv_known: HashMap::new(),
-            file_known: HashMap::new(),
+            synced,
+            db_id: s.db,
+            db_checked: false,
+            kv_known: s.kv,
+            file_known: s.files,
         }
     }
 
-    /// Oublie l'état connu : le prochain passage recompare tout (reconnexion à la base).
+    /// Connexion coupée ou changée : l'état connu est gardé (c'est le dernier état commun), mais le prochain
+    /// passage vérifie qu'il s'agit bien de la même base.
     pub(super) fn reset(&mut self) {
+        self.first = true;
+        self.db_checked = false;
+    }
+
+    /// Autre base que celle de l'état connu : tout est à recomparer comme une première rencontre.
+    fn forget(&mut self) {
         self.known.clear();
         self.folders.clear();
         self.kv_known.clear();
         self.file_known.clear();
-        self.first = true;
+        self.synced = false;
+        let _ = std::fs::remove_dir_all(base_dir(&self.root));
+    }
+
+    fn save(&self) {
+        let state = SavedState {
+            db: self.db_id.clone(),
+            notes: self.known.clone(),
+            folders: self.folders.clone(),
+            kv: self.kv_known.clone(),
+            files: self.file_known.clone(),
+        };
+        if let Ok(s) = serde_json::to_string(&state) {
+            let _ = crate::local::shared::write_atomic(&state_file(&self.root), &s);
+        }
     }
 }
+
+/// Changements de l'état connu des pièces jointes, appliqués une fois la transaction validée.
+type FileUpdates = Vec<(String, Option<(String, Option<SystemTime>)>)>;
 
 /// Taille maximale d'une pièce jointe synchronisée.
 const MAX_FILE: u64 = 50 * 1024 * 1024;
@@ -129,11 +193,18 @@ async fn sync_files(
     v: &mut Vault,
     root: &Path,
     stats: &mut VaultStats,
-) -> Res<()> {
+) -> Res<FileUpdates> {
+    let mut updates: FileUpdates = vec![];
     let local: HashMap<String, AttFile> =
         walk_files(root).into_iter().filter(|f| f.size <= MAX_FILE).map(|f| (f.rel.clone(), f)).collect();
-    let remote: HashMap<String, String> =
-        t.query("SELECT path, hash FROM files", &[]).await?.iter().map(|r| (r.get(0), r.get(1))).collect();
+    // un chemin de la base qui sortirait du dossier (« .. », chemin absolu, lecteur Windows) est ignoré
+    let remote: HashMap<String, String> = t
+        .query("SELECT path, hash FROM files", &[])
+        .await?
+        .iter()
+        .map(|r| (r.get::<_, String>(0), r.get(1)))
+        .filter(|(p, _)| safe_rel(p))
+        .collect();
     let mut paths: Vec<&String> = local.keys().chain(remote.keys()).collect();
     paths.sort();
     paths.dedup();
@@ -176,7 +247,17 @@ async fn sync_files(
             }
             FilePlan::Download | FilePlan::Conflict => {
                 if plan == FilePlan::Conflict && abs.exists() {
-                    let _ = std::fs::rename(&abs, root.join(conflict_name(path)));
+                    // la version locale est gardée à côté, sans écraser une copie de conflit plus ancienne
+                    let mut copy = root.join(conflict_name(path));
+                    if copy.exists() {
+                        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+                        copy = root.join(
+                            conflict_name(path).replace("(conflit disque)", &format!("(conflit disque {stamp})")),
+                        );
+                    }
+                    if std::fs::rename(&abs, &copy).is_err() {
+                        continue;
+                    }
                 }
                 let data: Vec<u8> = t.query_one("SELECT data FROM files WHERE path = $1", &[path]).await?.get(0);
                 if write_bytes(&abs, &data).is_ok() {
@@ -207,16 +288,23 @@ async fn sync_files(
             FilePlan::Download | FilePlan::Conflict => rhash,
             FilePlan::DeleteRemote | FilePlan::DeleteLocal => None,
         };
-        match final_hash {
-            Some(h) if abs.exists() => {
-                v.file_known.insert(path.clone(), (h, now_local));
-            }
-            _ => {
-                v.file_known.remove(path);
-            }
+        let new = match final_hash {
+            Some(h) if abs.exists() => Some((h, now_local)),
+            _ => None,
+        };
+        if new != known {
+            updates.push((path.clone(), new));
         }
     }
-    Ok(())
+    Ok(updates)
+}
+
+/// Chemin relatif qui reste dans le dossier des notes et hors de ses dossiers cachés (.mnemo, .obsidian, .trash).
+fn safe_rel(path: &str) -> bool {
+    !path.contains(['\\', ':'])
+        && path
+            .split('/')
+            .all(|s| !s.is_empty() && !s.starts_with('.') && s.trim() == s && !s.chars().any(char::is_control))
 }
 
 fn write_bytes(abs: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -265,11 +353,11 @@ fn merge_kv(
     (result, push)
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Known {
     path: String,
     version: i32,
     mtime: Option<SystemTime>,
-    hash: u64,
 }
 
 #[derive(Debug)]
@@ -277,12 +365,6 @@ pub(crate) struct DiskFile {
     pub(crate) rel: String,
     pub(crate) abs: PathBuf,
     pub(crate) mtime: Option<SystemTime>,
-}
-
-fn hash(s: &str) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    s.hash(&mut h);
-    h.finish()
 }
 
 fn mtime(p: &Path) -> Option<SystemTime> {
@@ -436,6 +518,62 @@ pub(crate) fn write_file(abs: &Path, content: &str) -> std::io::Result<Option<Sy
     Ok(mtime(abs))
 }
 
+/// Écrit le fichier d'une note seulement s'il n'a pas bougé depuis le parcours du dossier (`seen` : sa date à ce
+/// moment-là, `None` s'il n'existait pas). `Ok(None)` : il vient de changer (enregistrement en cours dans
+/// l'éditeur), il n'est pas touché et sera repris au passage suivant.
+fn write_if_unchanged(
+    shared: &crate::local::shared::SharedState,
+    abs: &Path,
+    seen: Option<SystemTime>,
+    content: &str,
+) -> std::io::Result<Option<Option<SystemTime>>> {
+    let _io = shared.io_lock.lock().expect("io lock");
+    if mtime(abs) != seen {
+        return Ok(None);
+    }
+    write_file(abs, content).map(Some)
+}
+
+/// Garde un texte dans une nouvelle note à côté de l'originale : « Note (conflit disque) », puis
+/// « Note (conflit disque 2) »… Elle sera envoyée à la base comme toute nouvelle note.
+fn conflict_note(root: &Path, path: &str, text: &str) -> std::io::Result<()> {
+    let mut n = 1;
+    loop {
+        let name = if n == 1 { format!("{path} (conflit disque)") } else { format!("{path} (conflit disque {n})") };
+        let abs = note_file(root, &name);
+        if !abs.exists() {
+            return write_file(&abs, text).map(|_| ());
+        }
+        n += 1;
+    }
+}
+
+/// Garde un texte écarté à la première rencontre dans `.trash/` (rien n'est détruit sans trace).
+fn keep_in_trash(root: &Path, path: &str, text: &str) {
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let _ = write_file(&note_file(&root.join(".trash"), &format!("{path} (remplacée {stamp})")), text);
+}
+
+/// Fusion à 3 voies ; `None` si les deux côtés ont changé les mêmes lignes.
+fn merge3(base: &str, disk: &str, db: &str) -> Option<String> {
+    let blocks = crate::merge::build(base, disk, db);
+    if crate::merge::conflict_count(&blocks).0 > 0 {
+        return None;
+    }
+    crate::merge::assemble(&blocks)
+}
+
+/// Met le contenu d'une note à jour dans la base si elle y est toujours à la version attendue.
+/// `None` : elle a changé entre-temps (autre appareil), rien n'est écrit.
+async fn push(t: &tokio_postgres::Transaction<'_>, id: Uuid, text: &str, version: i32) -> Res<Option<i32>> {
+    Ok(t.query_opt(
+        "UPDATE notes SET content = $2 WHERE id = $1 AND version = $3 RETURNING version",
+        &[&id, &text, &version],
+    )
+    .await?
+    .map(|r| r.get(0)))
+}
+
 /// Déplace un fichier dans `<coffre>/.trash/`, comme la corbeille d'Obsidian.
 fn trash(root: &Path, f: &DiskFile) {
     let mut dest = note_file(&root.join(".trash"), &f.rel);
@@ -467,7 +605,7 @@ enum Plan {
     Pull,
     /// les deux ont changé
     Both,
-    /// première rencontre, présent des deux côtés : le plus récent l'emporte
+    /// première rencontre, présent des deux côtés : le plus récent l'emporte (l'autre texte va dans .trash)
     Reconcile(chrono::DateTime<chrono::Utc>),
     /// fichier supprimé du disque
     DeleteNote,
@@ -490,17 +628,36 @@ impl Worker {
             return Ok(());
         }
         let root = v.root.clone();
+        // l'état connu ne vaut que pour la base avec laquelle il a été établi
+        if !v.db_checked {
+            let db_id: String =
+                self.conn().query_one("SELECT value FROM mnemo_meta WHERE key = 'db_id'", &[]).await?.get(0);
+            if v.db_id != db_id {
+                v.forget();
+                v.db_id = db_id;
+            }
+            v.db_checked = true;
+        }
+        let mut dirty = false;
         let (mut disk, dirs, skipped) = walk(&root);
         let mut stats = VaultStats { skipped, ..Default::default() };
 
         let rows = self.conn().query("SELECT id, path, version, updated_at FROM notes", &[]).await?;
         let db_ids: HashSet<Uuid> = rows.iter().map(|r| r.get(0)).collect();
         let mut seen: HashSet<String> = HashSet::new();
-        let mut plans: Vec<(Uuid, String, i32, Plan)> = vec![];
+        let mut plans: Vec<(Uuid, String, Plan)> = vec![];
 
         for r in &rows {
             let (id, path, version): (Uuid, String, i32) = (r.get(0), r.get(1), r.get(2));
             let key = path.to_lowercase();
+            // chemin que Mnemo n'accepte pas (« .. », « \\ », « # »… écrit par un autre client ou en SQL) :
+            // la note reste dans la base, mais rien n'est écrit ni supprimé pour elle sur ce disque
+            if normalize_path(&path).as_deref() != Ok(path.as_str()) || (cfg!(windows) && portable_name(&path).is_err())
+            {
+                seen.insert(key);
+                stats.skipped += 1;
+                continue;
+            }
             if let Some(k) = v.known.get_mut(&id) {
                 if k.path != path {
                     // renommée / déplacée dans Mnemo : on déplace le fichier
@@ -526,6 +683,7 @@ impl Worker {
                         }
                     }
                     k.path = path.clone();
+                    dirty = true;
                 }
                 seen.insert(key.clone());
                 let db_changed = version != k.version;
@@ -539,20 +697,20 @@ impl Worker {
                         (true, true) => Plan::Both,
                     },
                 };
-                plans.push((id, path, version, plan));
+                plans.push((id, path, plan));
             } else {
                 seen.insert(key.clone());
                 let plan = if disk.contains_key(&key) { Plan::Reconcile(r.get(3)) } else { Plan::Write };
-                plans.push((id, path, version, plan));
+                plans.push((id, path, plan));
             }
         }
 
-        // contenu en base des notes concernées, en une requête
-        let need: Vec<Uuid> = plans.iter().filter(|p| !matches!(p.3, Plan::DeleteNote)).map(|p| p.0).collect();
-        let mut contents: HashMap<Uuid, String> = HashMap::new();
+        // version et contenu en base des notes concernées, lus ensemble en une requête
+        let need: Vec<Uuid> = plans.iter().map(|p| p.0).collect();
+        let mut contents: HashMap<Uuid, (i32, String)> = HashMap::new();
         if !need.is_empty() {
-            for r in self.conn().query("SELECT id, content FROM notes WHERE id = ANY($1)", &[&need]).await? {
-                contents.insert(r.get(0), r.get(1));
+            for r in self.conn().query("SELECT id, version, content FROM notes WHERE id = ANY($1)", &[&need]).await? {
+                contents.insert(r.get(0), (r.get(1), r.get(2)));
             }
         }
 
@@ -560,6 +718,8 @@ impl Worker {
         let gone: Vec<Uuid> = v.known.keys().filter(|id| !db_ids.contains(id)).copied().collect();
         for id in gone {
             let k = v.known.remove(&id).expect("known");
+            let _ = std::fs::remove_file(base_dir(&root).join(format!("{id}.md")));
+            dirty = true;
             let key = k.path.to_lowercase();
             if seen.contains(&key) {
                 continue; // une autre note occupe désormais ce chemin
@@ -576,6 +736,7 @@ impl Worker {
         }
 
         let tag = format!("{}#disk", self.client_id);
+        let shared = self.shared.clone();
         let t = tagged_tx(self.client.as_mut().expect("connected"), &tag).await?;
         // dossiers qui contiennent des notes : ils existent implicitement des deux côtés
         let mut note_dirs: HashSet<String> = HashSet::new();
@@ -583,28 +744,37 @@ impl Worker {
             ancestors(r.get::<_, &str>(1), &mut note_dirs);
         }
 
-        for (id, path, version, plan) in plans {
+        // état connu après ce passage (`None` : note supprimée) avec le texte commun aux deux côtés ;
+        // appliqué seulement une fois la transaction validée
+        let mut pending: Vec<(Uuid, Option<(Known, String)>)> = vec![];
+
+        for (id, path, plan) in plans {
             let abs = note_file(&root, &path);
-            let db_text = contents.remove(&id).unwrap_or_default();
-            let record = |v: &mut Vault, version: i32, mtime: Option<SystemTime>, text: &str| {
-                v.known.insert(id, Known { path: path.clone(), version, mtime, hash: hash(text) });
-            };
+            // supprimée de la base depuis la première requête : traitée au passage suivant
+            let Some((version, db_text)) = contents.remove(&id) else { continue };
             let disk_file = disk.get(&path.to_lowercase());
+            let on_disk = disk_file.and_then(|f| f.mtime);
+            let known = |version: i32, mtime: Option<SystemTime>, text: &str| {
+                (id, Some((Known { path: path.clone(), version, mtime }, text.to_string())))
+            };
             // la note garde en local l'identifiant qu'elle a dans la base
-            self.shared.ids.lock().expect("ids").set(&path, id, true);
+            shared.ids.lock().expect("ids").set(&path, id, true);
             match plan {
-                Plan::Write => match write_file(&abs, &db_text) {
-                    Ok(m) => {
+                Plan::Write => match write_if_unchanged(&shared, &abs, on_disk, &db_text) {
+                    Ok(Some(m)) => {
                         stats.written += 1;
-                        record(v, version, m, &db_text);
+                        pending.push(known(version, m, &db_text));
                     }
+                    Ok(None) => {}
                     Err(e) => em.emit(Msg::Error(format!("Écriture de {} impossible : {e}", abs.display()))),
                 },
                 Plan::DeleteNote => {
-                    t.execute("DELETE FROM notes WHERE id = $1", &[&id]).await?;
-                    v.known.remove(&id);
-                    stats.removed += 1;
-                    continue;
+                    // seulement si la note n'a pas changé ailleurs entre-temps (sinon elle sera réécrite)
+                    let n = t.execute("DELETE FROM notes WHERE id = $1 AND version = $2", &[&id, &version]).await?;
+                    if n > 0 {
+                        pending.push((id, None));
+                        stats.removed += 1;
+                    }
                 }
                 Plan::Pull | Plan::Both | Plan::Reconcile(_) => {
                     let Some(f) = disk_file else { continue };
@@ -612,39 +782,71 @@ impl Worker {
                         stats.skipped += 1;
                         continue;
                     };
-                    let known_hash = v.known.get(&id).map(|k| k.hash);
-                    let disk_newer = match plan {
+                    if text == db_text {
+                        // rien à recopier (fichier simplement « touché », ou même changement des deux côtés)
+                        pending.push(known(version, f.mtime, &text));
+                        continue;
+                    }
+                    match plan {
+                        Plan::Pull => {
+                            // `None` : la base a changé pendant ce passage, fusion au suivant
+                            if let Some(nv) = push(&t, id, &text, version).await? {
+                                stats.pulled += 1;
+                                pending.push(known(nv, f.mtime, &text));
+                            }
+                        }
+                        Plan::Both => {
+                            let merged = read_base(&root, id).and_then(|base| merge3(&base, &text, &db_text));
+                            match merged {
+                                // changements à des endroits différents : les deux côtés reçoivent la fusion
+                                Some(m) => {
+                                    let nv =
+                                        if m == db_text { Some(version) } else { push(&t, id, &m, version).await? };
+                                    let Some(nv) = nv else { continue };
+                                    stats.pulled += 1;
+                                    if m == text {
+                                        pending.push(known(nv, f.mtime, &m));
+                                    } else if let Ok(Some(mt)) = write_if_unchanged(&shared, &abs, f.mtime, &m) {
+                                        stats.written += 1;
+                                        pending.push(known(nv, mt, &m));
+                                    }
+                                }
+                                // mêmes lignes changées des deux côtés : la base l'emporte, le texte du disque est
+                                // d'abord gardé dans une note à part
+                                None => {
+                                    let _io = shared.io_lock.lock().expect("io lock");
+                                    if mtime(&abs) == f.mtime
+                                        && conflict_note(&root, &path, &text).is_ok()
+                                        && let Ok(mt) = write_file(&abs, &db_text)
+                                    {
+                                        stats.written += 1;
+                                        pending.push(known(version, mt, &db_text));
+                                    }
+                                }
+                            }
+                        }
                         Plan::Reconcile(updated) => {
-                            f.mtime.map(chrono::DateTime::<chrono::Utc>::from).is_some_and(|m| m > updated)
+                            // première rencontre, textes différents : le plus récent l'emporte, l'autre va dans .trash
+                            let disk_newer =
+                                f.mtime.map(chrono::DateTime::<chrono::Utc>::from).is_some_and(|m| m > updated);
+                            if disk_newer {
+                                if let Some(nv) = push(&t, id, &text, version).await? {
+                                    keep_in_trash(&root, &path, &db_text);
+                                    stats.pulled += 1;
+                                    pending.push(known(nv, f.mtime, &text));
+                                }
+                            } else {
+                                let _io = shared.io_lock.lock().expect("io lock");
+                                if mtime(&abs) == f.mtime {
+                                    keep_in_trash(&root, &path, &text);
+                                    if let Ok(mt) = write_file(&abs, &db_text) {
+                                        stats.written += 1;
+                                        pending.push(known(version, mt, &db_text));
+                                    }
+                                }
+                            }
                         }
-                        _ => true,
-                    };
-                    if text == db_text || (matches!(plan, Plan::Pull) && known_hash == Some(hash(&text))) {
-                        // rien à recopier (fichier simplement « touché »)
-                        record(v, version, f.mtime, &text);
-                    } else if matches!(plan, Plan::Both) {
-                        // les deux côtés ont changé : la base l'emporte, le texte du disque est gardé à part
-                        let copy = format!("{path} (conflit disque)");
-                        t.execute(
-                            "INSERT INTO notes (path, content) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                            &[&copy, &text],
-                        )
-                        .await?;
-                        stats.imported += 1;
-                        if let Ok(m) = write_file(&abs, &db_text) {
-                            stats.written += 1;
-                            record(v, version, m, &db_text);
-                        }
-                    } else if disk_newer {
-                        let nv: Option<i32> = t
-                            .query_opt("UPDATE notes SET content = $2 WHERE id = $1 RETURNING version", &[&id, &text])
-                            .await?
-                            .map(|r| r.get(0));
-                        stats.pulled += 1;
-                        record(v, nv.unwrap_or(version), f.mtime, &text);
-                    } else if let Ok(m) = write_file(&abs, &db_text) {
-                        stats.written += 1;
-                        record(v, version, m, &db_text);
+                        Plan::Write | Plan::DeleteNote => unreachable!(),
                     }
                 }
             }
@@ -660,10 +862,10 @@ impl Worker {
             };
             // la note garde dans la base l'identifiant qu'elle a en local ; si cet id désigne déjà une autre note
             // de la base (copie restée d'une note renommée ailleurs), le fichier devient une note à part
-            let mut id = self.shared.ids.lock().expect("ids").get_or_create(&f.rel);
+            let mut id = shared.ids.lock().expect("ids").get_or_create(&f.rel);
             if db_ids.contains(&id) {
                 id = Uuid::new_v4();
-                self.shared.ids.lock().expect("ids").set(&f.rel, id, true);
+                shared.ids.lock().expect("ids").set(&f.rel, id, true);
             }
             let row = t
                 .query_opt(
@@ -673,8 +875,7 @@ impl Worker {
                 .await?;
             if let Some(row) = row {
                 let id: Uuid = row.get(0);
-                v.known
-                    .insert(id, Known { path: f.rel.clone(), version: row.get(1), mtime: f.mtime, hash: hash(&text) });
+                pending.push((id, Some((Known { path: f.rel.clone(), version: row.get(1), mtime: f.mtime }, text))));
                 stats.imported += 1;
                 ancestors(&f.rel, &mut note_dirs);
             }
@@ -692,7 +893,7 @@ impl Worker {
                 kept.insert(lk.clone());
             } else if note_dirs.contains(lk) {
                 // dossier qui contient des notes : il existe déjà implicitement dans Mnemo
-            } else if v.folders.contains(lk) && !v.first {
+            } else if v.folders.contains(lk) && v.synced {
                 to_remove.push(d); // supprimé dans Mnemo
             } else {
                 t.execute("INSERT INTO folders (path) VALUES ($1) ON CONFLICT DO NOTHING", &[d]).await?;
@@ -710,7 +911,7 @@ impl Worker {
             if disk_set.contains_key(lk) {
                 continue;
             }
-            if v.folders.contains(lk) && !v.first {
+            if v.folders.contains(lk) && v.synced {
                 t.execute("DELETE FROM folders WHERE lower(path) = $1", &[lk]).await?; // supprimé sur le disque
                 stats.removed += 1;
             } else if std::fs::create_dir_all(dir_path(&root, f)).is_ok() {
@@ -719,6 +920,7 @@ impl Worker {
             }
         }
         // icônes et réglages des plugins : .mnemo/icons.json et plugins.json ↔ tables de la base
+        let mut kv_pending: Vec<(&str, Map<String, Value>)> = vec![];
         for name in ["icons", "plugins"] {
             let remote: Map<String, Value> = if name == "icons" {
                 t.query("SELECT path, icon FROM path_icons", &[])
@@ -737,14 +939,16 @@ impl Worker {
                     .collect()
             };
             let push = {
-                let _guard = self.shared.state_lock.lock().expect("state lock");
+                let _guard = shared.state_lock.lock().expect("state lock");
                 let local = crate::local::shared::read_state(&root, name);
                 let (result, push) = merge_kv(v.kv_known.get(name), &local, &remote);
                 if result != local {
                     crate::local::shared::write_state(&root, name, &result);
                     stats.written += 1;
                 }
-                v.kv_known.insert(name, result);
+                if v.kv_known.get(name) != Some(&result) {
+                    kv_pending.push((name, result));
+                }
                 push
             };
             for (key, val) in push {
@@ -776,9 +980,39 @@ impl Worker {
                 }
             }
         }
-        sync_files(&t, v, &root, &mut stats).await?;
+        let file_updates = sync_files(&t, v, &root, &mut stats).await?;
         t.commit().await?;
+
+        // la transaction est validée : l'état connu peut avancer
+        dirty |= !pending.is_empty() || !kv_pending.is_empty() || !file_updates.is_empty() || v.folders != kept;
+        dirty |= !v.synced;
+        for (id, k) in pending {
+            let base = base_dir(&root).join(format!("{id}.md"));
+            match k {
+                Some((k, text)) => {
+                    let _ = crate::local::shared::write_atomic(&base, &text);
+                    v.known.insert(id, k);
+                }
+                None => {
+                    let _ = std::fs::remove_file(&base);
+                    v.known.remove(&id);
+                }
+            }
+        }
+        for (name, map) in kv_pending {
+            v.kv_known.insert(name.to_string(), map);
+        }
+        for (path, k) in file_updates {
+            match k {
+                Some(k) => v.file_known.insert(path, k),
+                None => v.file_known.remove(&path),
+            };
+        }
         v.folders = kept;
+        v.synced = true;
+        if dirty {
+            v.save();
+        }
 
         let first = std::mem::replace(&mut v.first, false);
         if first || stats.changed() {
@@ -832,6 +1066,10 @@ mod tests {
         assert_eq!(plan_file(Some("a"), Some("b"), None), Upload); // modifiée ici, supprimée ailleurs : gardée
         assert_eq!(plan_file(Some("a"), Some("b"), Some("c")), Conflict);
         assert_eq!(conflict_name("D/photo.png"), "D/photo (conflit disque).png");
+        assert!(safe_rel("Pièces jointes/photo 1.png"));
+        for bad in ["../x", "a/../../x", "/etc/x", "C:/x", "a\\b", ".mnemo/ids.json", "a//b"] {
+            assert!(!safe_rel(bad), "{bad}");
+        }
     }
 
     #[test]

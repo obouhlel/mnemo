@@ -111,18 +111,19 @@ fn tree_ui(ui: &mut egui::Ui, folder: &TreeFolder, depth: usize, cx: &mut TreeCx
             );
         }
     }
-    let mut notes: Vec<&(String, Uuid, chrono::DateTime<chrono::Utc>)> = folder.notes.iter().collect();
+    let mut notes: Vec<&(String, Uuid, chrono::DateTime<chrono::Utc>, String)> = folder.notes.iter().collect();
     match cx.sort {
         SortOrder::NameAsc => {}
         SortOrder::NameDesc => notes.reverse(),
         SortOrder::Modified => notes.sort_by_key(|n| std::cmp::Reverse(n.2)),
     }
-    for (name, id, _) in notes {
-        let path = if folder.path.is_empty() { name.clone() } else { format!("{}/{}", folder.path, name) };
+    for (name, id, _, path) in notes {
+        // chemin réel de la note : « Projets/ » et « projets/ » partagent une ligne de l'arbre (Linux), le
+        // chemin du dossier affiché n'est donc pas forcément le sien
         let icon = cx.icons.get(&path.to_lowercase()).map(String::as_str);
         let r = theme::tree_row_icon(ui, name, depth, cx.open == Some(*id), None, icon);
         // déposer sur une note = déposer dans son dossier
-        let r = dnd_row(cx, r, DragItem::Note(*id, path.clone()), &folder.path);
+        let r = dnd_row(cx, r, DragItem::Note(*id, path.clone()), parent(path).unwrap_or(""));
         if r.clicked() {
             if ui.input(|i| i.modifiers.command) {
                 cx.actions.push(UiAction::OpenNewTab(*id));
@@ -366,9 +367,11 @@ impl MnemoApp {
                             self.actions.push(UiAction::Move((*item).clone(), t.clone()));
                         }
                     }
-                    // fichiers du système déposés sur l'explorateur
-                    if external {
-                        self.os_drop_target = Some((target.clone().unwrap_or_default(), ctx.input(|i| i.time)));
+                    // fichiers du système survolant l'explorateur : seulement si le pointeur est vraiment sur
+                    // l'arbre (sinon un fichier déposé sur l'éditeur serait importé à la racine au lieu d'être
+                    // intégré à la note)
+                    if external && let Some(t) = &target {
+                        self.os_drop_target = Some((t.clone(), ctx.input(|i| i.time)));
                     }
                 }
                 LeftTab::Search => {
@@ -560,6 +563,7 @@ impl MnemoApp {
                 if self.expanded.remove(&f) {
                     self.expanded.insert(to.to_lowercase());
                 }
+                self.boards_moved(&from, &to);
                 self.db.send(Cmd::RenameFolder { from, to });
             }
         }
@@ -606,7 +610,7 @@ impl MnemoApp {
                 Some(p) => folder_mut(&mut root, p),
                 None => &mut root,
             };
-            target.notes.push((basename(&n.path).to_string(), n.id, n.updated_at));
+            target.notes.push((basename(&n.path).to_string(), n.id, n.updated_at, n.path.clone()));
         }
         for f in &self.files {
             let target = match parent(f) {
