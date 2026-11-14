@@ -91,7 +91,8 @@ jobs:
             adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell am instrument -w -e dbUrl postgres://postgres:postgres@10.0.2.2:5432/mnemo_ci dev.mnemo.app.test/androidx.test.runner.AndroidJUnitRunner | tee device/instrument.txt
             adb pull /sdcard/Android/data/dev.mnemo.app/files/ device/ || true
-            grep -q "OK (1 test)" device/instrument.txt
+            adb logcat -d > device/logcat.txt || true
+            grep -q "OK (2 tests)" device/instrument.txt
             adb uninstall dev.mnemo.app
             adb install android/app/build/outputs/apk/release/app-release.apk
             adb shell am start -W -n dev.mnemo.app/.MainActivity

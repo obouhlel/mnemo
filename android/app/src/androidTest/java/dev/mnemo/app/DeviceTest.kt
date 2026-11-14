@@ -33,14 +33,38 @@ class DeviceTest {
         File(dir, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
-    private fun waitText(text: String, timeout: Long = 60_000) =
-        compose.waitUntil(timeout) { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
+    private fun waitText(text: String, timeout: Long = 60_000) {
+        try {
+            compose.waitUntil(timeout) { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
+        } catch (e: Throwable) {
+            shot("echec-$text")
+            throw e
+        }
+    }
+
+    private val url = InstrumentationRegistry.getArguments().getString("dbUrl")
+        ?: "postgres://postgres:postgres@10.0.2.2:5432/mnemo_ci"
+
+    /** Le pilote PostgreSQL sur le vrai runtime Android : connexion et synchronisation complètes. */
+    @Test
+    fun engineOnDevice() {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        val local = dev.mnemo.app.data.LocalDb(ctx, "device-engine.db")
+        val engine = dev.mnemo.app.data.SyncEngine(local, "android-ci")
+        val cfg = dev.mnemo.app.data.parseDbUrl(url)!!
+        val err = engine.test(cfg)
+        org.junit.Assert.assertNull("connexion : $err", err)
+        try {
+            engine.sync(cfg)
+        } catch (e: Throwable) {
+            throw AssertionError("synchronisation : " + e.stackTraceToString().take(3000), e)
+        }
+        org.junit.Assert.assertTrue(local.notes().any { it.path == "Projets/Plan" })
+        org.junit.Assert.assertTrue(local.fileOnDisk("Pièces jointes/schema.png").exists())
+    }
 
     @Test
-    fun connectSyncAndRead() {
-        val url = InstrumentationRegistry.getArguments().getString("dbUrl")
-            ?: "postgres://postgres:postgres@10.0.2.2:5432/mnemo_ci"
-        waitText("Base de synchronisation")
+    fun connectSyncAndRead() {        waitText("Base de synchronisation")
         shot("1-premier-lancement")
         compose.onNode(hasSetTextAction()).performTextInput(url)
         compose.onNodeWithText("Connecter").performClick()
