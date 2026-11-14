@@ -97,6 +97,7 @@ jobs:
             adb shell am instrument -w -e dbUrl postgres://postgres:postgres@10.0.2.2:5432/mnemo_ci dev.mnemo.app.test/androidx.test.runner.AndroidJUnitRunner | tee device/instrument.txt
             adb pull /sdcard/Android/data/dev.mnemo.app/files/ device/ || true
             adb logcat -d > device/logcat.txt || true
+            grep -E "Mnemo|AndroidRuntime|postgresql" device/logcat.txt | tail -80 || true
             grep -q "OK (2 tests)" device/instrument.txt
             adb uninstall dev.mnemo.app
             adb install android/app/build/outputs/apk/release/app-release.apk

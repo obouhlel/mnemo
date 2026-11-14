@@ -38,7 +38,13 @@ class DeviceTest {
             compose.waitUntil(timeout) { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
         } catch (e: Throwable) {
             shot("echec-$text")
-            throw e
+            val seen = compose.onAllNodes(androidx.compose.ui.test.isRoot()).fetchSemanticsNodes().flatMap { root ->
+                fun walk(n: androidx.compose.ui.semantics.SemanticsNode): List<String> =
+                    (n.config.getOrElseNullable(androidx.compose.ui.semantics.SemanticsProperties.Text) { null }?.map { it.text } ?: emptyList()) +
+                        n.children.flatMap { walk(it) }
+                walk(root)
+            }
+            throw AssertionError("« $text » introuvable ; à l'écran : $seen", e)
         }
     }
 
@@ -64,7 +70,8 @@ class DeviceTest {
     }
 
     @Test
-    fun connectSyncAndRead() {        waitText("Base de synchronisation")
+    fun connectSyncAndRead() {
+        waitText("Base de synchronisation")
         shot("1-premier-lancement")
         compose.onNode(hasSetTextAction()).performTextInput(url)
         compose.onNodeWithText("Connecter").performClick()

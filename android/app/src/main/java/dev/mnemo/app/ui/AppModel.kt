@@ -120,6 +120,7 @@ class AppModel @JvmOverloads constructor(app: Application, dbName: String = "mne
                     if (r.pulled + r.pushed + r.files + r.conflicts > 0) _revision.value++
                     if (r.conflicts > 0) say("${r.conflicts} conflit(s) : vos modifications sont gardées dans « … (conflit mobile) »")
                 }.onFailure { e ->
+                    android.util.Log.w("Mnemo", "synchronisation", e)
                     val msg = engine.readable(e)
                     _sync.value = SyncState.Offline(msg)
                     if (!quiet) say("Synchronisation impossible : $msg")
@@ -164,6 +165,7 @@ class AppModel @JvmOverloads constructor(app: Application, dbName: String = "mne
         }
         viewModelScope.launch {
             val err = withContext(Dispatchers.IO) { engine.test(cfg) }
+            android.util.Log.i("Mnemo", "connexion : ${err ?: "ok"}")
             if (err == null) {
                 if (url.trim() != dbUrl()) withContext(Dispatchers.IO) { local.reset() }
                 prefs.edit().putString("db_url", url.trim()).apply()
