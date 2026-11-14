@@ -77,6 +77,10 @@ fn tree_ui(ui: &mut egui::Ui, folder: &TreeFolder, depth: usize, cx: &mut TreeCx
                 cx.actions.push(UiAction::NewFolderIn(sub.path.clone()));
                 ui.close();
             }
+            if ui.button("Nouveau whiteboard").clicked() {
+                cx.actions.push(UiAction::NewWhiteboardIn(sub.path.clone()));
+                ui.close();
+            }
             if ui.button("Renommer / déplacer…").clicked() {
                 cx.actions.push(UiAction::RenameFolder(sub.path.clone()));
                 ui.close();
@@ -193,10 +197,11 @@ impl MnemoApp {
             }
             ui.add_space(10.0);
             // seulement des fonctions intégrées : les commandes des plugins sont dans la palette (Ctrl+P)
-            let items: [(&str, &str, CoreCmd); 4] = [
+            let items: [(&str, &str, CoreCmd); 5] = [
                 (icon::DASHBOARD, "Tableau de bord : projets et tickets (Ctrl+Shift+D)", CoreCmd::Dashboard),
                 (icon::SWITCHER, "Ouvrir le sélecteur rapide", CoreCmd::Switcher),
                 (icon::GRAPH, "Ouvrir la vue graphique", CoreCmd::Graph),
+                (icon::WHITEBOARD, "Nouveau whiteboard (dessin libre)", CoreCmd::NewWhiteboard),
                 (icon::PALETTE, "Ouvrir la palette de commandes", CoreCmd::Palette),
             ];
             let tab = &self.tabs[self.active_tab];

@@ -94,6 +94,11 @@ pub enum Cmd {
         insert: bool,
     },
     DeleteFile(String),
+    /// Réécrit une pièce jointe (whiteboard enregistré)
+    WriteFile {
+        path: String,
+        bytes: Vec<u8>,
+    },
     SetIcon {
         path: String,
         icon: Option<String>,
@@ -264,6 +269,7 @@ impl Cmd {
                 | Cmd::ListFiles
                 | Cmd::SaveFile { .. }
                 | Cmd::DeleteFile(_)
+                | Cmd::WriteFile { .. }
         )
     }
 }

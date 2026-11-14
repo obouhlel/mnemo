@@ -51,6 +51,8 @@ pub(super) struct Tab {
     pub(super) dashboard: bool,
     /// la vue graphe des liens
     pub(super) graph: bool,
+    /// un whiteboard (chemin relatif du fichier .mnemo-board)
+    pub(super) board: Option<String>,
     pub(super) note: Option<Uuid>,
     pub(super) back: Vec<Uuid>,
     pub(super) fwd: Vec<Uuid>,
@@ -132,8 +134,10 @@ pub(super) enum UiAction {
     PickIcon(String),
     /// insère `![[…]]` d'une pièce jointe au curseur de la note ouverte
     InsertEmbed(String),
-    /// ouvre une pièce jointe de l'explorateur (image : aperçu)
+    /// ouvre une pièce jointe de l'explorateur (image : aperçu, whiteboard : onglet)
     OpenFile(String),
+    /// crée un whiteboard dans ce dossier ("" = racine) et l'ouvre
+    NewWhiteboardIn(String),
     DeleteFile(String),
     /// fichiers / dossiers déposés depuis le système : chemins, dossier de destination
     ImportFiles(Vec<std::path::PathBuf>, String),

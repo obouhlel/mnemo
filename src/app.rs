@@ -13,6 +13,7 @@ mod sidebar;
 mod state;
 mod sync;
 mod vault;
+mod whiteboard;
 
 use commands::{CORE_COMMANDS, CoreCmd};
 use editor::{char_to_byte, editor_id};
@@ -105,6 +106,10 @@ pub struct MnemoApp {
     icon_pick: Option<icons::IconPick>,
     /// pièces jointes du dossier (chemins relatifs avec extension)
     files: Vec<String>,
+    /// whiteboards ouverts (chemin relatif → dessin et état de la vue)
+    boards: HashMap<String, whiteboard::BoardView>,
+    /// aperçus des whiteboards intégrés dans les notes : chemin → (date du fichier, dessin)
+    sketch_cache: HashMap<String, (Option<std::time::SystemTime>, crate::sketch::Sketch)>,
     /// image ouverte depuis l'explorateur
     image_view: Option<String>,
     /// une pièce jointe a changé : oublier les images en cache
@@ -213,6 +218,8 @@ impl MnemoApp {
             icon_pick: None,
             files: vec![],
             image_view: None,
+            boards: HashMap::new(),
+            sketch_cache: HashMap::new(),
             forget_images: false,
             focus_editor: None,
             os_drop_target: None,
@@ -305,6 +312,7 @@ impl eframe::App for MnemoApp {
         self.handle_messages(now);
         self.apply_plugin_actions(&ctx, now);
         self.tick_autosave(&ctx, now);
+        self.tick_whiteboards(now, false);
         if let Some(t) = self.search_due {
             if now >= t {
                 self.search_due = None;
@@ -385,6 +393,8 @@ impl eframe::App for MnemoApp {
                 self.actions.push(UiAction::OpenLink(markdown::decode(t)));
             } else if let Some(t) = url.strip_prefix(markdown::TAG_SCHEME) {
                 self.actions.push(UiAction::OpenTag(markdown::decode(t)));
+            } else if let Some(t) = url.strip_prefix(markdown::BOARD_SCHEME) {
+                self.actions.push(UiAction::OpenFile(markdown::decode(t)));
             }
         }
         // fichiers / dossiers déposés depuis le système : dans le dossier survolé de l'explorateur, sinon à la racine
@@ -414,6 +424,8 @@ impl eframe::App for MnemoApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // whiteboards modifiés : enregistrés tout de suite (le stockage local écrit avant de quitter)
+        self.tick_whiteboards(0.0, true);
         // Unresolved conflict: never lose the local text, keep it as a separate note
         if let Some(n) = self.open.as_ref().filter(|n| n.conflict.is_some()) {
             let path = format!("{} (conflit {})", n.path, chrono::Local::now().format("%Y-%m-%d %H-%M"));

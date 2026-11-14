@@ -10,7 +10,7 @@ impl MnemoApp {
         self.flush_save();
         let mut mode = std::mem::replace(&mut self.open_mode, OpenMode::Replace);
         let t = &self.tabs[self.active_tab];
-        if mode == OpenMode::Replace && (t.dashboard || t.graph) {
+        if mode == OpenMode::Replace && (t.dashboard || t.graph || t.board.is_some()) {
             mode = OpenMode::NewTab;
         }
         match mode {
@@ -143,6 +143,16 @@ impl MnemoApp {
             self.need.graph = true;
             return;
         }
+        if let Some(rel) = self.tabs[self.active_tab].board.clone() {
+            self.flush_save();
+            self.open = None;
+            if !self.boards.contains_key(&rel)
+                && let Some(abs) = self.file_abs(&rel)
+            {
+                self.boards.insert(rel.clone(), super::whiteboard::BoardView::load(&abs));
+            }
+            return;
+        }
         match self.tabs[self.active_tab].note {
             Some(id) => self.open_in(id, OpenMode::History),
             None => {
@@ -216,6 +226,9 @@ impl MnemoApp {
         }
         if t.graph {
             return "Graphe".into();
+        }
+        if let Some(rel) = &t.board {
+            return basename(rel).trim_end_matches(".mnemo-board").to_string();
         }
         match t.note {
             None => "Nouvel onglet".into(),
