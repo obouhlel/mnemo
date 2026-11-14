@@ -17,7 +17,6 @@ struct Device {
     db: DbHandle,
     rx: Receiver<Msg>,
     root: PathBuf,
-    client_id: String,
 }
 
 impl Device {
@@ -32,10 +31,10 @@ impl Device {
     fn open(root: PathBuf, url: &str) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let client_id = Uuid::new_v4().to_string();
-        let db = crate::db::spawn(client_id.clone(), tx, || {}, crate::local::shared::new_shared());
+        let db = crate::db::spawn(client_id, tx, || {}, crate::local::shared::new_shared());
         db.send(Cmd::SetRoot(root.clone()));
         db.send(Cmd::SetVault(Some(root.clone())));
-        let d = Self { db, rx, root, client_id };
+        let d = Self { db, rx, root };
         d.wait("dossier indexé", |m| matches!(m, Msg::LocalReady).then_some(()));
         if !url.is_empty() {
             d.db.send(Cmd::Connect(url.to_string()));
@@ -44,25 +43,15 @@ impl Device {
         d
     }
 
-    /// Attend un message ; comme l'interface, demande un passage de synchronisation à chaque événement
-    /// venu d'un autre appareil.
+    /// Attend un message (le worker relance seul la synchronisation à chaque événement d'un autre appareil).
     fn wait<T>(&self, what: &str, mut f: impl FnMut(&Msg) -> Option<T>) -> T {
         let end = Instant::now() + Duration::from_secs(20);
         loop {
             let left = end.checked_duration_since(Instant::now()).unwrap_or_else(|| panic!("délai dépassé : {what}"));
             let Ok(m) = self.rx.recv_timeout(left) else { panic!("délai dépassé : {what}") };
-            self.relay(&m);
             if let Some(v) = f(&m) {
                 return v;
             }
-        }
-    }
-
-    fn relay(&self, m: &Msg) {
-        if let Msg::Event(ev) = m
-            && !ev.updated_by.as_deref().is_some_and(|u| u.starts_with(&self.client_id))
-        {
-            self.db.send(Cmd::VaultScan);
         }
     }
 
@@ -70,9 +59,7 @@ impl Device {
     fn pump(&self, d: Duration) {
         let end = Instant::now() + d;
         while let Some(left) = end.checked_duration_since(Instant::now()) {
-            if let Ok(m) = self.rx.recv_timeout(left) {
-                self.relay(&m);
-            }
+            let _ = self.rx.recv_timeout(left);
         }
     }
 

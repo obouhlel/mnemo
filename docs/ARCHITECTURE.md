@@ -23,8 +23,9 @@ Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle
 - Le dossier des notes est la référence : Mnemo fonctionne sans base. Le stockage local relit le disque toutes les
   secondes et transforme chaque changement extérieur en `Msg::LocalEvent`.
 - Si une base est configurée, le worker la compare au dossier toutes les 2 s (`db/vault_sync.rs`), sans dépendre de
-  l'affichage (fenêtre réduite comprise), se reconnecte seul toutes les 30 s, et `listen_loop` relaie les NOTIFY des
-  autres appareils (`Msg::Event`) pour lancer la comparaison tout de suite.
+  l'affichage (fenêtre réduite ou sur un espace de travail caché), se reconnecte seul toutes les 30 s, et
+  `listen_loop` réveille le worker à chaque NOTIFY d'un autre appareil pour lancer la comparaison tout de suite.
+  Un seul passage à la fois ; un passage de plus de 2 s fait sauter le tick suivant au lieu de l'empiler.
 - Stockage local et synchronisation partagent `local::shared` : l'identifiant de chaque note (`.mnemo/ids.json`, le
   même en local et en base) et un verrou pour les fichiers d'état `.mnemo/icons.json` / `plugins.json`.
 
@@ -77,7 +78,7 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `whiteboard.rs` | onglet whiteboard : outils, vue (zoom, déplacement), annuler / rétablir, enregistrement, aperçu dans les notes |
 | `attachments.rs` | pièces jointes : résolution des images, collage (Ctrl+V), dépôt, dossier des pièces jointes, visionneuse |
 | `icons.rs` | icônes des dossiers / notes : fenêtre de choix (Lucide, emoji), import depuis Iconize |
-| `vault.rs` | onglet Coffre Obsidian, passage de synchronisation périodique, import des fichiers déposés, `settings_row` |
+| `vault.rs` | onglet Coffre Obsidian, liaison du coffre et dernier passage de synchronisation, import des fichiers déposés, `settings_row` |
 | `appearance.rs` | onglet Apparence, chargement et surveillance des fichiers CSS |
 | `dashboard/` | tableau de bord : `mod.rs` (état, vue principale), `rows.rs`, `columns.rs`, `ticket.rs`, `actions.rs` |
 
@@ -113,8 +114,8 @@ Dans l'ordre :
    disque entre-temps (autre éditeur, synchro), sa version a augmenté : `Msg::Conflict`, puis fusion à 3 voies.
 2. **Base, si configurée** : au passage suivant (≤ 2 s), `vault_sync` voit le fichier modifié et met la note à jour
    dans une transaction marquée `<client_id>#disk`. Les triggers incrémentent `version` et font `pg_notify`.
-3. **Autres appareils** : `listen_loop` reçoit le NOTIFY (`Msg::Event`) ; l'interface demande aussitôt un passage
-   (`Cmd::VaultScan`) qui écrit le fichier. Leur stockage local le voit (≤ 1 s) et envoie `Msg::LocalEvent` :
+3. **Autres appareils** : `listen_loop` reçoit le NOTIFY et réveille directement le worker, qui lance aussitôt
+   un passage écrivant le fichier (sans passer par l'interface : ça marche fenêtre cachée). Leur stockage local le voit (≤ 1 s) et envoie `Msg::LocalEvent` :
    la note ouverte est rechargée (`apply_refresh`), fusionnée si elle était en cours de modification.
    Si le fichier et la base ont changé tous les deux depuis le dernier passage (deux appareils écrivent en même
    temps, ou l'un était hors ligne), `vault_sync` fusionne à 3 voies avec le texte du dernier passage

@@ -1,5 +1,5 @@
-//! Dossier du coffre sur le disque (Obsidian) : liaison, synchronisation périodique,
-//! onglet des paramètres, et import de fichiers / dossiers déposés depuis le système.
+//! Dossier du coffre sur le disque (Obsidian) : liaison (la synchronisation périodique tourne dans le
+//! worker, voir `db::Worker::run`), affichage du dernier passage, onglet des paramètres, et import de fichiers / dossiers déposés depuis le système.
 
 use super::*;
 use crate::db::VaultStats;

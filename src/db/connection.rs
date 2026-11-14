@@ -1,5 +1,5 @@
 //! Connexions Postgres : TLS optionnel, ouverture/migration et boucle LISTEN qui relaie
-//! les événements `vault_events` vers l'interface.
+//! les événements `vault_events` vers l'interface et réveille le worker pour la synchro du coffre.
 
 use super::*;
 
@@ -27,7 +27,13 @@ impl Worker {
         }
         self.client = Some(client);
         self.url = url.clone();
-        self.listener = Some(tokio::spawn(listen_loop(url, self.out.clone(), self.notify.clone())));
+        let sink = EventSink {
+            out: self.out.clone(),
+            notify: self.notify.clone(),
+            wake: self.wake.clone(),
+            client_id: self.client_id.clone(),
+        };
+        self.listener = Some(tokio::spawn(listen_loop(url, sink)));
         self.emit(Msg::Connected);
     }
 }
@@ -61,8 +67,26 @@ pub(super) fn tls() -> tokio_postgres_rustls::MakeRustlsConnect {
     tokio_postgres_rustls::MakeRustlsConnect::new(config)
 }
 
-/// Where LISTEN notifications are forwarded (channel + repaint callback).
-pub(super) type EventSink = (std::sync::mpsc::Sender<Msg>, Arc<dyn Fn() + Send + Sync>);
+/// Destination des NOTIFY : l'interface (`Msg::Event` + repaint) et la boucle du worker (`wake`), qui
+/// compare aussitôt le dossier à la base quand une note, un dossier, une icône… change sur un autre appareil.
+#[derive(Clone)]
+pub(super) struct EventSink {
+    pub(super) out: std::sync::mpsc::Sender<Msg>,
+    pub(super) notify: Arc<dyn Fn() + Send + Sync>,
+    pub(super) wake: mpsc::UnboundedSender<()>,
+    pub(super) client_id: String,
+}
+
+impl EventSink {
+    fn event(&self, ev: VaultEvent) {
+        let mine = ev.updated_by.as_deref().is_some_and(|u| u.starts_with(self.client_id.as_str()));
+        if ev.kind != "board" && !mine {
+            let _ = self.wake.send(());
+        }
+        let _ = self.out.send(Msg::Event(ev));
+        (self.notify)();
+    }
+}
 
 pub(super) fn drive<S, T>(conn: Connection<S, T>, events: Option<EventSink>) -> tokio::task::JoinHandle<()>
 where
@@ -75,12 +99,9 @@ where
         while let Some(msg) = stream.next().await {
             match msg {
                 Ok(AsyncMessage::Notification(n)) => {
-                    if let Some((out, notify)) = &events {
+                    if let Some(sink) = &events {
                         match serde_json::from_str::<VaultEvent>(n.payload()) {
-                            Ok(ev) => {
-                                let _ = out.send(Msg::Event(ev));
-                                notify();
-                            }
+                            Ok(ev) => sink.event(ev),
                             Err(e) => eprintln!("[db] bad notification payload: {e}"),
                         }
                     }
@@ -112,17 +133,19 @@ pub(super) async fn connect_with(url: &str, events: Option<EventSink>) -> Res<(C
 }
 
 /// Keeps a LISTEN connection alive forever, reconnecting with exponential backoff.
-pub(super) async fn listen_loop(url: String, out: std::sync::mpsc::Sender<Msg>, notify: Arc<dyn Fn() + Send + Sync>) {
+pub(super) async fn listen_loop(url: String, sink: EventSink) {
+    let EventSink { out, notify, wake, .. } = sink.clone();
     let mut attempt = 0u32;
     let mut first = true;
     loop {
-        match connect_with(&url, Some((out.clone(), notify.clone()))).await {
+        match connect_with(&url, Some(sink.clone())).await {
             Ok((client, driver)) => match client.batch_execute("LISTEN vault_events").await {
                 Ok(()) => {
                     attempt = 0;
                     let _ = out.send(Msg::Live(true));
                     if !first {
                         let _ = out.send(Msg::Resync);
+                        let _ = wake.send(()); // la base a pu changer pendant la coupure
                     }
                     notify();
                     first = false;
