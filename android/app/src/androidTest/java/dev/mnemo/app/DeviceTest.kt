@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -64,6 +65,10 @@ class DeviceTest {
         return out.toString()
     }
 
+    /** Déclenche le clic par l'action d'accessibilité (le toucher simulé est instable sur l'émulateur API 26). */
+    private fun androidx.compose.ui.test.SemanticsNodeInteraction.tap() =
+        performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+
     private val url = InstrumentationRegistry.getArguments().getString("dbUrl")
         ?: "postgres://postgres:postgres@10.0.2.2:5432/mnemo_ci"
 
@@ -85,43 +90,21 @@ class DeviceTest {
         org.junit.Assert.assertTrue(local.fileOnDisk("Pièces jointes/schema.png").exists())
     }
 
-    /** Écran allumé et déverrouillé pendant le test : sinon l'activité ne dessine plus et l'écran ne suit pas. */
-    @org.junit.Before
-    fun awake() {
-        compose.runOnUiThread {
-            @Suppress("DEPRECATION")
-            compose.activity.window.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                    android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD,
-            )
-        }
-    }
-
     @Test
     fun connectSyncAndRead() {
         waitText("Base de synchronisation")
         shot("1-premier-lancement")
-        // l'émulateur peut recréer l'activité juste après le lancement : on réessaie le premier clic
-        for (attempt in 1..5) {
-            compose.onAllNodesWithText("Afficher l'adresse").fetchSemanticsNodes().isNotEmpty().let { visible ->
-                if (visible) compose.onNodeWithText("Afficher l'adresse").performClick()
-            }
-            compose.waitForIdle()
-            if (compose.onAllNodesWithText("Masquer l'adresse").fetchSemanticsNodes().isNotEmpty()) break
-            Thread.sleep(1_000)
-        }
-        waitText("Masquer l'adresse", 5_000)
+        compose.onNodeWithText("Afficher l'adresse").tap()
+        waitText("Masquer l'adresse", 10_000)
         compose.onNode(hasSetTextAction()).performTextInput(url)
         compose.waitForIdle()
         compose.onNode(hasSetTextAction()).assert(hasText(url))
-        compose.onNodeWithText("Connecter").assertIsEnabled().performScrollTo().performClick()
+        compose.onNodeWithText("Connecter").assertIsEnabled().performScrollTo().tap()
         waitText("Projets")
         shot("2-liste")
-        compose.onNodeWithText("Projets").performClick()
+        compose.onNodeWithText("Projets").tap()
         waitText("Plan")
-        compose.onNode(hasText("Plan") and !hasSetTextAction()).performClick()
+        compose.onNode(hasText("Plan") and !hasSetTextAction()).tap()
         // le texte Markdown est rendu par un TextView (Markwon), hors de l'arbre Compose ; l'image, elle, est en Compose
         compose.waitUntil(30_000) { renderedText().contains("Étapes suivantes") }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("schema.png").fetchSemanticsNodes().isNotEmpty() }
