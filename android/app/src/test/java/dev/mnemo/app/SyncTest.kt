@@ -1,6 +1,10 @@
 package dev.mnemo.app
 
 import androidx.test.core.app.ApplicationProvider
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import dev.mnemo.app.data.LocalDb
 import dev.mnemo.app.data.Sketch
 import dev.mnemo.app.data.SyncEngine
@@ -26,6 +30,9 @@ import java.util.UUID
  */
 @RunWith(RobolectricTestRunner::class)
 class SyncTest {
+    @get:org.junit.Rule
+    val compose = androidx.compose.ui.test.junit4.createComposeRule()
+
     private val server = System.getenv("MNEMO_TEST_PG") ?: "postgres://postgres:postgres@localhost:5432"
     private val dbName = "mnemo_android_test"
     private lateinit var cfg: dev.mnemo.app.data.DbConfig
@@ -134,5 +141,18 @@ class SyncTest {
             assertEquals(listOf<Byte>(9, 9, 9), local.fileOnDisk("Images/a.png").readBytes().toList())
             assertNotNull(local.meta("last_sync"))
         }
+    }
+
+    /** Parcours du premier lancement : saisir l'adresse, Connecter, les notes de la base s'affichent. */
+    @Test
+    fun firstRunConnect() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        app.getSharedPreferences("mnemo", 0).edit().clear().apply()
+        val model = dev.mnemo.app.ui.AppModel(app, "ui-${UUID.randomUUID()}.db")
+        compose.setContent { dev.mnemo.app.ui.MnemoTheme { dev.mnemo.app.ui.MnemoApp(model) } }
+        compose.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("$server/$dbName")
+        compose.onNodeWithText("Connecter").performClick()
+        compose.waitUntil(20_000) { compose.onAllNodesWithText("Projets").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals("$server/$dbName", model.dbUrl())
     }
 }

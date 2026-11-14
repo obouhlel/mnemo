@@ -1,6 +1,7 @@
 package dev.mnemo.app
 
 import android.graphics.Bitmap
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -41,6 +42,7 @@ class DeviceTest {
             val seen = compose.onAllNodes(androidx.compose.ui.test.isRoot()).fetchSemanticsNodes().flatMap { root ->
                 fun walk(n: androidx.compose.ui.semantics.SemanticsNode): List<String> =
                     (n.config.getOrElseNullable(androidx.compose.ui.semantics.SemanticsProperties.Text) { null }?.map { it.text } ?: emptyList()) +
+                        listOfNotNull(n.config.getOrElseNullable(androidx.compose.ui.semantics.SemanticsProperties.EditableText) { null }?.text?.let { "[champ: $it]" }) +
                         n.children.flatMap { walk(it) }
                 walk(root)
             }
@@ -73,8 +75,11 @@ class DeviceTest {
     fun connectSyncAndRead() {
         waitText("Base de synchronisation")
         shot("1-premier-lancement")
+        compose.onNodeWithText("Afficher l'adresse").performClick()
         compose.onNode(hasSetTextAction()).performTextInput(url)
-        compose.onNodeWithText("Connecter").performClick()
+        compose.waitForIdle()
+        compose.onNode(hasSetTextAction()).assert(hasText(url))
+        compose.onNodeWithText("Connecter").assertIsEnabled().performClick()
         waitText("Projets")
         shot("2-liste")
         compose.onNodeWithText("Projets").performClick()

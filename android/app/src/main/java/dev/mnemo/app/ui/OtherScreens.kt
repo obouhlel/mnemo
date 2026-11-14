@@ -202,6 +202,7 @@ fun SettingsScreen(model: AppModel, firstRun: Boolean, onBack: (() -> Unit)?) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(enabled = !busy && url.isNotBlank(), onClick = {
                         busy = true
+                        android.util.Log.i("Mnemo", "connexion demandée")
                         model.connect(url) { err ->
                             busy = false; error = err
                             if (err == null) {
