@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -81,7 +82,7 @@ class DeviceTest {
         compose.onNode(hasSetTextAction()).performTextInput(url)
         compose.waitForIdle()
         compose.onNode(hasSetTextAction()).assert(hasText(url))
-        compose.onNodeWithText("Connecter").assertIsEnabled().performClick()
+        compose.onNodeWithText("Connecter").assertIsEnabled().performScrollTo().performClick()
         waitText("Projets")
         shot("2-liste")
         compose.onNodeWithText("Projets").performClick()

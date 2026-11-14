@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -53,6 +54,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -169,6 +171,19 @@ fun SettingsScreen(model: AppModel, firstRun: Boolean, onBack: (() -> Unit)?) {
     var show by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val connect: () -> Unit = {
+        if (!busy && url.isNotBlank()) {
+            busy = true
+            model.connect(url) { err ->
+                busy = false; error = err
+                if (err == null) {
+                    model.syncNow()
+                    if (!firstRun) model.say("Base connectée")
+                    model.open(Screen.List)
+                }
+            }
+        }
+    }
     Scaffold(topBar = { if (!firstRun) Bar("Paramètres", onBack) }, containerColor = MaterialTheme.colorScheme.background) { pad ->
         Box(Modifier.padding(pad).fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp)) {
@@ -193,25 +208,15 @@ fun SettingsScreen(model: AppModel, firstRun: Boolean, onBack: (() -> Unit)?) {
                     label = { Text("postgres://utilisateur:motdepasse@hôte:5432/base") },
                     singleLine = true,
                     visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { connect() }),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 TextButton(onClick = { show = !show }) { Text(if (show) "Masquer l'adresse" else "Afficher l'adresse") }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(enabled = !busy && url.isNotBlank(), onClick = {
-                        busy = true
-                        android.util.Log.i("Mnemo", "connexion demandée")
-                        model.connect(url) { err ->
-                            busy = false; error = err
-                            if (err == null) {
-                                model.syncNow()
-                                if (!firstRun) model.say("Base connectée")
-                                model.open(Screen.List)
-                            }
-                        }
-                    }) { Text(if (busy) "Connexion…" else "Connecter") }
+                    Button(enabled = !busy && url.isNotBlank(), onClick = connect) { Text(if (busy) "Connexion…" else "Connecter") }
                     if (!firstRun && model.dbUrl().isNotBlank()) OutlinedButton(onClick = { model.syncNow() }) { Text("Synchroniser") }
                 }
                 if (!firstRun) {
