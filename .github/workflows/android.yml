@@ -1,0 +1,103 @@
+# Appli Android (android/) : tests JVM (logique, synchro réelle avec PostgreSQL, captures d'écran Roborazzi),
+# APK, puis sur un émulateur Android 8.0 (API 26) : connexion à PostgreSQL, synchro, lecture d'une note avec
+# image, et lancement de l'APK release (réduit par R8). Captures et APK en artefacts.
+name: android
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ["android/**", "src/schema.sql", ".github/workflows/android.yml"]
+  push:
+    branches: [main]
+    paths: ["android/**", "src/schema.sql", ".github/workflows/android.yml"]
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run: { working-directory: android }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - name: Tests (logique, synchro réelle, captures d'écran) et APK
+        env:
+          MNEMO_TEST_PG: postgres://postgres:postgres@localhost:5432
+        run: ./gradlew --no-daemon testDebugUnitTest recordRoborazziDebug assembleRelease
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-tests
+          path: |
+            android/app/build/screens/
+            android/app/build/reports/tests/
+      - uses: actions/upload-artifact@v4
+        with: { name: mnemo-android-apk, path: android/app/build/outputs/apk/release/app-release.apk }
+
+  device:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - name: Base de test (schéma de Mnemo, une note avec image)
+        env: { PGPASSWORD: postgres }
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE mnemo_ci"
+          psql -h localhost -U postgres -d mnemo_ci -v ON_ERROR_STOP=1 -f src/schema.sql
+          psql -h localhost -U postgres -d mnemo_ci -c "INSERT INTO notes (path, content) VALUES
+            ('Projets/Plan', E'# Plan\n\n![[schema.png]]\n\nÉtapes suivantes : *Android*.'), ('Accueil', 'Voir [[Plan]]')"
+          python3 - <<'PY' > /tmp/img.sql
+          import base64, struct, zlib
+          w, h = 160, 80
+          rows = b''.join(b'\x00' + b''.join(bytes([139,108,239]) if 10<y<70 and 10<x<150 else bytes([42,44,60]) for x in range(w)) for y in range(h))
+          def chunk(t, d): return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d))
+          png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
+          hsh = 0xcbf29ce484222325
+          for b in png:
+              hsh = ((hsh ^ b) * 0x100000001b3) & 0xffffffffffffffff
+          print("INSERT INTO files (path, data, hash, size) VALUES ('Pièces jointes/schema.png', decode('%s', 'hex'), '%016x', %d);" % (png.hex(), hsh, len(png)))
+          PY
+          psql -h localhost -U postgres -d mnemo_ci -v ON_ERROR_STOP=1 -f /tmp/img.sql
+      - name: KVM (accélération de l'émulateur)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: APK de l'appli et des tests
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest assembleRelease
+      - name: Émulateur Android 8.0 (API 26)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 26
+          target: default
+          arch: x86_64
+          disable-animations: true
+          script: |
+            mkdir -p device
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell am instrument -w -e dbUrl postgres://postgres:postgres@10.0.2.2:5432/mnemo_ci dev.mnemo.app.test/androidx.test.runner.AndroidJUnitRunner | tee device/instrument.txt
+            adb pull /sdcard/Android/data/dev.mnemo.app/files/ device/ || true
+            grep -q "OK (1 test)" device/instrument.txt
+            adb uninstall dev.mnemo.app
+            adb install android/app/build/outputs/apk/release/app-release.apk
+            adb shell am start -W -n dev.mnemo.app/.MainActivity
+            sleep 8
+            adb exec-out screencap -p > device/release.png
+            adb shell pidof dev.mnemo.app
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: android-device, path: device/ }

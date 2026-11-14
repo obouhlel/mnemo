@@ -82,6 +82,18 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `appearance.rs` | onglet Apparence, chargement et surveillance des fichiers CSS |
 | `dashboard/` | tableau de bord : `mod.rs` (état, vue principale), `rows.rs`, `columns.rs`, `ticket.rs`, `actions.rs` |
 
+### `android/` : l'application mobile (Kotlin, Jetpack Compose, Android 8.0+)
+
+Elle se connecte à la même base PostgreSQL (pilote JDBC) et garde une copie locale en SQLite pour le hors ligne.
+
+| Fichier | Rôle |
+|---|---|
+| `data/SyncEngine.kt` | synchro : envoi des modifications (verrou optimiste par `version`, conflit → note « conflit mobile »), réception des notes, dossiers, pièces jointes (empreinte FNV-1a identique au bureau) et du tableau de bord |
+| `data/LocalDb.kt` | copie locale (notes, pièces jointes, état « à envoyer ») |
+| `data/Sketch.kt` | format `.mnemo-board` (identique à `src/sketch.rs`) |
+| `markdown/Preprocess.kt` | `[[liens]]`, `#tags`, images et whiteboards intégrés (mêmes règles que `src/markdown.rs`) |
+| `ui/` | écrans : liste, note (Markwon), whiteboard (Canvas), image, tableau de bord, réglages ; `AppModel` (état, synchro toutes les 15 s au premier plan) |
+
 ## Une frame de `MnemoApp::ui()`
 
 Dans l'ordre :

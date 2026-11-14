@@ -92,6 +92,24 @@ poste de bureau) :
 - Debian / Ubuntu : `sudo apt install libx11-6 libxkbcommon-x11-0 libgl1 libegl1 libwayland-client0 libxcursor1 libxrandr2 libxi6`
 - Arch : `sudo pacman -S libx11 libxkbcommon-x11 libglvnd mesa wayland libxcursor libxrandr libxi`
 
+## Application Android (téléphone et tablette)
+
+Pour Android 8.0 et plus : téléchargez `mnemo-android.apk` sur la page [Releases](https://github.com/obouhlel/mnemo/releases/latest)
+et ouvrez-le sur l'appareil (autorisez l'installation depuis cette source si Android le demande).
+
+- Au premier lancement, entrez **la même adresse de base** que dans Mnemo sur ordinateur (Paramètres › Synchronisation).
+  La base doit être joignable depuis le téléphone : base en ligne (Neon, Supabase…), serveur exposé ou VPN.
+- Notes en dossiers, recherche, lecture en Markdown (titres, listes, cases, tableaux, `[[liens]]` cliquables, images),
+  modification et création, renommage, suppression ; whiteboards au doigt ou au stylet (stylo, formes, flèches,
+  texte, gomme, deux doigts pour déplacer et zoomer) ; tableau de bord des projets et tickets en lecture.
+- Tout est gardé sur l'appareil : lecture et modification hors ligne, envoi à la reconnexion. Si une note a été
+  modifiée ailleurs entre-temps, rien n'est perdu : le texte du téléphone est gardé dans « … (conflit mobile …) ».
+- Tablette : liste et note côte à côte.
+
+Le code est dans `android/` (Kotlin, Jetpack Compose). `./gradlew testDebugUnitTest` lance les tests, dont une
+synchronisation réelle avec PostgreSQL (`MNEMO_TEST_PG`) et des captures d'écran (`recordRoborazziDebug`) ;
+le workflow `android.yml` les relance et teste l'appli sur un émulateur Android 8.0.
+
 ## Compiler
 
 Tout passe par le `Makefile` (`make` seul liste les cibles). Les binaires et paquets sont écrits dans `dist/`.

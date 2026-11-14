@@ -56,10 +56,37 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: mnemo-macos, path: dist/Mnemo-macos.dmg }
 
+  # Appli Android (Android 8.0 et plus). Signée avec la clé des secrets MNEMO_KEYSTORE_BASE64 /
+  # MNEMO_KEYSTORE_PASSWORD / MNEMO_KEY_ALIAS / MNEMO_KEY_PASSWORD si elle existe (mises à jour possibles d'une
+  # version à l'autre), sinon avec une clé de débogage (désinstaller avant d'installer une nouvelle version).
+  android:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - name: APK
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.MNEMO_KEYSTORE_BASE64 }}
+          MNEMO_KEYSTORE_PASSWORD: ${{ secrets.MNEMO_KEYSTORE_PASSWORD }}
+          MNEMO_KEY_ALIAS: ${{ secrets.MNEMO_KEY_ALIAS }}
+          MNEMO_KEY_PASSWORD: ${{ secrets.MNEMO_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/mnemo.jks"
+            export MNEMO_KEYSTORE="$RUNNER_TEMP/mnemo.jks"
+          fi
+          ./gradlew --no-daemon assembleRelease
+          mkdir -p ../dist && cp app/build/outputs/apk/release/app-release.apk ../dist/mnemo-android.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: mnemo-android, path: dist/mnemo-android.apk }
+
   # Sur un tag v* : page Releases publique avec les fichiers à télécharger directement.
   publish:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
-    needs: [linux, windows, macos]
+    needs: [linux, windows, macos, android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
