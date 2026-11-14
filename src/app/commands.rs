@@ -119,6 +119,18 @@ impl MnemoApp {
                 UiAction::Back => self.navigate(false),
                 UiAction::Forward => self.navigate(true),
                 UiAction::Move(item, target) => self.move_item(item, &target, now),
+                UiAction::InsertEmbed(rel) => {
+                    let text = self.embed_text(&rel);
+                    self.insert_at_cursor(ctx, &text, now);
+                }
+                UiAction::OpenFile(rel) => {
+                    if crate::markdown::is_image(&rel) {
+                        self.image_view = Some(rel);
+                    } else if let Some(abs) = self.file_abs(&rel) {
+                        ctx.open_url(egui::OpenUrl::new_tab(format!("file://{}", abs.display())));
+                    }
+                }
+                UiAction::DeleteFile(rel) => self.db.send(Cmd::DeleteFile(rel)),
                 UiAction::PickIcon(path) => {
                     self.icon_pick = Some(icons::IconPick { path, query: String::new(), focus: true })
                 }
@@ -216,6 +228,7 @@ impl MnemoApp {
                     graph: self.graph_shown(),
                     board: true,
                     icons: true,
+                    files: true,
                 };
                 if let Some(n) = &self.open {
                     self.db.send(Cmd::Load { id: n.id, purpose: LoadPurpose::Refresh });

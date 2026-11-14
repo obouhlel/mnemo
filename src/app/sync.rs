@@ -68,8 +68,23 @@ impl MnemoApp {
                     self.need.plugins = true;
                     self.need.tags = true;
                     self.need.icons = true;
+                    self.need.files = true;
                 }
                 Msg::LocalEvent(ev) => self.handle_event(ev, now),
+                Msg::Files(f) => {
+                    self.files = f;
+                    self.rebuild_tree();
+                    self.preview_gen = u64::MAX; // les images de l'aperçu sont à résoudre de nouveau
+                    self.forget_images = true;
+                }
+                Msg::FileSaved { path, insert } => {
+                    if !self.files.contains(&path) {
+                        self.files.push(path.clone());
+                    }
+                    if insert {
+                        self.actions.push(UiAction::InsertEmbed(path));
+                    }
+                }
                 Msg::IdChanged { old, new } => self.remap_note_id(old, new),
                 Msg::Live(v) => self.live = v,
                 Msg::Resync => {
@@ -82,6 +97,7 @@ impl MnemoApp {
                         graph: self.graph_shown(),
                         board: true,
                         icons: true,
+                        files: true,
                     };
                     // la base a pu changer pendant la coupure : comparaison immédiate avec le dossier
                     self.db.send(Cmd::VaultScan);
@@ -261,6 +277,7 @@ impl MnemoApp {
             "board" => self.need.board = true,
             "plugin" => self.need.plugins = true,
             "icon" => self.need.icons = true,
+            "file" => self.need.files = true,
             _ => {}
         }
     }
@@ -322,6 +339,9 @@ impl MnemoApp {
         }
         if n.icons {
             self.db.send(Cmd::ListIcons);
+        }
+        if n.files {
+            self.db.send(Cmd::ListFiles);
         }
         if n.graph {
             self.db.send(Cmd::Graph);

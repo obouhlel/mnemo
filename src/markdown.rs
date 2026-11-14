@@ -4,6 +4,24 @@
 
 pub const NOTE_SCHEME: &str = "mnemo:note/";
 pub const TAG_SCHEME: &str = "mnemo:tag/";
+pub const BOARD_SCHEME: &str = "mnemo:board/";
+
+/// Ce que désigne un fichier intégré `![[…]]` ou `![](…)` (résolu par l'appelant dans le dossier des notes).
+pub enum Embed {
+    /// image affichable : adresse à charger (`file:///…`)
+    Image(String),
+    /// whiteboard : chemin relatif du fichier `.mnemo-board`
+    Board(String),
+}
+
+/// Extensions d'images affichées dans les notes.
+pub const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+
+pub fn is_image(path: &str) -> bool {
+    path.rsplit_once('.').is_some_and(|(_, e)| IMAGE_EXTS.contains(&e.to_lowercase().as_str()))
+}
+
+pub type Resolver<'a> = &'a dyn Fn(&str) -> Option<Embed>;
 
 fn encode(s: &str) -> String {
     s.replace('%', "%25").replace('<', "%3C").replace('>', "%3E")
@@ -28,7 +46,14 @@ pub fn parse_wikilink(inner: &str) -> (String, String) {
 }
 
 /// Transforms wikilinks and tags of a whole document.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn preprocess(src: &str) -> String {
+    preprocess_with(src, &|_| None)
+}
+
+/// Comme `preprocess`, et les fichiers intégrés (`![[image.png]]`, `![](dossier/image.png)`,
+/// `![[croquis.mnemo-board]]`) sont résolus par `resolve` : images affichées, whiteboards en lien.
+pub fn preprocess_with(src: &str, resolve: Resolver) -> String {
     let mut out = String::with_capacity(src.len() + 64);
     let mut fence: Option<String> = None;
     for line in src.split_inclusive('\n') {
@@ -52,12 +77,21 @@ pub fn preprocess(src: &str) -> String {
             out.push_str(line);
             continue;
         }
-        transform_line(line, &mut out);
+        transform_line(line, &mut out, resolve);
     }
     out
 }
 
-fn transform_line(line: &str, out: &mut String) {
+/// `![[cible]]` ou `![](cible)` d'un fichier : image Markdown ou lien vers le whiteboard.
+fn embed_markdown(target: &str, label: &str, resolve: Resolver) -> Option<String> {
+    let label = label.replace('[', "\\[").replace(']', "\\]");
+    match resolve(target)? {
+        Embed::Image(uri) => Some(format!("![{label}](<{}>)", encode(&uri))),
+        Embed::Board(rel) => Some(format!("[🖊 {label}](<{BOARD_SCHEME}{}>)", encode(&rel))),
+    }
+}
+
+fn transform_line(line: &str, out: &mut String, resolve: Resolver) {
     let bytes = line.as_bytes();
     let mut i = 0;
     let mut last = 0;
@@ -81,6 +115,16 @@ fn transform_line(line: &str, out: &mut String) {
                         let start = if embed { i - 1 } else { i };
                         out.push_str(&line[last..start]);
                         let (target, display) = parse_wikilink(inner);
+                        // ![[image.png|300]] : la partie après | est une taille (ignorée), pas un libellé
+                        if embed
+                            && let Some(md) =
+                                embed_markdown(inner.split('|').next().unwrap_or("").trim(), &target, resolve)
+                        {
+                            out.push_str(&md);
+                            i += 2 + end + 2;
+                            last = i;
+                            continue;
+                        }
                         out.push_str(&format!(
                             "[{}](<{}{}>)",
                             display.replace('[', "\\[").replace(']', "\\]"),
@@ -90,6 +134,26 @@ fn transform_line(line: &str, out: &mut String) {
                         i += 2 + end + 2;
                         last = i;
                         continue;
+                    }
+                }
+                i += 1;
+            }
+            // ![texte](chemin/relatif.png) : chemin du dossier des notes → adresse du fichier
+            b'!' if bytes.get(i + 1) == Some(&b'[') && bytes.get(i + 2) != Some(&b'[') => {
+                let rest = &line[i + 2..];
+                if let Some(close) = rest.find("](") {
+                    let after = &rest[close + 2..];
+                    if let Some(end) = after.find(')') {
+                        let raw = after[..end].trim().trim_start_matches('<').trim_end_matches('>');
+                        let target = raw.replace("%20", " ");
+                        let external = raw.contains("://") || raw.starts_with("data:");
+                        if !external && let Some(md) = embed_markdown(&target, &rest[..close], resolve) {
+                            out.push_str(&line[last..i]);
+                            out.push_str(&md);
+                            i += 2 + close + 2 + end + 1;
+                            last = i;
+                            continue;
+                        }
                     }
                 }
                 i += 1;
@@ -161,6 +225,24 @@ mod tests {
         assert_eq!(preprocess("![[img]]"), "[img](<mnemo:note/img>)");
         assert_eq!(preprocess("`[[pas un lien]]`"), "`[[pas un lien]]`");
         assert_eq!(preprocess("```\n[[x]]\n```\n[[y]]"), "```\n[[x]]\n```\n[y](<mnemo:note/y>)");
+    }
+
+    #[test]
+    fn embeds() {
+        let resolve = |t: &str| match t {
+            "photo.png" | "img/photo.png" => Some(Embed::Image("file:///v/img/photo.png".into())),
+            "croquis.mnemo-board" => Some(Embed::Board("Dessins/croquis.mnemo-board".into())),
+            _ => None,
+        };
+        let p = |s: &str| preprocess_with(s, &resolve);
+        assert_eq!(p("a ![[photo.png]] b"), "a ![photo.png](<file:///v/img/photo.png>) b");
+        assert_eq!(p("![[photo.png|300]]"), "![photo.png](<file:///v/img/photo.png>)");
+        assert_eq!(p("![légende](img/photo.png)"), "![légende](<file:///v/img/photo.png>)");
+        assert_eq!(p("![x](https://exemple.fr/a.png)"), "![x](https://exemple.fr/a.png)");
+        assert_eq!(p("![[croquis.mnemo-board]]"), "[🖊 croquis.mnemo-board](<mnemo:board/Dessins/croquis.mnemo-board>)");
+        // fichier introuvable : lien vers une note, comme avant
+        assert_eq!(p("![[absent.png]]"), "[absent.png](<mnemo:note/absent.png>)");
+        assert!(is_image("A/b.JPG") && !is_image("note.md"));
     }
 
     #[test]

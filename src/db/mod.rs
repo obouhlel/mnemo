@@ -28,7 +28,7 @@ use connection::*;
 pub use notes::rewrite_links;
 use notes::*;
 pub use vault_sync::VaultStats;
-pub(crate) use vault_sync::{DiskFile, note_file, walk};
+pub(crate) use vault_sync::{DiskFile, note_file, walk, walk_files};
 
 /// Notes Markdown d'un dossier du disque : (chemin relatif sans `.md`, fichier), sous-dossiers, entrées ignorées.
 pub fn walk_markdown(root: &std::path::Path) -> (Vec<(String, std::path::PathBuf)>, Vec<String>, usize) {
@@ -84,6 +84,16 @@ pub enum Cmd {
     Search(String),
     /// Icônes de l'explorateur : chemin (dossier ou note) → icône
     ListIcons,
+    /// Pièces jointes du dossier (images, PDF, whiteboards…) : chemins relatifs avec extension
+    ListFiles,
+    /// Enregistre une pièce jointe (image collée ou déposée) ; le nom est rendu unique.
+    /// `insert` : l'interface insère ensuite `![[nom]]` dans la note ouverte.
+    SaveFile {
+        path: String,
+        bytes: Vec<u8>,
+        insert: bool,
+    },
+    DeleteFile(String),
     SetIcon {
         path: String,
         icon: Option<String>,
@@ -193,6 +203,11 @@ pub enum Msg {
     Tags(Vec<(String, i64)>),
     /// chemin en minuscules → icône
     Icons(HashMap<String, String>),
+    Files(Vec<String>),
+    FileSaved {
+        path: String,
+        insert: bool,
+    },
     Graph(GraphData),
     Plugins(HashMap<String, PluginState>),
     Board(Board),
@@ -246,6 +261,9 @@ impl Cmd {
                 | Cmd::SetPlugin { .. }
                 | Cmd::ListIcons
                 | Cmd::SetIcon { .. }
+                | Cmd::ListFiles
+                | Cmd::SaveFile { .. }
+                | Cmd::DeleteFile(_)
         )
     }
 }

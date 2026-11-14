@@ -1,4 +1,5 @@
 mod appearance;
+mod attachments;
 mod commands;
 mod conflict;
 mod dashboard;
@@ -102,6 +103,12 @@ pub struct MnemoApp {
     /// icônes de l'explorateur : chemin en minuscules → icône Lucide ou emoji
     icons: HashMap<String, String>,
     icon_pick: Option<icons::IconPick>,
+    /// pièces jointes du dossier (chemins relatifs avec extension)
+    files: Vec<String>,
+    /// image ouverte depuis l'explorateur
+    image_view: Option<String>,
+    /// une pièce jointe a changé : oublier les images en cache
+    forget_images: bool,
     /// donne le focus à cet éditeur à la prochaine frame (note qui vient d'être créée)
     focus_editor: Option<egui::Id>,
     /// dossier de l'explorateur survolé pendant un glisser depuis le système
@@ -135,6 +142,8 @@ fn fold_accents(s: &str) -> String {
 impl MnemoApp {
     pub fn new(cc: &eframe::CreationContext<'_>, cfg: Config) -> Self {
         theme::install_fonts(&cc.egui_ctx);
+        // images des notes (file://) : PNG, JPEG, GIF, WebP, BMP, SVG
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         let client_id = Uuid::new_v4().to_string();
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = cc.egui_ctx.clone();
@@ -202,6 +211,9 @@ impl MnemoApp {
             vault_input: String::new(),
             icons: HashMap::new(),
             icon_pick: None,
+            files: vec![],
+            image_view: None,
+            forget_images: false,
             focus_editor: None,
             os_drop_target: None,
             offline_noticed: false,
@@ -222,7 +234,10 @@ impl MnemoApp {
             app.cfg.save();
         }
         app.vault_input = dir.display().to_string();
-        app.db.send(Cmd::SetRoot(dir));
+        app.db.send(Cmd::SetRoot(dir.clone()));
+        // le worker connaît le dossier dès le départ : la synchro ne dépend pas de l'affichage
+        // (une fenêtre cachée ou réduite ne traite pas ses messages)
+        app.db.send(Cmd::SetVault(Some(dir)));
         // la base ne sert qu'à synchroniser plusieurs appareils
         if !app.cfg.database_url.trim().is_empty() {
             app.connect();
@@ -348,6 +363,10 @@ impl eframe::App for MnemoApp {
         self.conflict_window(&ctx, now);
         self.dialogs(&ctx, now);
         self.icon_picker(&ctx);
+        self.image_viewer(&ctx);
+        if std::mem::take(&mut self.forget_images) {
+            ctx.forget_all_images();
+        }
         self.notices_ui(&ctx, now);
 
         // Intercept clicks on [[wikilinks]] / #tags rendered in the preview
@@ -374,8 +393,21 @@ impl eframe::App for MnemoApp {
         });
         if !dropped.is_empty() {
             // la cible n'est valable que si le survol vient de se terminer (glisser annulé sinon)
-            let target = self.os_drop_target.take().filter(|t| now - t.1 < 0.5).map(|t| t.0).unwrap_or_default();
-            self.actions.push(UiAction::ImportFiles(dropped, target));
+            let target = self.os_drop_target.take().filter(|t| now - t.1 < 0.5).map(|t| t.0);
+            let tab = &self.tabs[self.active_tab];
+            let on_note = target.is_none() && self.open.is_some() && !tab.dashboard && !tab.graph;
+            // déposés sur la note ouverte : les images et autres fichiers y sont intégrés, les .md importés
+            let (attach, rest): (Vec<_>, Vec<_>) = dropped
+                .into_iter()
+                .partition(|p| on_note && p.is_file() && !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md")));
+            for p in attach {
+                if let (Some(name), Ok(bytes)) = (p.file_name().and_then(|n| n.to_str()), std::fs::read(&p)) {
+                    self.attach_to_open_note(name, bytes);
+                }
+            }
+            if !rest.is_empty() {
+                self.actions.push(UiAction::ImportFiles(rest, target.unwrap_or_default()));
+            }
         }
         self.process_actions(&ctx, now);
         self.apply_plugin_actions(&ctx, now);

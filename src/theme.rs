@@ -559,6 +559,7 @@ pub fn markdown_job(
     size: f32,
     wrap_width: f32,
     active: Option<(usize, usize)>,
+    images: &std::collections::HashMap<usize, f32>,
 ) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap_width;
@@ -579,6 +580,23 @@ pub fn markdown_job(
     let mut fence = false;
     for (line_no, line) in text.split_inclusive('\n').enumerate() {
         let reveal = active.is_some_and(|(a, b)| line_no >= a && line_no <= b);
+        // ligne qui n'intègre qu'une image : texte invisible, hauteur de l'image (dessinée par l'éditeur)
+        if !reveal
+            && !fence
+            && let Some(h) = images.get(&line_no)
+        {
+            job.append(
+                line,
+                0.0,
+                TextFormat {
+                    font_id: FontId::proportional(0.5),
+                    color: Color32::TRANSPARENT,
+                    line_height: Some(*h),
+                    ..Default::default()
+                },
+            );
+            continue;
+        }
         let hidden =
             TextFormat { font_id: FontId::proportional(0.5), color: Color32::TRANSPARENT, ..Default::default() };
         let syntax = |f: &TextFormat| if reveal { TextFormat { color: p.faint, ..f.clone() } } else { hidden.clone() };
@@ -929,7 +947,7 @@ mod tests {
         let p = palette(true);
         let src = "# Titre **gras**\n\n- [x] fait *ok* `code` [[Lien|alias]] #tag ==hl==\n> [!note] cite\n```rs\nlet a = 1;\n```\n[a](b) é_t_é __x__\n";
         for active in [None, Some((0, 2)), Some((0, 100))] {
-            let job = markdown_job(src, &p, &Metrics::default(), 15.0, 500.0, active);
+            let job = markdown_job(src, &p, &Metrics::default(), 15.0, 500.0, active, &Default::default());
             assert_eq!(job.text, src);
         }
     }

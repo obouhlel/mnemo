@@ -48,11 +48,20 @@ pub(super) struct Vault {
     first: bool,
     /// icônes / réglages des plugins tels qu'au dernier passage (base de la fusion à 3 voies)
     kv_known: HashMap<&'static str, Map<String, Value>>,
+    /// pièces jointes au dernier passage : chemin → (empreinte, date de modification du fichier)
+    file_known: HashMap<String, (String, Option<SystemTime>)>,
 }
 
 impl Vault {
     pub(super) fn new(root: PathBuf) -> Self {
-        Self { root, known: HashMap::new(), folders: HashSet::new(), first: true, kv_known: HashMap::new() }
+        Self {
+            root,
+            known: HashMap::new(),
+            folders: HashSet::new(),
+            first: true,
+            kv_known: HashMap::new(),
+            file_known: HashMap::new(),
+        }
     }
 
     /// Oublie l'état connu : le prochain passage recompare tout (reconnexion à la base).
@@ -60,8 +69,164 @@ impl Vault {
         self.known.clear();
         self.folders.clear();
         self.kv_known.clear();
+        self.file_known.clear();
         self.first = true;
     }
+}
+
+/// Taille maximale d'une pièce jointe synchronisée.
+const MAX_FILE: u64 = 50 * 1024 * 1024;
+
+/// Que faire d'une pièce jointe, d'après son empreinte au dernier passage (`known`), en local et en base.
+#[derive(Debug, PartialEq)]
+enum FilePlan {
+    Nothing,
+    Upload,
+    Download,
+    DeleteRemote,
+    DeleteLocal,
+    /// changée des deux côtés : la base l'emporte, la version locale est gardée à côté
+    Conflict,
+}
+
+fn plan_file(known: Option<&str>, local: Option<&str>, remote: Option<&str>) -> FilePlan {
+    if local == remote {
+        return FilePlan::Nothing;
+    }
+    let Some(k) = known else {
+        // première rencontre : union, la base l'emporte si les deux existent
+        return match (local, remote) {
+            (Some(_), None) => FilePlan::Upload,
+            (None, Some(_)) => FilePlan::Download,
+            _ => FilePlan::Conflict,
+        };
+    };
+    match (local != Some(k), remote != Some(k)) {
+        (true, false) if local.is_none() => FilePlan::DeleteRemote,
+        (true, false) => FilePlan::Upload,
+        (false, true) if remote.is_none() => FilePlan::DeleteLocal,
+        (false, true) => FilePlan::Download,
+        // les deux ont changé : une suppression d'un côté ne gagne pas sur une modification de l'autre
+        _ => match (local, remote) {
+            (Some(_), None) => FilePlan::Upload,
+            (None, Some(_)) => FilePlan::Download,
+            _ => FilePlan::Conflict,
+        },
+    }
+}
+
+/// « Dossier/photo.png » → « Dossier/photo (conflit disque).png »
+fn conflict_name(path: &str) -> String {
+    match path.rsplit_once('.') {
+        Some((s, e)) if !e.contains('/') => format!("{s} (conflit disque).{e}"),
+        _ => format!("{path} (conflit disque)"),
+    }
+}
+
+/// Pièces jointes : dossier ↔ table `files`.
+async fn sync_files(
+    t: &tokio_postgres::Transaction<'_>,
+    v: &mut Vault,
+    root: &Path,
+    stats: &mut VaultStats,
+) -> Res<()> {
+    let local: HashMap<String, AttFile> =
+        walk_files(root).into_iter().filter(|f| f.size <= MAX_FILE).map(|f| (f.rel.clone(), f)).collect();
+    let remote: HashMap<String, String> =
+        t.query("SELECT path, hash FROM files", &[]).await?.iter().map(|r| (r.get(0), r.get(1))).collect();
+    let mut paths: Vec<&String> = local.keys().chain(remote.keys()).collect();
+    paths.sort();
+    paths.dedup();
+    for path in paths {
+        let known = v.file_known.get(path).cloned();
+        let lf = local.get(path);
+        // empreinte locale : recalculée seulement si le fichier a bougé depuis le dernier passage
+        let mut bytes: Option<Vec<u8>> = None;
+        let lhash = match (lf, &known) {
+            (None, _) => None,
+            (Some(f), Some((h, m))) if *m == f.mtime => Some(h.clone()),
+            (Some(f), _) => {
+                let Ok(b) = std::fs::read(&f.abs) else { continue };
+                let h = file_hash(&b);
+                bytes = Some(b);
+                Some(h)
+            }
+        };
+        let rhash = remote.get(path).cloned();
+        let plan = plan_file(known.as_ref().map(|k| k.0.as_str()), lhash.as_deref(), rhash.as_deref());
+        let abs = root.join(path);
+        match plan {
+            FilePlan::Nothing => {}
+            FilePlan::Upload => {
+                let b = match bytes.take() {
+                    Some(b) => b,
+                    None => match std::fs::read(&abs) {
+                        Ok(b) => b,
+                        Err(_) => continue,
+                    },
+                };
+                t.execute(
+                    "INSERT INTO files (path, data, hash, size) VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (path) DO UPDATE SET data = EXCLUDED.data, hash = EXCLUDED.hash, size = EXCLUDED.size,
+                       updated_at = now()",
+                    &[path, &b, &lhash.clone().unwrap_or_default(), &(b.len() as i64)],
+                )
+                .await?;
+                stats.imported += 1;
+            }
+            FilePlan::Download | FilePlan::Conflict => {
+                if plan == FilePlan::Conflict && abs.exists() {
+                    let _ = std::fs::rename(&abs, root.join(conflict_name(path)));
+                }
+                let data: Vec<u8> = t.query_one("SELECT data FROM files WHERE path = $1", &[path]).await?.get(0);
+                if write_bytes(&abs, &data).is_ok() {
+                    stats.written += 1;
+                }
+            }
+            FilePlan::DeleteRemote => {
+                t.execute("DELETE FROM files WHERE path = $1", &[path]).await?;
+                stats.removed += 1;
+            }
+            FilePlan::DeleteLocal => {
+                let mut dest = root.join(".trash").join(path);
+                if dest.exists() {
+                    dest = root.join(".trash").join(format!("{} {path}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
+                }
+                if let Some(d) = dest.parent() {
+                    let _ = std::fs::create_dir_all(d);
+                }
+                if std::fs::rename(&abs, &dest).is_ok() {
+                    stats.removed += 1;
+                }
+            }
+        }
+        // état connu après ce passage : ce qui est maintenant des deux côtés
+        let now_local = mtime(&abs);
+        let final_hash = match plan {
+            FilePlan::Nothing | FilePlan::Upload => lhash.or(rhash),
+            FilePlan::Download | FilePlan::Conflict => rhash,
+            FilePlan::DeleteRemote | FilePlan::DeleteLocal => None,
+        };
+        match final_hash {
+            Some(h) if abs.exists() => {
+                v.file_known.insert(path.clone(), (h, now_local));
+            }
+            _ => {
+                v.file_known.remove(path);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_bytes(abs: &Path, data: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = abs.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let name = abs.file_name().and_then(|n| n.to_str()).unwrap_or("f");
+    let tmp = abs.with_file_name(format!(".{name}.mnemo-tmp"));
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(&tmp, abs)
 }
 
 /// Clés à écrire dans la base après une fusion (`None` : à supprimer).
@@ -142,6 +307,60 @@ fn dir_path(root: &Path, rel: &str) -> PathBuf {
         p.push(s);
     }
     p
+}
+
+/// Pièce jointe : tout fichier visible du dossier qui n'est pas une note (image, PDF, whiteboard…).
+#[derive(Debug, Clone)]
+pub(crate) struct AttFile {
+    /// chemin relatif complet, extension comprise (« Pièces jointes/photo.png »)
+    pub(crate) rel: String,
+    pub(crate) abs: PathBuf,
+    pub(crate) mtime: Option<SystemTime>,
+    pub(crate) size: u64,
+}
+
+/// Pièces jointes du dossier (les dossiers cachés comme .obsidian, .trash, .mnemo sont ignorés).
+pub(crate) fn walk_files(root: &Path) -> Vec<AttFile> {
+    fn rec(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<AttFile>) {
+        if depth > 32 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+            if name.starts_with('.') {
+                continue;
+            }
+            let Ok(ft) = e.file_type() else { continue };
+            let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            if ft.is_dir() {
+                rec(&e.path(), &rel, depth + 1, out);
+            } else if ft.is_file() && !name.to_lowercase().ends_with(".md") {
+                let meta = e.metadata().ok();
+                out.push(AttFile {
+                    rel,
+                    abs: e.path(),
+                    mtime: meta.as_ref().and_then(|m| m.modified().ok()),
+                    size: meta.map(|m| m.len()).unwrap_or(0),
+                });
+            }
+        }
+    }
+    let mut out = vec![];
+    rec(root, "", 0, &mut out);
+    out.sort_by_key(|f| f.rel.to_lowercase());
+    out
+}
+
+/// Empreinte stable d'un fichier (FNV-1a 64 bits, en hexadécimal) : la même sur tous les appareils,
+/// application mobile comprise, pour savoir si une pièce jointe a changé.
+pub fn file_hash(bytes: &[u8]) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
 }
 
 /// Parcourt le coffre : fichiers `.md` (clé = chemin sans extension, en minuscules),
@@ -557,6 +776,7 @@ impl Worker {
                 }
             }
         }
+        sync_files(&t, v, &root, &mut stats).await?;
         t.commit().await?;
         v.folders = kept;
 
@@ -596,6 +816,22 @@ mod tests {
         assert_eq!(dirs, vec!["Projets".to_string(), "Projets/Vide".to_string()]);
         assert_eq!(skipped, 1);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn file_plans() {
+        use FilePlan::*;
+        assert_eq!(plan_file(None, Some("a"), None), Upload);
+        assert_eq!(plan_file(None, None, Some("a")), Download);
+        assert_eq!(plan_file(None, Some("a"), Some("b")), Conflict);
+        assert_eq!(plan_file(Some("a"), Some("a"), Some("a")), Nothing);
+        assert_eq!(plan_file(Some("a"), Some("b"), Some("a")), Upload);
+        assert_eq!(plan_file(Some("a"), Some("a"), Some("b")), Download);
+        assert_eq!(plan_file(Some("a"), None, Some("a")), DeleteRemote);
+        assert_eq!(plan_file(Some("a"), Some("a"), None), DeleteLocal);
+        assert_eq!(plan_file(Some("a"), Some("b"), None), Upload); // modifiée ici, supprimée ailleurs : gardée
+        assert_eq!(plan_file(Some("a"), Some("b"), Some("c")), Conflict);
+        assert_eq!(conflict_name("D/photo.png"), "D/photo (conflit disque).png");
     }
 
     #[test]
