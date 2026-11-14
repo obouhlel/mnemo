@@ -43,6 +43,8 @@ struct Store {
     ids_generation: u64,
     /// dates de modification des fichiers d'état (icônes, plugins) pour voir les changements extérieurs
     state_mtimes: HashMap<&'static str, Option<SystemTime>>,
+    /// pièces jointes (chemin relatif → date de modification, taille)
+    files: std::collections::BTreeMap<String, (Option<SystemTime>, u64)>,
 }
 
 /// Lance le thread du stockage local ; les commandes arrivent par `rx`.
@@ -66,6 +68,7 @@ pub fn spawn(
                 shared,
                 ids_generation: 0,
                 state_mtimes: HashMap::new(),
+                files: Default::default(),
             };
             let mut last = Instant::now();
             loop {
@@ -81,6 +84,17 @@ pub fn spawn(
             }
         })
         .expect("spawn local thread");
+}
+
+/// Écrit des octets via un fichier temporaire caché puis renomme.
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("f");
+    let tmp = path.with_file_name(format!(".{name}.mnemo-tmp"));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
 }
 
 fn mtime(p: &Path) -> Option<SystemTime> {
@@ -169,6 +183,7 @@ impl Store {
         self.notes.clear();
         self.dirs.clear();
         self.state_mtimes.clear();
+        self.files.clear();
         self.rescan_inner(false);
         self.emit(Msg::LocalReady);
     }
@@ -265,6 +280,15 @@ impl Store {
             self.dirs = dirs;
             if report {
                 self.event("folder", "update", None, "", None, false);
+            }
+        }
+        // pièces jointes ajoutées, modifiées ou supprimées (par un autre éditeur ou la synchronisation)
+        let files: std::collections::BTreeMap<String, (Option<SystemTime>, u64)> =
+            crate::db::walk_files(&root).into_iter().map(|f| (f.rel, (f.mtime, f.size))).collect();
+        if files != self.files {
+            self.files = files;
+            if report {
+                self.event("file", "update", None, "", None, false);
             }
         }
         // icônes / plugins modifiés par la synchronisation
@@ -492,6 +516,49 @@ impl Store {
                 let map = self.state(|root| read_state(root, "icons")).unwrap_or_default();
                 let icons = map.into_iter().filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string()))).collect();
                 self.emit(Msg::Icons(icons));
+            }
+            Cmd::ListFiles => self.emit(Msg::Files(self.files.keys().cloned().collect())),
+            Cmd::SaveFile { path, bytes, insert } => {
+                let root = self.root.clone().expect("root");
+                // nom unique : « photo.png », « photo 1.png », « photo 2.png »…
+                let (stem, ext) = match path.rsplit_once('.') {
+                    Some((s, e)) if !s.is_empty() && !e.contains('/') => (s.to_string(), format!(".{e}")),
+                    _ => (path.clone(), String::new()),
+                };
+                let mut rel = path.clone();
+                let mut n = 1;
+                while root.join(&rel).exists() {
+                    rel = format!("{stem} {n}{ext}");
+                    n += 1;
+                }
+                match write_bytes_atomic(&root.join(&rel), &bytes) {
+                    Ok(()) => {
+                        let abs = root.join(&rel);
+                        self.files.insert(rel.clone(), (mtime(&abs), bytes.len() as u64));
+                        self.event("file", "insert", None, &rel, None, true);
+                        self.emit(Msg::FileSaved { path: rel, insert });
+                    }
+                    Err(e) => self.error(format!("Enregistrement de « {rel} » impossible : {e}")),
+                }
+            }
+            Cmd::DeleteFile(path) => {
+                let root = self.root.clone().expect("root");
+                let mut dest = root.join(".trash").join(&path);
+                if dest.exists() {
+                    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                    dest = root.join(".trash").join(format!("{stamp} {path}"));
+                }
+                if let Some(d) = dest.parent() {
+                    let _ = std::fs::create_dir_all(d);
+                }
+                match std::fs::rename(root.join(&path), &dest) {
+                    Ok(()) => {
+                        self.files.remove(&path);
+                        self.move_icons(&path, None);
+                        self.event("file", "delete", None, &path, None, true);
+                    }
+                    Err(e) => self.error(format!("Suppression impossible : {e}")),
+                }
             }
             Cmd::SetIcon { path, icon } => {
                 self.state(|root| {

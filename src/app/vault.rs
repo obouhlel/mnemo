@@ -67,9 +67,8 @@ impl MnemoApp {
         if dir.join(".obsidian").is_dir() {
             self.import_iconize_notice(&dir.join(".obsidian"), true, now);
         }
-        if self.conn == ConnState::Connected {
-            self.send_vault();
-        }
+        // la synchro suit le nouveau dossier (tout de suite si la base est connectée, sinon à la connexion)
+        self.send_vault();
     }
 
     pub(super) fn on_vault_synced(&mut self, stats: VaultStats, first: bool, now: f64) {
@@ -185,6 +184,7 @@ impl MnemoApp {
         let mut notes: Vec<(String, PathBuf)> = vec![];
         let mut folders: Vec<String> = vec![];
         let mut skipped = 0;
+        let mut copied = 0;
         let join = |a: &str, b: &str| if a.is_empty() { b.to_string() } else { format!("{a}/{b}") };
         for f in files {
             let Some(name) = f.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
@@ -197,6 +197,10 @@ impl MnemoApp {
                 notes.extend(found.into_iter().map(|(rel, abs)| (join(&base, &rel), abs)));
             } else if let Some(stem) = name.strip_suffix(".md").or_else(|| name.strip_suffix(".markdown")) {
                 notes.push((join(target, stem), f.clone()));
+            } else if let Ok(bytes) = std::fs::read(&f) {
+                // image, PDF, whiteboard… : copié tel quel dans le dossier visé
+                self.db.send(Cmd::SaveFile { path: join(target, &name), bytes, insert: false });
+                copied += 1;
             } else {
                 skipped += 1;
             }
@@ -221,8 +225,11 @@ impl MnemoApp {
         self.need.notes = true;
         self.need.folders = true;
         let mut msg = format!("{count} note(s) importée(s)");
+        if copied > 0 {
+            msg.push_str(&format!(", {copied} fichier(s) copié(s)"));
+        }
         if skipped > 0 {
-            msg.push_str(&format!(", {skipped} fichier(s) ignoré(s) (seuls les .md sont importés)"));
+            msg.push_str(&format!(", {skipped} fichier(s) illisible(s)"));
         }
         self.notice(msg, skipped > 0 && count == 0, now);
     }

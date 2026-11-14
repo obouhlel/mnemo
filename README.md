@@ -12,6 +12,10 @@ hors connexion. Un seul binaire pour Windows, macOS et Linux.
 - **Rétroliens**, `#tags`, recherche plein texte (sans accent ni casse, extraits surlignés), arborescence de dossiers
 - Renommer / déplacer une note **met à jour les liens** dans les autres notes ; **glisser-déposer** des notes et dossiers
   dans l'explorateur, et import de fichiers `.md` / dossiers déposés depuis le système
+- **Images** : `![[photo.png]]` (comme Obsidian) ou `![](dossier/photo.png)`, affichées dans l'éditeur et en lecture ;
+  une capture collée (Ctrl+V) ou une image déposée sur la note est rangée dans le dossier des pièces jointes (réglage
+  d'Obsidian, sinon « Pièces jointes ») et intégrée au curseur ; pièces jointes visibles dans l'explorateur et
+  synchronisées entre appareils (jusqu'à 50 Mo par fichier)
 - **Icônes** de dossiers et de notes dans l'explorateur (clic droit › Changer l'icône…) : les 1 500 icônes Lucide ou
   un emoji, synchronisées entre appareils ; celles du plugin Iconize d'Obsidian sont reprises à la liaison du coffre
 - **Dossier des notes** (Paramètres › Dossier des notes) : un dossier de fichiers `.md`, par exemple un coffre Obsidian ;

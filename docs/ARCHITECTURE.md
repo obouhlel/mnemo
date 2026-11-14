@@ -42,7 +42,7 @@ Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle
 | `db/connection.rs` | ouverture (TLS si `sslmode=require`), migration sous verrou consultatif, boucle `LISTEN` avec backoff |
 | `db/notes.rs` | commandes notes / dossiers / recherche / graphe / plugins, réécriture des `[[liens]]` au renommage |
 | `db/board.rs` | commandes projets / tickets / rapports, chargement du tableau de bord |
-| `db/vault_sync.rs` | synchro dossier ↔ base : notes, dossiers, renommages, suppressions, icônes et plugins |
+| `db/vault_sync.rs` | synchro dossier ↔ base : notes, dossiers, renommages, suppressions, icônes, plugins et pièces jointes (table `files`) |
 | `local/mod.rs` | stockage local : commandes des notes sur les fichiers, relecture du disque |
 | `local/index.rs` | liens, résolution, tags, recherche, rétroliens, graphe, réécriture des liens (fonctions pures) |
 | `local/shared.rs` | identifiants des notes (`.mnemo/ids.json`) et fichiers d'état partagés avec la synchro |
@@ -74,6 +74,7 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `dialogs.rs` | palette, sélecteur de notes, saisie de nom, confirmations |
 | `conflict.rs` | fenêtre de résolution de conflit (choix par bloc, diff) |
 | `settings.rs` | fenêtre des paramètres (général, plugins, GitHub) |
+| `attachments.rs` | pièces jointes : résolution des images, collage (Ctrl+V), dépôt, dossier des pièces jointes, visionneuse |
 | `icons.rs` | icônes des dossiers / notes : fenêtre de choix (Lucide, emoji), import depuis Iconize |
 | `vault.rs` | onglet Coffre Obsidian, passage de synchronisation périodique, import des fichiers déposés, `settings_row` |
 | `appearance.rs` | onglet Apparence, chargement et surveillance des fichiers CSS |

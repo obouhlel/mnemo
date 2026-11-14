@@ -13,6 +13,9 @@ directories = "6.0.0"
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "links", "glow", "wayland", "x11", "persistence"] }
 egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
 egui_commonmark = { version = "0.26.0", features = ["better_syntax_highlighting"] }
+# images dans les notes : chargeurs de fichiers (file://) et décodeurs PNG / JPEG / GIF / WebP / BMP / SVG
+egui_extras = { version = "0.37", features = ["image", "file", "svg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 futures-util = "0.3.34"
 rhai = { version = "1.27.0", features = ["sync"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }

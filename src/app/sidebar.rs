@@ -153,6 +153,34 @@ fn tree_ui(ui: &mut egui::Ui, folder: &TreeFolder, depth: usize, cx: &mut TreeCx
             }
         });
     }
+    // pièces jointes (images, whiteboards, PDF…), après les notes, avec leur extension
+    for rel in &folder.files {
+        let name = basename(rel);
+        let icon = cx.icons.get(&rel.to_lowercase()).map(String::as_str).unwrap_or(super::attachments::file_icon(rel));
+        let r = theme::tree_row_icon(ui, name, depth, false, None, Some(icon));
+        if r.clicked() {
+            cx.actions.push(UiAction::OpenFile(rel.clone()));
+        }
+        r.context_menu(|ui| {
+            if ui.button("Ouvrir").clicked() {
+                cx.actions.push(UiAction::OpenFile(rel.clone()));
+                ui.close();
+            }
+            if ui.button("Intégrer dans la note ouverte").clicked() {
+                cx.actions.push(UiAction::InsertEmbed(rel.clone()));
+                ui.close();
+            }
+            if ui.button("Copier l'intégration ![[…]]").clicked() {
+                ui.ctx().copy_text(format!("![[{name}]]"));
+                ui.close();
+            }
+            ui.separator();
+            if ui.button(RichText::new("Supprimer").color(Color32::from_rgb(0xfb, 0x46, 0x4c))).clicked() {
+                cx.actions.push(UiAction::DeleteFile(rel.clone()));
+                ui.close();
+            }
+        });
+    }
 }
 
 impl MnemoApp {
@@ -575,8 +603,16 @@ impl MnemoApp {
             };
             target.notes.push((basename(&n.path).to_string(), n.id, n.updated_at));
         }
+        for f in &self.files {
+            let target = match parent(f) {
+                Some(p) => folder_mut(&mut root, p),
+                None => &mut root,
+            };
+            target.files.push(f.clone());
+        }
         fn sort(f: &mut TreeFolder) {
             f.notes.sort_by_key(|n| n.0.to_lowercase());
+            f.files.sort_by_key(|n| n.to_lowercase());
             f.folders.values_mut().for_each(sort);
         }
         sort(&mut root);

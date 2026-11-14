@@ -130,6 +130,11 @@ pub(super) enum UiAction {
     Move(DragItem, String),
     /// ouvre le choix de l'icône d'un dossier / d'une note
     PickIcon(String),
+    /// insère `![[…]]` d'une pièce jointe au curseur de la note ouverte
+    InsertEmbed(String),
+    /// ouvre une pièce jointe de l'explorateur (image : aperçu)
+    OpenFile(String),
+    DeleteFile(String),
     /// fichiers / dossiers déposés depuis le système : chemins, dossier de destination
     ImportFiles(Vec<std::path::PathBuf>, String),
 }
@@ -155,6 +160,8 @@ pub(super) struct TreeFolder {
     pub(super) path: String,
     pub(super) folders: BTreeMap<String, TreeFolder>,
     pub(super) notes: Vec<(String, Uuid, chrono::DateTime<chrono::Utc>)>,
+    /// pièces jointes du dossier (chemins relatifs complets)
+    pub(super) files: Vec<String>,
 }
 
 pub(super) struct Autocomplete {
@@ -188,5 +195,6 @@ pub(super) struct Needs {
     pub(super) graph: bool,
     pub(super) tags: bool,
     pub(super) icons: bool,
+    pub(super) files: bool,
     pub(super) plugins: bool,
 }

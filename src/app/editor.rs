@@ -49,6 +49,51 @@ fn task_positions(src: &str) -> Vec<(usize, bool)> {
 }
 
 impl MnemoApp {
+    /// Lignes de la note ouverte qui n'intègrent qu'une image (`![[photo.png]]`, `![](img/a.png)`), hors des
+    /// lignes du curseur : numéro de ligne → (adresse, taille d'affichage). Taille réelle de l'image, réduite
+    /// à la largeur de la colonne ; pendant le chargement, une hauteur provisoire.
+    pub(super) fn editor_images(
+        &self,
+        ui: &egui::Ui,
+        active: Option<(usize, usize)>,
+    ) -> std::collections::HashMap<usize, (String, egui::Vec2)> {
+        let mut out = std::collections::HashMap::new();
+        let Some(n) = &self.open else { return out };
+        let max_w = ui.available_width().max(100.0);
+        let mut fence = false;
+        for (no, line) in n.content.lines().enumerate() {
+            let t = line.trim();
+            if t.starts_with("```") || t.starts_with("~~~") {
+                fence = !fence;
+            }
+            if fence || active.is_some_and(|(a, b)| no >= a && no <= b) {
+                continue;
+            }
+            let target = if let Some(inner) = t.strip_prefix("![[").and_then(|r| r.strip_suffix("]]")) {
+                inner.split('|').next().unwrap_or("").trim().to_string()
+            } else if t.starts_with("![") && t.ends_with(')') && !t[2..].contains("![") {
+                match t.find("](") {
+                    Some(i) => t[i + 2..t.len() - 1].trim().trim_matches(['<', '>']).replace("%20", " "),
+                    None => continue,
+                }
+            } else {
+                continue;
+            };
+            let Some(markdown::Embed::Image(uri)) = self.resolve_embed(&target, &n.path) else { continue };
+            let size = match ui.ctx().try_load_texture(&uri, egui::TextureOptions::default(), egui::SizeHint::default())
+            {
+                Ok(egui::load::TexturePoll::Ready { texture }) => texture.size,
+                _ => {
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                    egui::vec2(max_w.min(400.0), 160.0)
+                }
+            };
+            let scale = (max_w / size.x).min(1.0).min(600.0 / size.y.max(1.0));
+            out.insert(no, (uri, size * scale));
+        }
+        out
+    }
+
     pub(super) fn inline_title(&mut self, ui: &mut egui::Ui, editable: bool) {
         let p = self.palette();
         let Some(n) = &self.open else { return };
@@ -152,11 +197,14 @@ impl MnemoApp {
                 });
         }
 
+        // Ctrl+V avec une image dans le presse-papiers : pièce jointe intégrée au curseur
+        self.paste_image(ui.ctx());
+
         // ---- preview source cache
         if self.preview_gen != self.content_gen && self.cfg.view_mode != ViewMode::Edit {
             let (id, path, content) = self.note_ctx().unwrap();
             let pre = self.plugins.preprocess(content.clone(), Some(&NoteCtx { id, path: &path, content: &content }));
-            self.preview_src = markdown::preprocess(&pre);
+            self.preview_src = markdown::preprocess_with(&pre, &|t| self.resolve_embed(t, &path));
             self.preview_gen = self.content_gen;
         }
 
@@ -250,8 +298,11 @@ impl MnemoApp {
             None
         };
         let met = self.metrics();
+        // images intégrées seules sur leur ligne : affichées dans l'éditeur (hors ligne du curseur)
+        let images = self.editor_images(ui, active);
+        let heights: std::collections::HashMap<usize, f32> = images.iter().map(|(l, (_, s))| (*l, s.y + 8.0)).collect();
         let mut layouter = move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
-            let job = theme::markdown_job(buf.as_str(), &pal, &met, fs, wrap, active);
+            let job = theme::markdown_job(buf.as_str(), &pal, &met, fs, wrap, active, &heights);
             ui.ctx().fonts_mut(|f| f.layout_job(job))
         };
         let bg_slot = ui.painter().add(egui::Shape::Noop);
@@ -289,6 +340,18 @@ impl MnemoApp {
                 bg_slot,
             )
         };
+        // images à la place de leur ligne
+        {
+            let n = self.open.as_ref().unwrap();
+            let mut starts = vec![0usize];
+            starts.extend(n.content.chars().enumerate().filter(|(_, c)| *c == '\n').map(|(i, _)| i + 1));
+            for (line, (uri, size)) in &images {
+                let Some(&ci) = starts.get(*line) else { continue };
+                let row = out.galley.pos_from_cursor(egui::text::CCursor::new(ci)).translate(out.galley_pos.to_vec2());
+                let rect = egui::Rect::from_min_size(egui::pos2(out.galley_pos.x, row.bottom() - size.y - 4.0), *size);
+                egui::Image::from_uri(uri.clone()).corner_radius(4.0).paint_at(ui, rect);
+            }
+        }
         if out.response.clicked()
             && !ui.input(|i| i.modifiers.command)
             && let Some(pointer) = out.response.interact_pointer_pos()

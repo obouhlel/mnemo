@@ -112,6 +112,19 @@ DROP TRIGGER IF EXISTS path_icons_notify ON path_icons;
 CREATE TRIGGER path_icons_notify AFTER INSERT OR UPDATE OR DELETE ON path_icons
   FOR EACH ROW EXECUTE FUNCTION generic_notify('icon', 'path');
 
+-- Pièces jointes du dossier des notes (images, PDF, whiteboards…), synchronisées entre appareils.
+-- hash : FNV-1a 64 bits du contenu en hexadécimal (calculé de la même façon par l'application mobile).
+CREATE TABLE IF NOT EXISTS files (
+  path       text PRIMARY KEY CHECK (path <> '' AND path !~ '(^/|/$|//)'),
+  data       bytea NOT NULL,
+  hash       text NOT NULL,
+  size       bigint NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+DROP TRIGGER IF EXISTS files_notify ON files;
+CREATE TRIGGER files_notify AFTER INSERT OR UPDATE OR DELETE ON files
+  FOR EACH ROW EXECUTE FUNCTION generic_notify('file', 'path');
+
 DROP TRIGGER IF EXISTS plugin_state_notify ON plugin_state;
 CREATE TRIGGER plugin_state_notify AFTER INSERT OR UPDATE OR DELETE ON plugin_state
   FOR EACH ROW EXECUTE FUNCTION generic_notify('plugin', 'id');
