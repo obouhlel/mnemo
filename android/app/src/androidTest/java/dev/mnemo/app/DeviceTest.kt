@@ -89,7 +89,15 @@ class DeviceTest {
     fun connectSyncAndRead() {
         waitText("Base de synchronisation")
         shot("1-premier-lancement")
-        compose.onNodeWithText("Afficher l'adresse").performClick()
+        // l'émulateur peut recréer l'activité juste après le lancement : on réessaie le premier clic
+        for (attempt in 1..5) {
+            compose.onAllNodesWithText("Afficher l'adresse").fetchSemanticsNodes().isNotEmpty().let { visible ->
+                if (visible) compose.onNodeWithText("Afficher l'adresse").performClick()
+            }
+            compose.waitForIdle()
+            if (compose.onAllNodesWithText("Masquer l'adresse").fetchSemanticsNodes().isNotEmpty()) break
+            Thread.sleep(1_000)
+        }
         waitText("Masquer l'adresse", 5_000)
         compose.onNode(hasSetTextAction()).performTextInput(url)
         compose.waitForIdle()

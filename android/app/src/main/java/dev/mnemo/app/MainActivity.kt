@@ -13,6 +13,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        android.util.Log.i("Mnemo", "activité créée" + if (savedInstanceState != null) " (recréée)" else "")
         setContent { MnemoTheme { MnemoApp(model) } }
     }
 

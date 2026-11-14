@@ -168,9 +168,9 @@ fun SettingsScreen(model: AppModel, firstRun: Boolean, onBack: (() -> Unit)?) {
     val sync by model.sync.collectAsState()
     val pending by model.pending.collectAsState()
     var url by rememberSaveable { mutableStateOf(model.dbUrl()) }
-    var show by remember { mutableStateOf(false) }
+    var show by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
     val connect: () -> Unit = {
         if (!busy && url.isNotBlank()) {
             busy = true
