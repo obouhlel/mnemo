@@ -236,7 +236,11 @@ impl MnemoApp {
             ui.label(RichText::new("Aucun fichier n'est ouvert").size(22.0).color(p.muted));
             ui.add_space(18.0);
             let link = |ui: &mut egui::Ui, t: &str| {
-                ui.add(egui::Label::new(RichText::new(t).size(15.0).color(p.link)).sense(egui::Sense::click()))
+                ui.add(
+                    egui::Label::new(RichText::new(t).size(15.0).color(p.link))
+                        .selectable(false)
+                        .sense(egui::Sense::click()),
+                )
             };
             if link(ui, "Créer une nouvelle note (Ctrl+N)").clicked() {
                 self.actions.push(UiAction::Core(CoreCmd::NewNote));

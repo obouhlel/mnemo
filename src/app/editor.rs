@@ -469,12 +469,12 @@ impl MnemoApp {
                 self.content_gen += 1;
             }
         }
-        // Ctrl/Cmd + click on a [[link]] opens it
+        // Ctrl/Cmd + clic sur un [[lien]] ou un #tag l'ouvre ; au survol avec Ctrl, curseur main
         // (uses the character under the pointer in *this* frame's layout: the cursor position is
         // unreliable here because focusing the editor reveals the markdown syntax and shifts the text)
-        if ui.input(|i| i.pointer.primary_clicked() && i.modifiers.command)
+        if ui.input(|i| i.modifiers.command)
             && out.response.hovered()
-            && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
+            && let Some(pointer) = ui.input(|i| i.pointer.hover_pos())
         {
             let ci = out.galley.cursor_from_pos(pointer - out.galley_pos).index.0;
             let n = self.open.as_ref().unwrap();
@@ -482,13 +482,36 @@ impl MnemoApp {
             let line_start = n.content[..b].rfind('\n').map(|i| i + 1).unwrap_or(0);
             let line_end = n.content[b..].find('\n').map(|i| b + i).unwrap_or(n.content.len());
             let line = &n.content[line_start..line_end];
-            let col = b - line_start;
-            if let Some(open) = line[..col.min(line.len())].rfind("[[")
+            let col = (b - line_start).min(line.len());
+            let action = if let Some(open) = line[..col].rfind("[[")
                 && let Some(close) = line[open..].find("]]")
                 && open + close + 2 >= col
             {
-                let (target, _) = markdown::parse_wikilink(&line[open + 2..open + close]);
-                self.actions.push(UiAction::OpenLink(target));
+                Some(UiAction::OpenLink(markdown::parse_wikilink(&line[open + 2..open + close]).0))
+            } else {
+                // #tag sous le pointeur : début du mot, précédé d'un espace ou en début de ligne
+                let start = line[..col]
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '/' | '#')))
+                    .map_or(0, |(i, c)| i + c.len_utf8());
+                let word = &line[start..];
+                let len = word
+                    .char_indices()
+                    .skip(1)
+                    .find(|(_, c)| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '/')))
+                    .map_or(word.len(), |(i, _)| i);
+                let tag = word
+                    .strip_prefix('#')
+                    .map(|_| &word[1..len])
+                    .filter(|t| !t.is_empty() && !t.chars().all(|c| c.is_ascii_digit()) && start + len >= col);
+                tag.map(|t| UiAction::OpenTag(t.to_string()))
+            };
+            if let Some(action) = action {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                if ui.input(|i| i.pointer.primary_clicked()) {
+                    self.actions.push(action);
+                }
             }
         }
 
@@ -823,6 +846,7 @@ impl MnemoApp {
             None => {
                 let r = ui.add(
                     egui::Label::new(RichText::new("+ Ajouter une propriété").size(fs).color(p.faint))
+                        .selectable(false)
                         .sense(egui::Sense::click()),
                 );
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {

@@ -486,6 +486,7 @@ impl eframe::App for MnemoApp {
             }
         }
         self.process_actions(&ctx, now);
+        theme::pointing_hand_on_clickables(&ctx);
         self.apply_plugin_actions(&ctx, now);
     }
 

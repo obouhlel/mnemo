@@ -564,10 +564,13 @@ impl MnemoApp {
                     let head = ui.horizontal(|ui| {
                         let arrow = if open { icon::CHEVRON_DOWN } else { icon::CHEVRON_RIGHT };
                         let a = ui.add(
-                            egui::Label::new(theme::icon_text(arrow, 12.0).color(p.faint)).sense(egui::Sense::click()),
+                            egui::Label::new(theme::icon_text(arrow, 12.0).color(p.faint))
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
                         );
                         let r = ui.add(
                             egui::Label::new(RichText::new("Mentions non liées").color(p.text).strong())
+                                .selectable(false)
                                 .sense(egui::Sense::click()),
                         );
                         let r = r.union(a);

@@ -1064,8 +1064,63 @@ fn inline(job: &mut LayoutJob, s: &str, base: &TextFormat, p: &Palette, m: &Metr
     flush(job, plain_start, s.len());
 }
 
+/// Curseur main au survol de tout ce qui est cliquable (comme Obsidian), appelé en fin de frame : le widget
+/// cliquable sous le pointeur (`hits.click`) qui n'a pas choisi lui-même un curseur (texte, redimensionnement…)
+/// le reçoit. Les grandes zones (graphe, whiteboard, fond de liste) gardent la flèche.
+pub fn pointing_hand_on_clickables(ctx: &egui::Context) {
+    if ctx.output(|o| o.cursor_icon) != egui::CursorIcon::Default || ctx.dragged_id().is_some() {
+        return;
+    }
+    let Some(hit) = ctx.viewport(|v| v.hits.click) else { return };
+    let r = hit.interact_rect;
+    if hit.enabled && hit.sense.senses_click() && r.width() * r.height() < 120_000.0 && r.height() < 200.0 {
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// Curseur obtenu en survolant `at` après deux frames (les zones cliquables viennent de la frame précédente).
+    fn cursor_over(at: egui::Pos2) -> egui::CursorIcon {
+        let ctx = egui::Context::default();
+        let mut cursor = egui::CursorIcon::Default;
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                events: vec![egui::Event::PointerMoved(at)],
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    ui.put(
+                        egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(100.0, 24.0)),
+                        egui::Button::new("ok"),
+                    );
+                    ui.put(
+                        egui::Rect::from_min_size(egui::pos2(10.0, 60.0), egui::vec2(100.0, 24.0)),
+                        egui::Label::new("texte"),
+                    );
+                    ui.put(
+                        egui::Rect::from_min_size(egui::pos2(10.0, 110.0), egui::vec2(100.0, 24.0)),
+                        egui::Label::new("lien").selectable(false).sense(egui::Sense::click()),
+                    );
+                });
+                super::pointing_hand_on_clickables(ui.ctx());
+            });
+            cursor = out.platform_output.cursor_icon;
+            out.textures_delta.clear();
+        }
+        cursor
+    }
+
+    #[test]
+    fn hand_cursor_on_clickables_only() {
+        assert_eq!(cursor_over(egui::pos2(50.0, 22.0)), egui::CursorIcon::PointingHand);
+        assert_eq!(cursor_over(egui::pos2(50.0, 122.0)), egui::CursorIcon::PointingHand);
+        assert_ne!(cursor_over(egui::pos2(50.0, 72.0)), egui::CursorIcon::PointingHand);
+        assert_eq!(cursor_over(egui::pos2(500.0, 400.0)), egui::CursorIcon::Default);
+    }
+
     use super::*;
 
     #[test]

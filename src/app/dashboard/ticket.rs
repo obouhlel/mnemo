@@ -216,7 +216,7 @@ impl MnemoApp {
             for l in &links {
                 ui.horizontal(|ui| {
                     ui.label(theme::icon_text("\u{e0d0}", 13.0).color(p.muted));
-                    if ui.add(egui::Label::new(RichText::new(basename(&l.path)).color(p.link)).sense(egui::Sense::click()).truncate())
+                    if ui.add(egui::Label::new(RichText::new(basename(&l.path)).color(p.link)).selectable(false).sense(egui::Sense::click()).truncate())
                         .on_hover_text(&l.path)
                         .clicked()
                     {
@@ -361,6 +361,7 @@ impl MnemoApp {
                 if ui
                     .add(
                         egui::Label::new(RichText::new(format!("T-{} {}", t.number, t.title)).color(p.link))
+                            .selectable(false)
                             .sense(egui::Sense::click())
                             .truncate(),
                     )
