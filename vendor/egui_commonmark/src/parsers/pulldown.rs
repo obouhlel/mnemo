@@ -2026,11 +2026,12 @@ fn paint_table(
         xs[c] = (xs[c].0.min(rect.min.x), xs[c].1.max(rect.max.x));
         ys[r] = (ys[r].0.min(rect.min.y), ys[r].1.max(rect.max.y));
     }
-    // limites entre colonnes / lignes : au milieu de l'espace qui les sépare
+    // limites entre colonnes / lignes : juste avant le début de la suivante (même marge gauche et haute dans
+    // toutes les cellules, comme le padding CSS d'Obsidian ; l'espace en trop d'une colonne va à sa droite)
     let bounds = |v: &[(f32, f32)], pad: f32| -> Vec<f32> {
         let mut out = vec![v[0].0 - pad];
         for w in v.windows(2) {
-            out.push((w[0].1 + w[1].0) / 2.0);
+            out.push(w[1].0 - pad);
         }
         out.push(v[v.len() - 1].1 + pad);
         out

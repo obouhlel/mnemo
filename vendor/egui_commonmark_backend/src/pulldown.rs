@@ -437,6 +437,9 @@ fn parse_row<'e>(
         if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::TableCell) = e {
             row.push(column);
             column = Vec::new();
+            // Patch Mnemo : la fin de cellule n'appartient pas à la cellule suivante (elle y dessinait deux
+            // espaces, d'où une marge gauche plus grande dans toutes les colonnes sauf la première)
+            continue;
         }
 
         if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::TableHead) = e {
