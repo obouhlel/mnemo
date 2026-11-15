@@ -1091,7 +1091,7 @@ mod tests {
                 ..Default::default()
             };
             let mut out = ctx.run_ui(input, |ui| {
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     ui.put(
                         egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(100.0, 24.0)),
                         egui::Button::new("ok"),
