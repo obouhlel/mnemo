@@ -53,21 +53,23 @@ Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle
 | `markdown.rs` | transforme `[[wikilinks]]`, liens Markdown internes et `#tags` en liens `mnemo:` cliquables ; images, `==surligné==`, formules, blocs Mermaid ; frontmatter (lecture et écriture d'une propriété) |
 | `math.rs` | formules LaTeX (`$…$`, `$$…$$`) en texte mathématique Unicode |
 | `plugins.rs` | hôte de plugins Rhai (voir [plugins.md](plugins.md)) |
-| `css.rs` | lit les thèmes / snippets CSS au format Obsidian, `appearance.json` et `app.json` (voir [themes.md](themes.md)) |
-| `fonts.rs` | polices installées sur le système (police du texte, de l'interface, du code ; emoji en couleur) |
 | `iconize.rs` | jeux d'icônes du plugin Iconize (`.obsidian/icons`, dossiers de SVG ou `.zip`) |
-| `theme.rs` | palette, polices, visuels egui, coloration de l'éditeur, widgets maison |
 | `sketch.rs` | format `.mnemo-board` du whiteboard (JSON partagé avec l'appli Android) et géométrie, testés |
-| `graph.rs` | vue graphe (disposition par forces) |
 
-### `src/app/` : l'interface
+### `src/ui/` : l'interface
 
-`app.rs` contient la structure `MnemoApp` (tout l'état de l'interface), sa construction et la boucle `ui()`.
+Tout ce qui touche à l'affichage est dans `src/ui/` ; le reste de `src/` ne dépend pas d'egui (sauf la couleur
+des statuts dans `board.rs`). `ui/mod.rs` contient la structure `MnemoApp` (tout l'état de l'interface), sa
+construction et la boucle `ui()`.
 Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl MnemoApp { … }` et commence par
 `use super::*;`.
 
 | Module | Rôle |
 |---|---|
+| `theme.rs` | palette, polices, visuels egui, coloration de l'éditeur, widgets maison |
+| `css.rs` | lit les thèmes / snippets CSS au format Obsidian, `appearance.json` et `app.json` (voir [themes.md](themes.md)) |
+| `fonts.rs` | polices installées sur le système (police du texte, de l'interface, du code ; emoji en couleur) |
+| `graph.rs` | vue graphe (disposition par forces) |
 | `state.rs` | petits types d'état : onglets, dialogues, conflits, `UiAction`, `Needs`… |
 | `sync.rs` | connexion, traitement des `Msg`, événements live, rechargements groupés (`flush_needs`) |
 | `notes.rs` | ouverture / onglets / historique de navigation, sauvegarde automatique |
@@ -134,7 +136,7 @@ Dans l'ordre :
 
 ### Ajouter une commande à la palette (Ctrl+P)
 
-Dans `src/app/commands.rs` :
+Dans `src/ui/commands.rs` :
 
 1. ajouter une variante à `enum CoreCmd` ;
 2. l'ajouter à `CORE_COMMANDS` avec son libellé et son raccourci affiché (`""` si aucun) ;
@@ -148,7 +150,7 @@ Dans `src/app/commands.rs` :
    à l'aiguillage de `Worker::handle`. Une commande sur les notes va dans le stockage local
    (`local/mod.rs`, et `Cmd::is_local`).
 3. Les écritures passent par `tagged_tx` pour que les autres instances sachent d'où vient la modification.
-4. `src/app/sync.rs` : traiter le nouveau `Msg` dans `handle_messages`.
+4. `src/ui/sync.rs` : traiter le nouveau `Msg` dans `handle_messages`.
 
 ### Modifier le schéma
 

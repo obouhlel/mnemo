@@ -230,7 +230,7 @@ pub mod icon {
 pub fn lucide_icons() -> &'static [(&'static str, char)] {
     static LIST: std::sync::OnceLock<Vec<(&'static str, char)>> = std::sync::OnceLock::new();
     LIST.get_or_init(|| {
-        include_str!("../assets/fonts/lucide-names.txt")
+        include_str!("../../assets/fonts/lucide-names.txt")
             .lines()
             .filter_map(|l| {
                 let (name, hex) = l.split_once(' ')?;
@@ -302,20 +302,21 @@ pub fn icon_text(icon: &str, size: f32) -> egui::RichText {
 pub fn install_fonts(ctx: &egui::Context, choice: &FontChoice) -> Vec<String> {
     let mut missing = vec![];
     let mut fonts = FontDefinitions::default();
-    fonts
-        .font_data
-        .insert("inter".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Inter-Regular.ttf"))));
+    fonts.font_data.insert(
+        "inter".into(),
+        Arc::new(FontData::from_static(include_bytes!("../../assets/fonts/Inter-Regular.ttf"))),
+    );
     fonts.font_data.insert(
         FONT_BOLD.into(),
-        Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Inter-SemiBold.ttf"))),
+        Arc::new(FontData::from_static(include_bytes!("../../assets/fonts/Inter-SemiBold.ttf"))),
     );
     fonts.font_data.insert(
         FONT_ITALIC.into(),
-        Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Inter-Italic.ttf"))),
+        Arc::new(FontData::from_static(include_bytes!("../../assets/fonts/Inter-Italic.ttf"))),
     );
     fonts
         .font_data
-        .insert("lucide".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/lucide.ttf"))));
+        .insert("lucide".into(), Arc::new(FontData::from_static(include_bytes!("../../assets/fonts/lucide.ttf"))));
     fonts.families.insert(icon_family(), vec!["lucide".into()]);
     // keep egui's default fonts (emoji, symbols) as fallbacks
     let fallbacks = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
@@ -328,7 +329,7 @@ pub fn install_fonts(ctx: &egui::Context, choice: &FontChoice) -> Vec<String> {
     }
     // police choisie : en tête de la famille, Mnemo garde les siennes pour les caractères qui lui manquent
     let load = |fonts: &mut FontDefinitions, key: &str, family: &str, bold: bool, italic: bool| -> bool {
-        match crate::fonts::find(family, bold, italic) {
+        match crate::ui::fonts::find(family, bold, italic) {
             // face grasse / italique absente : la famille retombe sur sa face normale
             Some(face) if (bold || italic) && !face.exact => false,
             Some(face) => {
@@ -378,7 +379,7 @@ pub fn install_fonts(ctx: &egui::Context, choice: &FontChoice) -> Vec<String> {
         }
     }
     // emoji en couleur (police du système), avant les emoji monochromes fournis par egui
-    if let Some(face) = crate::fonts::color_emoji() {
+    if let Some(face) = crate::ui::fonts::color_emoji() {
         let mut data = FontData::from_owned(face.data);
         data.index = face.index;
         fonts.font_data.insert("color-emoji".into(), Arc::new(data));
@@ -389,7 +390,7 @@ pub fn install_fonts(ctx: &egui::Context, choice: &FontChoice) -> Vec<String> {
         }
     }
     // symboles mathématiques (∀, ℝ…) : police du système, en tout dernier recours (pas pour les icônes)
-    if let Some(face) = crate::fonts::math_symbols() {
+    if let Some(face) = crate::ui::fonts::math_symbols() {
         let mut data = FontData::from_owned(face.data);
         data.index = face.index;
         fonts.font_data.insert("math-symbols".into(), Arc::new(data));

@@ -41,13 +41,13 @@ impl MnemoApp {
     /// la couleur d'accent et les polices.
     pub(super) fn reload_css(&mut self) {
         let dirs = self.css_dirs();
-        let (themes, snippets) = crate::css::discover(&dirs);
+        let (themes, snippets) = crate::ui::css::discover(&dirs);
         self.css.themes = themes;
         self.css.snippets = snippets;
         let mut watched: Vec<std::path::PathBuf> = vec![];
         let mut extra: Vec<(String, String)> = vec![];
         let mut report = vec![];
-        let mut layout = crate::css::EditorLayout::default();
+        let mut layout = crate::ui::css::EditorLayout::default();
         // polices choisies dans les paramètres (remplacées par celles du coffre si son apparence est utilisée)
         let mut fonts = theme::FontChoice {
             text: self.cfg.text_font.clone(),
@@ -59,8 +59,8 @@ impl MnemoApp {
             (Some(dir), true) => {
                 watched.push(dir.join("appearance.json"));
                 watched.push(dir.join("app.json"));
-                layout = crate::css::read_app_json(&dir);
-                match crate::css::read_appearance(&dir) {
+                layout = crate::ui::css::read_app_json(&dir);
+                match crate::ui::css::read_appearance(&dir) {
                     Some(a) => {
                         layout.ribbon = a.show_ribbon.unwrap_or(true);
                         fonts = theme::FontChoice {
@@ -102,7 +102,7 @@ impl MnemoApp {
         {
             extra.extend(ACCENT_VARS.iter().map(|k| (k.to_string(), acc.clone())));
         }
-        let mut parsed = crate::css::Parsed::default();
+        let mut parsed = crate::ui::css::Parsed::default();
         let mut files = vec![];
         if let Some(name) = &theme_name {
             match self.css.themes.iter().find(|(n, _)| n == name) {
@@ -119,7 +119,7 @@ impl MnemoApp {
         for (label, path) in &files {
             match std::fs::read_to_string(path) {
                 Ok(text) => {
-                    crate::css::parse(&text, &mut parsed);
+                    crate::ui::css::parse(&text, &mut parsed);
                     report.push(format!("{label} chargé"));
                 }
                 Err(e) => report.push(format!("{label} : lecture impossible ({e})")),
@@ -131,12 +131,14 @@ impl MnemoApp {
         if parsed.vars.is_empty() && extra.is_empty() {
             theme::set_override(None);
         } else {
-            let d = crate::css::apply(&parsed, &extra, true, theme::builtin_palette(true), theme::Metrics::default());
-            let l = crate::css::apply(&parsed, &extra, false, theme::builtin_palette(false), theme::Metrics::default());
+            let d =
+                crate::ui::css::apply(&parsed, &extra, true, theme::builtin_palette(true), theme::Metrics::default());
+            let l =
+                crate::ui::css::apply(&parsed, &extra, false, theme::builtin_palette(false), theme::Metrics::default());
             let mut names: Vec<&str> = parsed.vars.iter().map(|v| v.1.as_str()).collect();
             names.sort();
             names.dedup();
-            let known = names.iter().filter(|n| crate::css::is_known(n)).count();
+            let known = names.iter().filter(|n| crate::ui::css::is_known(n)).count();
             report.push(format!(
                 "{} variable(s) lue(s) : {known} appliquée(s) directement, {} autre(s) utilisée(s) seulement via var()",
                 names.len(),
@@ -150,7 +152,8 @@ impl MnemoApp {
             }
             // polices du thème, si ni appearance.json ni les paramètres n'en imposent
             let theme_font = |name: &str| {
-                crate::css::var_value(&parsed, name, self.cfg.dark_mode).and_then(|v| crate::fonts::first_family(&v))
+                crate::ui::css::var_value(&parsed, name, self.cfg.dark_mode)
+                    .and_then(|v| crate::ui::fonts::first_family(&v))
             };
             fonts.text = fonts.text.or_else(|| theme_font("--font-text-theme"));
             fonts.interface = fonts.interface.or_else(|| theme_font("--font-interface-theme"));
@@ -297,7 +300,7 @@ impl MnemoApp {
             if following {
                 let shown = vault.as_ref().and_then(|a| a.accent.clone());
                 readonly(ui, &p, shown.as_deref().unwrap_or("Celle du thème"), &mut customize);
-                if let Some(c) = shown.as_deref().and_then(crate::css::parse_color) {
+                if let Some(c) = shown.as_deref().and_then(crate::ui::css::parse_color) {
                     swatch(ui, c);
                 }
             } else {
@@ -305,7 +308,7 @@ impl MnemoApp {
                 {
                     accent = None;
                 }
-                let mut c = accent.as_deref().and_then(crate::css::parse_color).unwrap_or(p.accent);
+                let mut c = accent.as_deref().and_then(crate::ui::css::parse_color).unwrap_or(p.accent);
                 if egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque).changed()
                 {
                     accent = Some(format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b()));
@@ -565,7 +568,7 @@ fn font_combo(ui: &mut egui::Ui, id: (&str, usize), value: &mut Option<String>) 
         .selected_text(value.clone().unwrap_or_else(|| "Par défaut".into()))
         .show_ui(ui, |ui| {
             ui.selectable_value(value, None, "Par défaut");
-            for f in crate::fonts::families() {
+            for f in crate::ui::fonts::families() {
                 ui.selectable_value(value, Some(f.clone()), f);
             }
         });

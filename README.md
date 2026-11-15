@@ -192,12 +192,12 @@ Ouvrez-le avec l'icône du ruban ou **Ctrl+Shift+D**. Tout est stocké dans Post
 
 | Chemin | Rôle |
 |---|---|
-| `src/app.rs`, `src/app/` | interface egui (un fichier par zone : éditeur, barres latérales, tableau de bord…) |
+| `src/ui/` | interface egui (un fichier par zone : éditeur, barres latérales, tableau de bord…), thème, thèmes CSS, polices, vue graphe |
 | `src/local/` | stockage local : dossier de fichiers `.md`, index (recherche, liens, tags, graphe), `.mnemo/` |
 | `src/db/` | worker Postgres : connexion et LISTEN, synchro dossier ↔ base, tableau de bord / GitHub |
 | `src/schema.sql` | tables, triggers de version / liens / NOTIFY |
 | `src/merge.rs`, `src/board.rs`, `src/github.rs` | fusion à 3 voies, domaine du tableau de bord, client GitHub |
-| `src/plugins.rs`, `src/css.rs`, `src/theme.rs` | plugins Rhai, thèmes CSS, apparence |
+| `src/plugins.rs` | plugins Rhai |
 | `assets/` | polices, icônes, plugins d'exemple, textes intégrés |
 | `vendor/egui_commonmark_backend` | petit patch : vrai gras / italique dans le mode lecture |
 

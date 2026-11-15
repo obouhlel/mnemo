@@ -3,9 +3,12 @@ mod attachments;
 mod bookmarks;
 mod commands;
 mod conflict;
+pub(crate) mod css;
 mod dashboard;
 mod dialogs;
 mod editor;
+pub(crate) mod fonts;
+pub(crate) mod graph;
 mod icons;
 mod layout;
 mod notes;
@@ -13,6 +16,7 @@ mod settings;
 mod sidebar;
 mod state;
 mod sync;
+pub(crate) mod theme;
 mod vault;
 mod whiteboard;
 
@@ -24,17 +28,17 @@ use state::*;
 use crate::board::Board;
 use crate::config::{Config, ViewMode, redact_url};
 use crate::db::{Cmd, DbHandle, LoadPurpose, Msg};
-use crate::graph::GraphView;
 use crate::markdown;
 use crate::merge;
 use crate::model::*;
 use crate::plugins::{Action, NoteCtx, PluginHost, toml_to_json};
-use crate::theme::{self, icon};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use egui::{Color32, FontId, Key, KeyboardShortcut, Modifiers, RichText, TextFormat};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
+use graph::GraphView;
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
+use theme::icon;
 use uuid::Uuid;
 
 pub struct MnemoApp {
@@ -561,4 +565,4 @@ impl eframe::App for MnemoApp {
     }
 }
 
-const WELCOME: &str = include_str!("../assets/texts/welcome.md");
+const WELCOME: &str = include_str!("../../assets/texts/welcome.md");

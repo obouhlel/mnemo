@@ -7,7 +7,7 @@ impl MnemoApp {
     /// modifiés ici depuis leur dernière lecture ou leur dernier envoi. `close` : le panneau n'est plus affiché
     /// (ticket désélectionné, autre onglet, fermeture), la saisie est oubliée une fois envoyée.
     /// Renvoie vrai si quelque chose a été envoyé à la base.
-    pub(in crate::app) fn flush_ticket_edit(&mut self, close: bool) -> bool {
+    pub(in crate::ui) fn flush_ticket_edit(&mut self, close: bool) -> bool {
         let Some(e) = self.dash.edit.as_mut() else { return false };
         e.changed_at = None;
         let id = e.id;
@@ -42,7 +42,7 @@ impl MnemoApp {
     /// À la fermeture de l'application : envoie la saisie en cours et attend que la base l'ait prise (le worker
     /// traite les commandes dans l'ordre : la réponse au rechargement du tableau prouve que la mise à jour est
     /// passée).
-    pub(in crate::app) fn flush_ticket_on_exit(&mut self) {
+    pub(in crate::ui) fn flush_ticket_on_exit(&mut self) {
         if !self.flush_ticket_edit(true) || self.conn != ConnState::Connected {
             return;
         }
@@ -332,7 +332,7 @@ impl MnemoApp {
     }
 
     /// Right sidebar tab of a note: tickets for which this note is a report.
-    pub(in crate::app) fn note_tickets_panel(&mut self, ui: &mut egui::Ui) {
+    pub(in crate::ui) fn note_tickets_panel(&mut self, ui: &mut egui::Ui) {
         let p = self.palette();
         let Some(note) = self.open.as_ref().map(|n| n.id) else { return };
         let linked: Vec<Ticket> = self
