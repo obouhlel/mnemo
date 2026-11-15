@@ -24,6 +24,45 @@ const DEFAULT_THEME_LIGHT: &str = "base16-ocean.light";
 #[cfg(feature = "better_syntax_highlighting")]
 const DEFAULT_THEME_DARK: &str = "base16-ocean.dark";
 
+/// Patch Mnemo : langages reconnus dans les blocs de code (ceux de bat : TypeScript, TSX, TOML…), chargés une
+/// seule fois et partagés avec la coloration de l'éditeur.
+#[cfg(feature = "better_syntax_highlighting")]
+pub fn syntax_set() -> &'static SyntaxSet {
+    static SET: std::sync::OnceLock<SyntaxSet> = std::sync::OnceLock::new();
+    SET.get_or_init(two_face::syntax::extra_newlines)
+}
+
+/// Patch Mnemo : langage d'un bloc de code d'après son étiquette (`ts`, `typescript`, `rs`, `py`…).
+#[cfg(feature = "better_syntax_highlighting")]
+pub fn find_syntax<'a>(ps: &'a SyntaxSet, token: &str) -> Option<&'a syntect::parsing::SyntaxReference> {
+    let t = token.trim().to_lowercase();
+    let t = match t.as_str() {
+        "typescript" => "ts",
+        "javascript" | "node" => "js",
+        "shell" | "zsh" | "console" | "shellscript" => "bash",
+        "py3" | "python3" => "py",
+        "rust" => "rs",
+        "golang" => "go",
+        "c++" => "cpp",
+        "c#" | "csharp" => "cs",
+        "yml" => "yaml",
+        "ps1" | "pwsh" => "powershell",
+        "docker" => "dockerfile",
+        "md" => "markdown",
+        "jsonc" | "json5" => "json",
+        other => other,
+    };
+    ps.find_syntax_by_token(t).or_else(|| ps.find_syntax_by_name(token.trim()))
+}
+
+/// Patch Mnemo : thème de couleurs du code (clair ou sombre), le même en lecture et en édition.
+#[cfg(feature = "better_syntax_highlighting")]
+pub fn code_theme(dark: bool) -> &'static syntect::highlighting::Theme {
+    static SET: std::sync::OnceLock<ThemeSet> = std::sync::OnceLock::new();
+    let ts = SET.get_or_init(ThemeSet::load_defaults);
+    &ts.themes[if dark { DEFAULT_THEME_DARK } else { DEFAULT_THEME_LIGHT }]
+}
+
 pub struct CommonMarkOptions<'f> {
     pub indentation_spaces: usize,
     pub max_image_width: Option<usize>,
@@ -822,9 +861,7 @@ impl CodeBlock {
         ui: &Ui,
         text: &str,
     ) -> egui::text::LayoutJob {
-        let syntax = cache
-            .ps
-            .find_syntax_by_token(extension)
+        let syntax = find_syntax(&cache.ps, extension)
             .unwrap_or_else(|| cache.ps.find_syntax_plain_text());
 
         let mut job = egui::text::LayoutJob::default();
@@ -917,7 +954,7 @@ impl Default for CommonMarkCache {
     fn default() -> Self {
         Self {
             #[cfg(feature = "better_syntax_highlighting")]
-            ps: SyntaxSet::load_defaults_newlines(),
+            ps: syntax_set().clone(),
             #[cfg(feature = "better_syntax_highlighting")]
             ts: ThemeSet::load_defaults(),
             link_hooks: HashMap::new(),

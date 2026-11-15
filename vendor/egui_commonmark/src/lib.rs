@@ -85,6 +85,9 @@ pub use egui_commonmark_backend::misc::SearchOptions;
 
 #[cfg(feature = "better_syntax_highlighting")]
 pub use egui_commonmark_backend::syntect;
+/// Patch Mnemo : langages et thème du code, partagés avec la coloration de l'éditeur
+#[cfg(feature = "better_syntax_highlighting")]
+pub use egui_commonmark_backend::misc::{code_theme, find_syntax, syntax_set};
 
 #[cfg(feature = "macros")]
 pub use egui_commonmark_macros::*;

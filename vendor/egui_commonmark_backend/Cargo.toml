@@ -39,7 +39,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/lampsitter/egui_commonmark"
 
 [features]
-better_syntax_highlighting = ["dep:syntect"]
+better_syntax_highlighting = ["dep:syntect", "dep:two-face"]
 embedded_image = ["dep:data-url"]
 regex = [
     "dep:fancy-regex",
@@ -79,3 +79,10 @@ version = "5.0.0"
 features = ["default-fancy"]
 optional = true
 default-features = false
+
+# Patch Mnemo : langages de bat (TypeScript, TSX, TOML, Dockerfile…), absents du jeu par défaut de syntect
+[dependencies.two-face]
+version = "0.5.2"
+default-features = false
+features = ["syntect-fancy"]
+optional = true

@@ -6,6 +6,7 @@ use egui::{
     Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Response, Sense, Stroke, TextFormat, Ui,
     Vec2, vec2,
 };
+use egui_commonmark::syntect;
 use std::sync::Arc;
 
 pub const FONT_BOLD: &str = "inter-semibold";
@@ -748,6 +749,9 @@ pub fn markdown_job(
     };
     let faint = TextFormat { color: p.faint, ..base.clone() };
     let mut fence = false;
+    // coloration du bloc de code en cours (langage de la barrière d'ouverture), comme en lecture
+    let mut code_hl: Option<syntect::easy::HighlightLines> = None;
+    let dark = p.bg.r() < 128;
     for (line_no, line) in text.split_inclusive('\n').enumerate() {
         let reveal = active.is_some_and(|(a, b)| line_no >= a && line_no <= b);
         // ligne qui n'intègre qu'une image : texte invisible, hauteur de l'image (dessinée par l'éditeur)
@@ -774,12 +778,28 @@ pub fn markdown_job(
         let code_line = TextFormat { background: Color32::TRANSPARENT, ..mono.clone() };
         if t.starts_with("```") || t.starts_with("~~~") {
             fence = !fence;
+            code_hl = None;
+            if fence {
+                let lang = t.trim_start_matches(['`', '~']).split_whitespace().next().unwrap_or("");
+                let ps = egui_commonmark::syntax_set();
+                code_hl = egui_commonmark::find_syntax(ps, lang)
+                    .map(|s| syntect::easy::HighlightLines::new(s, egui_commonmark::code_theme(dark)));
+            }
             let c = if reveal { p.faint } else { Color32::TRANSPARENT };
             job.append(line, 0.0, TextFormat { color: c, ..code_line });
             continue;
         }
         if fence {
-            job.append(line, 0.0, TextFormat { color: p.text, ..code_line });
+            match code_hl.as_mut().and_then(|h| h.highlight_line(line, egui_commonmark::syntax_set()).ok()) {
+                Some(ranges) => {
+                    for (style, piece) in ranges {
+                        let c = style.foreground;
+                        let color = Color32::from_rgb(c.r, c.g, c.b);
+                        job.append(piece, 0.0, TextFormat { color, ..code_line.clone() });
+                    }
+                }
+                None => job.append(line, 0.0, TextFormat { color: p.text, ..code_line }),
+            }
             continue;
         }
         let invisible = TextFormat { color: Color32::TRANSPARENT, ..base.clone() };
