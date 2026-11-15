@@ -48,9 +48,10 @@ hors connexion. Un seul binaire pour Windows, macOS et Linux.
    dans Paramètres › Dossier des notes.
 2. Facultatif, pour synchroniser plusieurs appareils : démarrez une base PostgreSQL (ou utilisez Neon, Supabase, RDS…)
    ```bash
-   make db                       # PostgreSQL 16 dans Docker, sur localhost:5432 (base "vault")
+   docker run -d --name mnemo-db --restart unless-stopped -p 127.0.0.1:5432:5432 \
+     -e POSTGRES_PASSWORD=postgres -v mnemo-data:/var/lib/postgresql postgres:18
    ```
-   puis entrez son URL dans Paramètres › Synchronisation (`postgres://postgres:postgres@localhost:5432/vault`,
+   puis entrez son URL dans Paramètres › Synchronisation (`postgres://postgres:postgres@localhost:5432/postgres`,
    `?sslmode=require` pour une base distante). Le schéma est créé automatiquement et vos notes y sont envoyées.
 3. Sur un autre ordinateur, entrez la même URL : ses notes arrivent dans son dossier, puis tout est synchronisé en direct.
    Le tableau de bord (projets, tickets, GitHub) est partagé par la base : il demande la synchronisation.
@@ -129,7 +130,7 @@ Tout passe par le `Makefile` (`make` seul liste les cibles). Les binaires et paq
 
 | Commande | Résultat |
 |---|---|
-| `make run` | base Docker + Mnemo en release |
+| `make run` | base « mnemo » du Postgres local commun (`pg-local`) + Mnemo en release |
 | `make check` | formatage, clippy et tests (à lancer avant chaque commit) |
 | `make setup` | une fois : cibles Rust croisées, `cargo-zigbuild`, `cargo-deb` (nécessite rustup, zig, mingw-w64) |
 | `make linux` | `dist/mnemo-<version>-linux-{x86_64,aarch64}.tar.gz` (glibc 2.28, via `cargo zigbuild`) |

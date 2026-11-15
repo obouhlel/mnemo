@@ -11,7 +11,8 @@ SHELL   := bash
 APP     := mnemo
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 DIST    := dist
-DB_URL  ?= postgres://postgres:postgres@localhost:5432/vault
+# Base « mnemo » du Postgres local commun (outil pg-local, conteneur Docker sur 127.0.0.1:5432).
+DB_URL  ?= $(shell pg-local url mnemo --localhost 2>/dev/null)
 HOST_OS := $(shell uname -s)
 
 # Cibles Rust. Le suffixe .2.28 (cargo-zigbuild) fixe la glibc minimale : Debian 10+, Ubuntu 18.04+.
@@ -30,12 +31,8 @@ help: ## Affiche cette aide
 	@echo
 
 .PHONY: db
-db: ## Démarre PostgreSQL 16 dans Docker (localhost:5432, base « vault »)
-	docker compose up -d
-
-.PHONY: db-down
-db-down: ## Arrête PostgreSQL (les données sont conservées dans le volume Docker)
-	docker compose down
+db: ## Démarre le Postgres local commun (pg-local) et crée la base « mnemo » si besoin
+	pg-local create mnemo
 
 .PHONY: run
 run: db ## Lance Mnemo en release, connecté à la base locale
