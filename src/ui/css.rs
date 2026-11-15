@@ -1065,8 +1065,6 @@ pub struct Appearance {
     pub text_font: Option<String>,
     pub interface_font: Option<String>,
     pub mono_font: Option<String>,
-    /// ruban de gauche (`showRibbon`)
-    pub show_ribbon: Option<bool>,
 }
 
 /// Mise en page de l'éditeur réglée dans `.obsidian/app.json`.
@@ -1076,7 +1074,7 @@ pub struct EditorLayout {
     pub inline_title: bool,
     /// largeur de ligne limitée (`readableLineLength`, oui par défaut)
     pub readable_line: bool,
-    /// ruban de gauche (`showRibbon` d'appearance.json, oui par défaut)
+    /// ruban de gauche (réglage « Ruban » de Mnemo, oui par défaut)
     pub ribbon: bool,
 }
 
@@ -1119,7 +1117,6 @@ pub fn read_appearance(obsidian_dir: &Path) -> Option<Appearance> {
         text_font: font(&v, "textFontFamily"),
         interface_font: font(&v, "interfaceFontFamily"),
         mono_font: font(&v, "monospaceFontFamily"),
-        show_ribbon: v.get("showRibbon").and_then(|x| x.as_bool()),
     })
 }
 

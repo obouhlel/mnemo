@@ -336,6 +336,7 @@ impl MnemoApp {
                 italic_family: Some(theme::text_italic_family()),
                 icon_family: Some(theme::icon_family()),
                 icon_glyph: Some(theme::lucide),
+                line_height: Some(m.line_height),
             },
         );
     }
@@ -416,7 +417,7 @@ impl eframe::App for MnemoApp {
         self.update_plugin_outputs(&ctx, now);
 
         let p = self.palette();
-        // ruban masqué par le coffre suivi (`showRibbon`) : ses commandes restent dans la palette (Ctrl+P),
+        // ruban masqué (réglage « Ruban ») : ses commandes restent dans la palette (Ctrl+P),
         // le bouton du panneau passe dans la barre d'onglets et les paramètres en bas du panneau latéral
         if self.css.layout.ribbon {
             egui::Panel::left("ribbon")

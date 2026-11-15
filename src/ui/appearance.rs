@@ -62,7 +62,6 @@ impl MnemoApp {
                 layout = crate::ui::css::read_app_json(&dir);
                 match crate::ui::css::read_appearance(&dir) {
                     Some(a) => {
-                        layout.ribbon = a.show_ribbon.unwrap_or(true);
                         fonts = theme::FontChoice {
                             text: a.text_font.clone(),
                             interface: a.interface_font.clone(),
@@ -175,6 +174,7 @@ impl MnemoApp {
             }
         }
         self.css.report = report;
+        layout.ribbon = self.cfg.show_ribbon;
         self.css.layout = layout;
         self.css.fonts = fonts;
         self.theme_applied = None;
@@ -374,6 +374,21 @@ impl MnemoApp {
         if vault_size.is_none() && size as f32 != self.cfg.font_size.round() {
             self.cfg.font_size = size as f32;
             self.cfg.save();
+        }
+
+        let mut ribbon = self.cfg.show_ribbon;
+        setting_row(
+            ui,
+            "Ruban",
+            "Barre d'icônes à gauche : tableau de bord, sélecteur, graphe, whiteboard, palette.",
+            |ui| {
+                theme::toggle(ui, &mut ribbon);
+            },
+        );
+        if ribbon != self.cfg.show_ribbon {
+            self.cfg.show_ribbon = ribbon;
+            self.cfg.save();
+            self.css.layout.ribbon = ribbon;
         }
 
         // ------------------------------------------------------------------ snippets

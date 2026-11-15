@@ -48,6 +48,9 @@ pub struct Config {
     /// « Utiliser l'apparence du coffre Obsidian » : son appearance.json (thème, snippets, taille, accent,
     /// clair / sombre, polices) et son app.json
     pub follow_appearance: bool,
+    /// Ruban d'icônes à gauche (tableau de bord, graphe, whiteboard…), affiché même si le coffre Obsidian le
+    /// masque : ses boutons n'ont pas d'autre place dans Mnemo
+    pub show_ribbon: bool,
     /// Selected CSS theme (by name) when not following appearance.json
     pub css_theme: Option<String>,
     /// Enabled CSS snippets (by name) when not following appearance.json
@@ -86,6 +89,7 @@ impl Default for Config {
             obsidian_dir: None,
             vault_dir: None,
             follow_appearance: true,
+            show_ribbon: true,
             css_theme: None,
             css_snippets: vec![],
             github_token: None,

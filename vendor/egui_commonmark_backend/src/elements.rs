@@ -79,8 +79,14 @@ pub fn footnote(ui: &mut Ui, text: &str) {
     );
 }
 
+/// Hauteur d'une ligne de texte : avec l'interligne du thème (patch Mnemo), pour que puces, numéros et
+/// cases restent alignés sur le texte.
 fn height_body(ui: &Ui) -> f32 {
-    ui.text_style_height(&TextStyle::Body)
+    let size = TextStyle::Body.resolve(ui.style()).size;
+    match crate::MdTheme::get(ui.ctx()).and_then(|t| t.line_height) {
+        Some(f) => (size * f).round(),
+        None => ui.text_style_height(&TextStyle::Body),
+    }
 }
 
 fn width_body_space(ui: &Ui) -> f32 {

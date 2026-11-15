@@ -57,6 +57,9 @@ pub struct MdTheme {
     /// police d'icônes et nom d'icône → caractère (icônes Lucide des callouts)
     pub icon_family: Option<egui::FontFamily>,
     pub icon_glyph: Option<fn(&str) -> Option<char>>,
+    /// interligne du texte, en multiple de la taille de police (`--line-height-normal`, 1.5 dans Obsidian) ;
+    /// `None` : celui de la police
+    pub line_height: Option<f32>,
 }
 
 impl MdTheme {

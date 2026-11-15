@@ -899,7 +899,20 @@ impl CommonMarkViewerInternal {
         if self.is_list_item {
             self.is_list_item = false;
 
-            let item_events = delayed_events_list_item(events);
+            let mut item_events = delayed_events_list_item(events);
+            // Patch Mnemo : puce (ou case de tâche) dessinée avant le contenu, pour que les lignes renvoyées
+            // s'alignent sur le texte et pas sous la puce
+            let marker = item_events.iter().position(|(e, _)| {
+                !matches!(e, pulldown_cmark::Event::Start(pulldown_cmark::Tag::Paragraph))
+            });
+            let task = marker.filter(|&i| {
+                matches!(item_events[i].0, pulldown_cmark::Event::TaskListMarker(_))
+            });
+            self.list.flush_marker(ui, task.is_some());
+            if let Some(i) = task {
+                let (e, span) = item_events.remove(i);
+                self.event(ui, e, span, cache, options, max_width);
+            }
             let mut events_iter = item_events.into_iter().enumerate().peekable();
 
             // Required to ensure that the content of the list item is aligned with

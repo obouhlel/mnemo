@@ -179,6 +179,9 @@ pub struct Style {
 impl Style {
     pub fn to_richtext(&self, ui: &Ui, text: &str) -> RichText {
         let mut text = RichText::new(text);
+        // Mnemo patch : taille réelle du texte, pour l'interligne
+        let style_size = |s: TextStyle| ui.style().text_styles.get(&s).map_or(14.0, |d| d.size);
+        let mut size_used = if self.code { style_size(TextStyle::Monospace) } else { style_size(TextStyle::Body) };
 
         if let Some(level) = self.heading {
             let max_height = ui
@@ -195,27 +198,33 @@ impl Style {
 
             match level {
                 0 => {
+                    size_used = max_height;
                     text = text.strong().heading();
                 }
                 1 => {
                     let size = min_height + diff * 0.835;
+                    size_used = size;
                     text = text.strong().size(size);
                 }
                 2 => {
                     let size = min_height + diff * 0.668;
+                    size_used = size;
                     text = text.strong().size(size);
                 }
                 3 => {
                     let size = min_height + diff * 0.501;
+                    size_used = size;
                     text = text.strong().size(size);
                 }
                 4 => {
                     let size = min_height + diff * 0.334;
+                    size_used = size;
                     text = text.size(size);
                 }
                 // We only support 6 levels
                 5.. => {
                     let size = min_height + diff * 0.167;
+                    size_used = size;
                     text = text.size(size);
                 }
             }
@@ -284,6 +293,12 @@ impl Style {
             }
         } else if let Some(c) = self.color {
             text = text.color(c);
+        }
+
+        // Mnemo patch : interligne du thème (titres plus serrés, comme `--h1-line-height` d'Obsidian)
+        if let Some(factor) = th.and_then(|t| t.line_height) {
+            let factor = if self.heading.is_some() { factor.min(1.25) } else { factor };
+            text = text.line_height(Some((size_used * factor).round()));
         }
 
         text
