@@ -600,7 +600,7 @@ impl MnemoApp {
             if let Some((props, _)) = self.open.as_ref().and_then(|n| markdown::frontmatter(&n.content))
                 && !props.is_empty()
             {
-                self.properties(ui, &props);
+                self.properties(ui, &props, now);
             }
             let body = self.preview_src[body_at..].to_string();
             let mut copy = body.clone();
@@ -629,77 +629,231 @@ impl MnemoApp {
         });
     }
 
-    /// Propriétés de la note (frontmatter) en mode lecture : icône et nom à gauche, valeurs à droite ; tags et
-    /// listes en pastilles, `[[liens]]` et adresses cliquables.
-    fn properties(&mut self, ui: &mut egui::Ui, props: &[markdown::Property]) {
+    /// Type d'une propriété : celui de `.obsidian/types.json` (text, multitext, number, checkbox, date,
+    /// datetime, aliases, tags), sinon deviné d'après le nom et la valeur.
+    fn property_type(&mut self, prop: &markdown::Property) -> String {
+        let dir = self.cfg.obsidian_dir.clone();
+        if self.prop_types.as_ref().is_none_or(|(d, _)| *d != dir) {
+            let types = dir
+                .as_ref()
+                .and_then(|d| std::fs::read_to_string(d.join("types.json")).ok())
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v.get("types").and_then(|t| t.as_object()).cloned())
+                .map(|m| m.into_iter().filter_map(|(k, v)| Some((k.to_lowercase(), v.as_str()?.to_string()))).collect())
+                .unwrap_or_default();
+            self.prop_types = Some((dir, types));
+        }
+        let key = prop.key.to_lowercase();
+        if let Some(t) = self.prop_types.as_ref().and_then(|(_, m)| m.get(&key)) {
+            return t.clone();
+        }
+        let is_date = |v: &str| {
+            let b = v.as_bytes();
+            b.len() >= 10 && b[4] == b'-' && b[7] == b'-' && b[..4].iter().all(u8::is_ascii_digit)
+        };
+        let first = prop.values.first().map(String::as_str).unwrap_or("");
+        match key.as_str() {
+            "tags" | "tag" => "tags",
+            "aliases" | "alias" => "aliases",
+            _ if prop.list => "multitext",
+            _ if first == "true" || first == "false" => "checkbox",
+            _ if is_date(first) => "date",
+            _ => "text",
+        }
+        .to_string()
+    }
+
+    /// Applique au frontmatter de la note ouverte une modification faite dans le volet « Propriétés ».
+    fn edit_frontmatter(&mut self, now: f64, f: impl FnOnce(&str) -> String) {
+        if let Some(n) = &mut self.open {
+            let next = f(&n.content);
+            if next != n.content {
+                n.content = next;
+                n.last_edit = Some(now);
+                self.content_gen += 1;
+            }
+        }
+    }
+
+    /// Propriétés de la note (frontmatter) en mode lecture, modifiables comme dans Obsidian : texte, nombre et
+    /// date en champ, case à cocher, listes et tags en pastilles (× pour retirer, champ pour ajouter).
+    fn properties(&mut self, ui: &mut egui::Ui, props: &[markdown::Property], now: f64) {
         let p = self.palette();
         let m = self.metrics();
         let fs = (self.text_size() - 1.5).max(11.0);
         ui.label(RichText::new("Propriétés").size(fs).color(p.muted).family(theme::text_bold_family()));
         ui.add_space(4.0);
-        let is_date = |v: &str| {
-            let b = v.as_bytes();
-            b.len() >= 10 && b[4] == b'-' && b[7] == b'-' && b[..4].iter().all(u8::is_ascii_digit)
-        };
+        let mut edits: Vec<(String, Vec<String>, bool)> = vec![];
+        let mut removed: Option<String> = None;
         egui::Grid::new("note-properties").num_columns(2).spacing([12.0, 6.0]).min_col_width(140.0).show(ui, |ui| {
             for prop in props {
-                let key = prop.key.to_lowercase();
-                let tags = matches!(key.as_str(), "tags" | "tag");
-                let icon = match key.as_str() {
-                    "tags" | "tag" => "tags",
-                    "aliases" | "alias" => "forward",
-                    "cssclasses" | "cssclass" => "paintbrush",
-                    _ if prop.values.first().is_some_and(|v| is_date(v)) => "calendar",
-                    _ if prop.list => "list",
+                let kind = self.property_type(prop);
+                let tags = kind == "tags";
+                let icon = match kind.as_str() {
+                    "tags" => "tags",
+                    "aliases" => "forward",
+                    "checkbox" => "square-check",
+                    "date" | "datetime" => "calendar",
+                    "number" => "binary",
+                    "multitext" => "list",
+                    _ if prop.key.eq_ignore_ascii_case("cssclasses") => "paintbrush",
                     _ => "text",
                 };
-                ui.horizontal(|ui| {
-                    if let Some(c) = theme::lucide(icon) {
-                        ui.label(theme::icon_text(&c.to_string(), fs).color(p.faint));
+                let key_resp = ui
+                    .horizontal(|ui| {
+                        if let Some(c) = theme::lucide(icon) {
+                            ui.label(theme::icon_text(&c.to_string(), fs).color(p.faint));
+                        }
+                        ui.label(RichText::new(&prop.key).size(fs).color(p.muted))
+                    })
+                    .inner;
+                key_resp.context_menu(|ui| {
+                    if ui.button("Supprimer la propriété").clicked() {
+                        removed = Some(prop.key.clone());
+                        ui.close();
                     }
-                    ui.label(RichText::new(&prop.key).size(fs).color(p.muted));
                 });
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    if prop.values.is_empty() {
-                        ui.label(RichText::new("Vide").size(fs).color(p.faint));
-                    }
-                    for v in &prop.values {
-                        let link = v.strip_prefix("[[").and_then(|r| r.strip_suffix("]]"));
-                        if tags {
-                            let t = v.trim_start_matches('#');
-                            let txt = RichText::new(format!("#{t}")).size(fs).color(m.tag_color.unwrap_or(p.link));
-                            let r = egui::Frame::new()
-                                .fill(p.tag_bg)
-                                .corner_radius(10.0)
-                                .inner_margin(egui::Margin::symmetric(8, 1))
-                                .show(ui, |ui| ui.add(egui::Label::new(txt).sense(egui::Sense::click())))
-                                .inner;
-                            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                self.actions.push(UiAction::OpenTag(t.to_string()));
-                            }
-                        } else if let Some(target) = link {
-                            let (target, alias) = markdown::parse_wikilink(target);
-                            let shown = alias;
-                            if ui.link(RichText::new(shown).size(fs).color(p.link)).clicked() {
-                                self.actions.push(UiAction::OpenLink(target.to_string()));
-                            }
-                        } else if v.starts_with("http://") || v.starts_with("https://") {
-                            ui.hyperlink_to(RichText::new(v).size(fs), v);
-                        } else if prop.list {
-                            egui::Frame::new()
-                                .fill(p.hover)
-                                .corner_radius(10.0)
-                                .inner_margin(egui::Margin::symmetric(8, 1))
-                                .show(ui, |ui| ui.label(RichText::new(v).size(fs).color(p.text)));
-                        } else {
-                            ui.label(RichText::new(v).size(fs).color(p.text));
+                    if kind == "checkbox" {
+                        let mut on = prop.values.first().is_some_and(|v| v == "true");
+                        if ui.checkbox(&mut on, "").changed() {
+                            edits.push((prop.key.clone(), vec![on.to_string()], false));
                         }
+                        return;
                     }
+                    let list = prop.list || matches!(kind.as_str(), "tags" | "aliases" | "multitext");
+                    if !list {
+                        // champ simple : le texte tapé est gardé tant qu'il a le focus (espaces en fin comprises)
+                        let id = ui.make_persistent_id(("prop-value", &prop.key));
+                        let current = prop.values.first().cloned().unwrap_or_default();
+                        let mut buf = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.clone());
+                        let hint = match kind.as_str() {
+                            "date" => "AAAA-MM-JJ",
+                            "datetime" => "AAAA-MM-JJTHH:MM",
+                            "number" => "Nombre",
+                            _ => "Vide",
+                        };
+                        let link = current.starts_with("[[") && current.ends_with("]]");
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut buf)
+                                .hint_text(hint)
+                                .font(FontId::new(fs, theme::text_family()))
+                                .text_color(if link { p.link } else { p.text })
+                                .frame(egui::Frame::NONE)
+                                .desired_width(ui.available_width().max(120.0)),
+                        );
+                        if r.has_focus() {
+                            ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+                        } else {
+                            ui.data_mut(|d| d.remove::<String>(id));
+                        }
+                        if r.changed() {
+                            edits.push((prop.key.clone(), vec![buf.trim().to_string()], false));
+                        }
+                        if link && !r.has_focus() {
+                            let (target, _) = markdown::parse_wikilink(&current[2..current.len() - 2]);
+                            if r.on_hover_text("Ctrl+clic pour ouvrir").clicked() && ui.input(|i| i.modifiers.command) {
+                                self.actions.push(UiAction::OpenLink(target));
+                            }
+                        }
+                        return;
+                    }
+                    for (k, v) in prop.values.iter().enumerate() {
+                        let shown = if tags { format!("#{}", v.trim_start_matches('#')) } else { v.clone() };
+                        let color = if tags { m.tag_color.unwrap_or(p.link) } else { p.text };
+                        let fill = if tags { p.tag_bg } else { p.hover };
+                        egui::Frame::new()
+                            .fill(fill)
+                            .corner_radius(10.0)
+                            .inner_margin(egui::Margin { left: 8, right: 4, top: 1, bottom: 1 })
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let r = ui.add(
+                                    egui::Label::new(RichText::new(&shown).size(fs).color(color))
+                                        .sense(egui::Sense::click()),
+                                );
+                                let link = v.strip_prefix("[[").and_then(|r| r.strip_suffix("]]"));
+                                if tags || link.is_some() {
+                                    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if r.clicked() {
+                                        self.actions.push(match link {
+                                            Some(l) => UiAction::OpenLink(markdown::parse_wikilink(l).0),
+                                            None => UiAction::OpenTag(v.trim_start_matches('#').to_string()),
+                                        });
+                                    }
+                                }
+                                let x = ui
+                                    .add(
+                                        egui::Label::new(RichText::new("×").size(fs).color(p.faint))
+                                            .sense(egui::Sense::click()),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text("Retirer");
+                                if x.clicked() {
+                                    let mut vals = prop.values.clone();
+                                    vals.remove(k);
+                                    edits.push((prop.key.clone(), vals, true));
+                                }
+                            });
+                    }
+                    // ajout d'une valeur à la liste (Entrée)
+                    let id = ui.make_persistent_id(("prop-add", &prop.key));
+                    let mut buf = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_default();
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut buf)
+                            .hint_text(if prop.values.is_empty() { "Vide" } else { "+" })
+                            .font(FontId::new(fs, theme::text_family()))
+                            .frame(egui::Frame::NONE)
+                            .desired_width(80.0),
+                    );
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !buf.trim().is_empty() {
+                        let mut vals = prop.values.clone();
+                        vals.push(buf.trim().trim_start_matches(if tags { "#" } else { "" }).to_string());
+                        edits.push((prop.key.clone(), vals, true));
+                        buf.clear();
+                    }
+                    ui.data_mut(|d| d.insert_temp(id, buf));
                 });
                 ui.end_row();
             }
         });
+        // ajout d'une propriété
+        match &mut self.new_prop {
+            None => {
+                let r = ui.add(
+                    egui::Label::new(RichText::new("+ Ajouter une propriété").size(fs).color(p.faint))
+                        .sense(egui::Sense::click()),
+                );
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    self.new_prop = Some(String::new());
+                }
+            }
+            Some(name) => {
+                let r = ui.add(
+                    egui::TextEdit::singleline(name)
+                        .hint_text("Nom de la propriété")
+                        .font(FontId::new(fs, theme::text_family()))
+                        .desired_width(200.0),
+                );
+                r.request_focus();
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    self.new_prop = None;
+                } else if r.lost_focus() {
+                    let key = name.trim().trim_end_matches(':').to_string();
+                    self.new_prop = None;
+                    if !key.is_empty() && !props.iter().any(|p| p.key == key) {
+                        edits.push((key, vec![], false));
+                    }
+                }
+            }
+        }
+        for (key, values, list) in edits {
+            self.edit_frontmatter(now, |src| markdown::set_property(src, &key, &values, list));
+        }
+        if let Some(key) = removed {
+            self.edit_frontmatter(now, |src| markdown::remove_property(src, &key));
+        }
         ui.add_space(10.0);
         let w = ui.available_width();
         let (r, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());

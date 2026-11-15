@@ -426,6 +426,94 @@ pub fn frontmatter(src: &str) -> Option<(Vec<Property>, usize)> {
     None // pas de fin : ce n'est pas un frontmatter
 }
 
+/// (début, fin, liste en ligne `[a, b]`) des lignes d'une propriété.
+type PropSpan = (usize, usize, bool);
+
+/// Lignes de la propriété `key` dans le frontmatter : (début, fin) en octets, valeur en liste `[a, b]` sur la
+/// ligne de la clé ; et l'octet de la ligne `---` fermante.
+fn property_span(src: &str, key: &str) -> Option<(Option<PropSpan>, usize)> {
+    let first = src.split_inclusive('\n').next()?;
+    if first.trim_end() != "---" {
+        return None;
+    }
+    let mut offset = first.len();
+    let mut span: Option<(usize, usize, bool)> = None;
+    for line in src[offset..].split_inclusive('\n') {
+        let t = line.trim_end();
+        if t == "---" || t == "..." {
+            return Some((span, offset));
+        }
+        let continuation = t.starts_with([' ', '\t']) || t.starts_with("- ") || t == "-" || t.trim().is_empty();
+        match (&mut span, continuation) {
+            (Some((_, end, _)), true) if *end == offset => *end = offset + line.len(),
+            (None, false) => {
+                if let Some((k, v)) = t.split_once(':')
+                    && unquote(k.trim()) == key
+                {
+                    span = Some((offset, offset + line.len(), v.trim().starts_with('[')));
+                }
+            }
+            _ => {}
+        }
+        offset += line.len();
+    }
+    None
+}
+
+/// Valeur YAML simple, entre guillemets si elle serait mal relue telle quelle.
+fn yaml_scalar(v: &str) -> String {
+    let special = v.is_empty()
+        || v != v.trim()
+        || v.contains(": ")
+        || v.contains(" #")
+        || v.ends_with(':')
+        || v.starts_with(['[', ']', '{', '}', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`', '#', ','])
+        || v.starts_with("- ");
+    if special { format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\"")) } else { v.to_string() }
+}
+
+/// Écrit la propriété `key` du frontmatter (créé s'il n'y en a pas) : une seule valeur (`key: v`) ou une liste,
+/// au style de la propriété existante (`[a, b]` ou lignes `- a`). Le reste du texte est gardé à l'identique,
+/// pour ne pas créer de faux changements avec le coffre. `values` vide et `list` faux : `key:`.
+pub fn set_property(src: &str, key: &str, values: &[String], list: bool) -> String {
+    let render = |inline: bool| {
+        let k = yaml_scalar(key);
+        if !list {
+            return match values.first() {
+                Some(v) if !v.is_empty() => format!("{k}: {}\n", yaml_scalar(v)),
+                _ => format!("{k}:\n"),
+            };
+        }
+        if inline {
+            return format!("{k}: [{}]\n", values.iter().map(|v| yaml_scalar(v)).collect::<Vec<_>>().join(", "));
+        }
+        let mut out = format!("{k}:\n");
+        for v in values {
+            out.push_str(&format!("  - {}\n", yaml_scalar(v)));
+        }
+        out
+    };
+    match property_span(src, key) {
+        Some((Some((a, b, inline)), _)) => {
+            let mut line = render(inline);
+            if !src[..b].ends_with('\n') {
+                line.pop();
+            }
+            format!("{}{line}{}", &src[..a], &src[b..])
+        }
+        Some((None, close)) => format!("{}{}{}", &src[..close], render(false), &src[close..]),
+        None => format!("---\n{}---\n{src}", render(false)),
+    }
+}
+
+/// Retire la propriété `key` du frontmatter.
+pub fn remove_property(src: &str, key: &str) -> String {
+    match property_span(src, key) {
+        Some((Some((a, b, _)), _)) => format!("{}{}", &src[..a], &src[b..]),
+        _ => src.to_string(),
+    }
+}
+
 /// Valeurs des propriétés `keys` du frontmatter (`tags`, `aliases`…), listes ou texte simple. Une valeur simple
 /// peut en contenir plusieurs, séparées par des virgules (`tags: a, b`, accepté par Obsidian).
 pub fn frontmatter_values(src: &str, keys: &[&str]) -> Vec<String> {
@@ -558,6 +646,31 @@ mod tests {
         assert_eq!(frontmatter_values(src, &["tags", "tag"]), ["moc", "#algo", "x"]);
         assert_eq!(frontmatter_values(src, &["aliases"]), ["Index", "Sommaire"]);
         assert!(frontmatter_values("pas de frontmatter", &["tags"]).is_empty());
+    }
+
+    #[test]
+    fn edit_properties() {
+        let src = "---\ntags:\n  - a\naliases: [X]\ncreated: 2026-01-01\n---\n# Corps\n";
+        let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            set_property(src, "tags", &s(&["a", "b"]), true),
+            "---\ntags:\n  - a\n  - b\naliases: [X]\ncreated: 2026-01-01\n---\n# Corps\n"
+        );
+        assert_eq!(
+            set_property(src, "aliases", &s(&["X", "Y: z"]), true),
+            "---\ntags:\n  - a\naliases: [X, \"Y: z\"]\ncreated: 2026-01-01\n---\n# Corps\n"
+        );
+        assert_eq!(set_property(src, "created", &s(&["2026-02-02"]), false), src.replace("2026-01-01", "2026-02-02"));
+        assert_eq!(
+            set_property(src, "fait", &s(&["true"]), false),
+            src.replace("---\n# Corps", "fait: true\n---\n# Corps")
+        );
+        assert_eq!(remove_property(src, "tags"), "---\naliases: [X]\ncreated: 2026-01-01\n---\n# Corps\n");
+        assert_eq!(set_property("# Corps\n", "tags", &s(&["a"]), true), "---\ntags:\n  - a\n---\n# Corps\n");
+        // relu à l'identique
+        let out = set_property(src, "titre", &s(&["a: b #c"]), false);
+        let (props, _) = frontmatter(&out).unwrap();
+        assert_eq!(props.iter().find(|p| p.key == "titre").unwrap().values, ["a: b #c"]);
     }
 
     #[test]

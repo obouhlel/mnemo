@@ -118,6 +118,10 @@ pub struct MnemoApp {
     sketch_cache: HashMap<String, (Option<std::time::SystemTime>, crate::sketch::Sketch)>,
     /// image ouverte depuis l'explorateur
     image_view: Option<String>,
+    /// types des propriétés (`.obsidian/types.json`) : (dossier lu, propriété → type)
+    prop_types: Option<(Option<std::path::PathBuf>, std::collections::HashMap<String, String>)>,
+    /// nom de la propriété en cours d'ajout dans le volet « Propriétés »
+    new_prop: Option<String>,
     /// une pièce jointe a changé : oublier les images en cache
     forget_images: bool,
     /// donne le focus à cet éditeur à la prochaine frame (note qui vient d'être créée)
@@ -236,6 +240,8 @@ impl MnemoApp {
             icon_pick: None,
             files: vec![],
             image_view: None,
+            prop_types: None,
+            new_prop: None,
             boards: HashMap::new(),
             sketch_cache: HashMap::new(),
             forget_images: false,
