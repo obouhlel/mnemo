@@ -216,7 +216,6 @@ impl MnemoApp {
         });
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// `salt`: the group key (a ticket with several tags is listed in several groups)
     #[allow(clippy::too_many_arguments)]
     pub(super) fn ticket_row(

@@ -2384,7 +2384,6 @@ dependencies = [
 name = "mnemo"
 version = "0.5.0"
 dependencies = [
- "anyhow",
  "chrono",
  "directories",
  "eframe",

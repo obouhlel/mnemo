@@ -168,11 +168,11 @@ impl GraphView {
         let mut best = f32::MAX;
         let radius = |i: usize| (3.5 + (self.degree[i] as f32).sqrt() * 1.6) * self.zoom.sqrt();
         if let Some(hp) = hover_pos {
-            for i in 0..self.pos.len() {
+            for (i, &pos) in self.pos.iter().enumerate() {
                 if !visible(i) {
                     continue;
                 }
-                let d = to_screen(self.pos[i]).distance(hp);
+                let d = to_screen(pos).distance(hp);
                 if d < radius(i) + 5.0 && d < best {
                     best = d;
                     hovered = Some(i);

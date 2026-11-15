@@ -7,7 +7,6 @@ license = "MIT"
 authors = ["Oussama Bouhlel"]
 
 [dependencies]
-anyhow = "1.0.104"
 chrono = "0.4.45"
 directories = "6.0.0"
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "links", "glow", "wayland", "x11", "persistence"] }
