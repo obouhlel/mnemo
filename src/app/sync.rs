@@ -207,7 +207,18 @@ impl MnemoApp {
                     }
                 }
                 Msg::Tags(t) => self.tags = t,
-                Msg::Icons(i) => self.icons = i,
+                Msg::Icons(i) => {
+                    self.icons = i;
+                    // premier chargement sans aucune icône : celles d'Iconize sont reprises (coffre déjà lié
+                    // par la configuration, sans passer par « Changer de dossier »)
+                    if !std::mem::replace(&mut self.icons_checked, true)
+                        && self.icons.is_empty()
+                        && let Some(dir) = self.iconize_dir()
+                    {
+                        self.import_iconize_notice(&dir, true, now);
+                    }
+                    self.load_svg_icons();
+                }
                 Msg::Graph(g) => self.graph.set_data(g),
                 Msg::Plugins(states) => {
                     self.plugins.apply_states(states);

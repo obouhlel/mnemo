@@ -29,6 +29,9 @@ toml = "1.2.0"
 ureq = { version = "2", features = ["json", "native-certs"] }
 uuid = { version = "1.29.0", features = ["v4", "serde"] }
 webpki-roots = "1.0.11"
+fontdb = "0.23"
+epaint = { version = "0.37", features = ["color_fonts"] }
+zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
 
 # Windows : rendu Direct3D 12 (wgpu). OpenGL 2.0+ y manque souvent (machines virtuelles, bureau à distance,
 # pilotes absents) alors que Direct3D a toujours un rendu logiciel de secours (WARP). Voir main.rs.
@@ -40,8 +43,10 @@ opt-level = 3
 lto = "thin"
 strip = true
 
-# Small local patch: bold / headings / italics use real font faces in the reading view
+# Patchs locaux du rendu Markdown (mode lecture) : vraies graisses de police, couleurs du thème
+# (titres, code, citations), tableaux à bordures, propriétés (frontmatter)
 [patch.crates-io]
+egui_commonmark = { path = "vendor/egui_commonmark" }
 egui_commonmark_backend = { path = "vendor/egui_commonmark_backend" }
 
 [build-dependencies]

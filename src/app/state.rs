@@ -191,6 +191,11 @@ pub(super) struct CssState {
     pub(super) report: Vec<String>,
     pub(super) last_check: f64,
     pub(super) obsidian_input: String,
+    /// titre intégré, largeur de ligne, ruban (app.json / appearance.json du coffre suivi)
+    pub(super) layout: crate::css::EditorLayout,
+    /// polices demandées, et celles réellement installées dans egui
+    pub(super) fonts: crate::theme::FontChoice,
+    pub(super) fonts_installed: Option<crate::theme::FontChoice>,
 }
 
 #[derive(Default)]

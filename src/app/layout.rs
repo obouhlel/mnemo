@@ -29,6 +29,21 @@ impl MnemoApp {
         let ui = &mut child;
         ui.spacing_mut().item_spacing.x = 1.0;
         ui.add_space(6.0);
+        if !self.css.layout.ribbon {
+            if theme::icon_button_sized(
+                ui,
+                icon::PANEL_LEFT,
+                "Afficher / masquer le panneau latéral",
+                false,
+                true,
+                16.0,
+            )
+            .clicked()
+            {
+                self.actions.push(UiAction::Core(CoreCmd::ToggleLeft));
+            }
+            ui.add_space(4.0);
+        }
         let right_reserved = 44.0;
         let titles: Vec<String> = self.tabs.iter().map(|t| self.tab_title(t)).collect();
         for (i, title) in titles.iter().enumerate() {

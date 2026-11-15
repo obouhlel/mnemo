@@ -171,6 +171,9 @@ pub struct Style {
     pub strikethrough: bool,
     pub quote: bool,
     pub code: bool,
+    /// Patch Mnemo : couleur imposée et gras sur tout le texte (titre d'un callout)
+    pub color: Option<egui::Color32>,
+    pub force_strong: bool,
 }
 
 impl Style {
@@ -218,23 +221,52 @@ impl Style {
             }
         }
 
+        // Mnemo patch: couleurs et polices du thème (voir `MdTheme`)
+        let theme = crate::MdTheme::get(ui.ctx());
+        let th = theme.as_ref();
+
         if self.quote {
-            text = text.weak();
+            match th.and_then(|t| t.quote_text) {
+                Some(c) => text = text.color(c),
+                None => text = text.weak(),
+            }
         }
 
         // Mnemo patch: real font weights (registered by the app) instead of colour-only "strong"
         let has = |name: &str| ui.fonts(|f| f.families().iter().any(|fam| fam == &egui::FontFamily::Name(name.into())));
-        if (self.strong || self.heading.is_some_and(|l| l <= 3)) && !self.code && has("inter-semibold") {
-            text = text.family(egui::FontFamily::Name("inter-semibold".into()));
+        let bold_family = th
+            .and_then(|t| t.bold_family.clone())
+            .or_else(|| has("inter-semibold").then(|| egui::FontFamily::Name("inter-semibold".into())));
+        let italic_family = th
+            .and_then(|t| t.italic_family.clone())
+            .or_else(|| has("inter-italic").then(|| egui::FontFamily::Name("inter-italic".into())));
+        let strong = self.strong || self.force_strong;
+        if (strong || self.heading.is_some_and(|l| l <= 3))
+            && !self.code
+            && let Some(f) = bold_family
+        {
+            text = text.family(f);
         }
 
-        if self.strong {
+        if strong {
             text = text.strong();
+            if !self.code && self.heading.is_none() && let Some(c) = th.and_then(|t| t.bold) {
+                text = text.color(c);
+            }
+        }
+
+        if let Some(level) = self.heading
+            && let Some(c) = th.and_then(|t| t.heading[(level as usize).min(5)])
+        {
+            text = text.color(c);
         }
 
         if self.emphasis {
-            if !self.code && !self.strong && has("inter-italic") {
-                text = text.family(egui::FontFamily::Name("inter-italic".into()));
+            if !self.code && self.heading.is_none() && let Some(c) = th.and_then(|t| t.italic) {
+                text = text.color(c);
+            }
+            if !self.code && !strong && let Some(f) = italic_family {
+                text = text.family(f);
             } else {
                 // FIXME: Might want to add some space between the next text
                 text = text.italics();
@@ -247,6 +279,11 @@ impl Style {
 
         if self.code {
             text = text.code();
+            if let Some(c) = th.and_then(|t| t.code) {
+                text = text.color(c);
+            }
+        } else if let Some(c) = self.color {
+            text = text.color(c);
         }
 
         text

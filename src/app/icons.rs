@@ -13,8 +13,17 @@ pub(super) struct IconPick {
 /// Nombre maximal d'icônes affichées à la fois (la recherche affine).
 const MAX_SHOWN: usize = 420;
 
+/// Nom d'icône Iconize → icône de Mnemo : Lucide (« LiRadioTower » → « radio-tower »), emoji tel quel, ou
+/// icône d'un autre jeu installé dans le coffre (Font Awesome, Simple Icons… → « iconize:SiGithub »).
+pub(super) fn iconize_icon(raw: &str, packs: &crate::iconize::Index) -> Option<String> {
+    if let Some(lucide) = iconize_name(raw) {
+        return Some(lucide);
+    }
+    packs.contains(raw).then(|| format!("iconize:{raw}"))
+}
+
 /// Nom d'icône Iconize (« LiRadioTower », « LiGamepad2 ») → nom Lucide (« radio-tower », « gamepad-2 »).
-/// Les emoji sont gardés tels quels ; les autres jeux d'icônes (Font Awesome, Simple Icons…) sont ignorés.
+/// Les emoji sont gardés tels quels.
 pub(super) fn iconize_name(raw: &str) -> Option<String> {
     if !raw.is_ascii() {
         return Some(raw.to_string()); // emoji
@@ -72,6 +81,7 @@ impl MnemoApp {
     pub(super) fn import_iconize(&mut self, obsidian_dir: &std::path::Path) -> Option<(usize, usize)> {
         let file = obsidian_dir.join("plugins").join("obsidian-icon-folder").join("data.json");
         let data: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+        self.iconize = crate::iconize::Index::load(obsidian_dir);
         let (mut done, mut skipped) = (0, 0);
         for (key, value) in data.as_object()? {
             if key == "settings" {
@@ -79,7 +89,7 @@ impl MnemoApp {
             }
             let raw = value.as_str().or_else(|| value.get("iconName").and_then(|v| v.as_str()));
             let path = key.strip_suffix(".md").unwrap_or(key).trim_matches('/');
-            match raw.and_then(iconize_name) {
+            match raw.and_then(|r| iconize_icon(r, &self.iconize)) {
                 Some(icon) if !path.is_empty() => {
                     self.set_icon(path, Some(icon));
                     done += 1;
@@ -87,7 +97,43 @@ impl MnemoApp {
                 _ => skipped += 1,
             }
         }
+        self.load_svg_icons();
         Some((done, skipped))
+    }
+
+    /// Dossier `.obsidian` d'où viennent les icônes Iconize : celui du dossier des notes, sinon celui choisi
+    /// pour l'apparence.
+    pub(super) fn iconize_dir(&self) -> Option<std::path::PathBuf> {
+        self.cfg
+            .vault_dir
+            .as_ref()
+            .map(|d| d.join(".obsidian"))
+            .filter(|d| d.is_dir())
+            .or_else(|| self.cfg.obsidian_dir.clone())
+    }
+
+    /// Charge les SVG des icônes Iconize utilisées par l'explorateur (une fois chacune).
+    pub(super) fn load_svg_icons(&mut self) {
+        let wanted: Vec<String> = self
+            .icons
+            .values()
+            .filter_map(|i| i.strip_prefix("iconize:"))
+            .filter(|n| !theme::has_svg_icon(n))
+            .map(str::to_string)
+            .collect();
+        if wanted.is_empty() {
+            return;
+        }
+        if !wanted.iter().any(|n| self.iconize.contains(n))
+            && let Some(dir) = self.iconize_dir()
+        {
+            self.iconize = crate::iconize::Index::load(&dir);
+        }
+        for n in wanted {
+            if let Some(svg) = self.iconize.svg(&n) {
+                theme::register_svg_icon(&n, svg);
+            }
+        }
     }
 
     /// Bouton « Importer les icônes d'Obsidian » et import automatique à la liaison d'un coffre.
@@ -96,7 +142,7 @@ impl MnemoApp {
             Some((done, skipped)) => {
                 let mut msg = format!("{done} icône(s) importée(s) depuis Iconize");
                 if skipped > 0 {
-                    msg.push_str(&format!(" ({skipped} ignorée(s) : jeu d'icônes autre que Lucide)"));
+                    msg.push_str(&format!(" ({skipped} ignorée(s) : jeu d'icônes absent de .obsidian/icons)"));
                 }
                 self.notice(msg, false, now);
             }
