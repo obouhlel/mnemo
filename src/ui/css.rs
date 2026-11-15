@@ -5,7 +5,7 @@
 //! almost entirely driven by CSS variables declared on `body`, `:root`, `.theme-dark` and
 //! `.theme-light`; those are parsed (with `var()`, `calc()`, `hsl()`, `rgb()`, hex…) and mapped.
 
-use crate::theme::{Metrics, Palette};
+use crate::ui::theme::{Metrics, Palette};
 use egui::Color32;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -1124,7 +1124,7 @@ pub fn read_appearance(obsidian_dir: &Path) -> Option<Appearance> {
 }
 
 fn font(v: &serde_json::Value, key: &str) -> Option<String> {
-    v.get(key).and_then(|x| x.as_str()).and_then(crate::fonts::first_family)
+    v.get(key).and_then(|x| x.as_str()).and_then(crate::ui::fonts::first_family)
 }
 
 /// Dernière valeur déclarée d'une variable pour ce mode (thème puis snippets), `var()` résolus.
@@ -1142,7 +1142,7 @@ pub fn var_value(parsed: &Parsed, name: &str, dark: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme;
+    use crate::ui::theme;
 
     #[test]
     fn colors() {

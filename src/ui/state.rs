@@ -192,12 +192,12 @@ pub(super) struct CssState {
     pub(super) report: Vec<String>,
     pub(super) last_check: f64,
     /// appearance.json du coffre Obsidian, quand son apparence est utilisée (affiché en lecture seule)
-    pub(super) vault_appearance: Option<crate::css::Appearance>,
+    pub(super) vault_appearance: Option<crate::ui::css::Appearance>,
     /// titre intégré, largeur de ligne, ruban (app.json / appearance.json du coffre suivi)
-    pub(super) layout: crate::css::EditorLayout,
+    pub(super) layout: crate::ui::css::EditorLayout,
     /// polices demandées, et celles réellement installées dans egui
-    pub(super) fonts: crate::theme::FontChoice,
-    pub(super) fonts_installed: Option<crate::theme::FontChoice>,
+    pub(super) fonts: crate::ui::theme::FontChoice,
+    pub(super) fonts_installed: Option<crate::ui::theme::FontChoice>,
 }
 
 #[derive(Default)]

@@ -2,14 +2,10 @@
 //! avec synchronisation en direct (LISTEN/NOTIFY) et plugins Rhai.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // pas de console sous Windows en release
 
-mod app;
 mod board;
 mod config;
-mod css;
 mod db;
-mod fonts;
 mod github;
-mod graph;
 mod iconize;
 mod local;
 mod markdown;
@@ -20,7 +16,7 @@ mod plugins;
 mod sketch;
 #[cfg(test)]
 mod sync_tests;
-mod theme;
+mod ui;
 
 fn main() -> eframe::Result {
     let cfg = config::Config::load();
@@ -42,7 +38,7 @@ fn main() -> eframe::Result {
     // une bibliothèque graphique absente fait paniquer la couche de fenêtrage au lieu de renvoyer une erreur :
     // les deux cas donnent le même message d'aide
     let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        eframe::run_native("Mnemo", options, Box::new(|cc| Ok(Box::new(app::MnemoApp::new(cc, cfg)))))
+        eframe::run_native("Mnemo", options, Box::new(|cc| Ok(Box::new(ui::MnemoApp::new(cc, cfg)))))
     }));
     let (result, panic_msg) = match run {
         Ok(r) => (r, None),
