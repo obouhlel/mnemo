@@ -529,8 +529,14 @@ pub fn unlinked_mentions(docs: &[Doc], target: &Doc) -> Vec<Backlink> {
     for d in docs.iter().filter(|d| d.id != target.id && !linked.contains(&d.id)) {
         // texte sans code, sans frontmatter ni liens (remplacés par des espaces, lignes conservées)
         let mut masked = mask_code(d.content);
+        // même longueur en octets (comme `mask_code`) : les positions des liens suivants restent valables
         let blank = |m: &mut String, a: usize, b: usize| {
-            let s: String = m[a..b].chars().map(|c| if c == '\n' { c } else { ' ' }).collect();
+            let s: String = m[a..b]
+                .chars()
+                .flat_map(|c| {
+                    std::iter::repeat_n(if c == '\n' { '\n' } else { ' ' }, if c == '\n' { 1 } else { c.len_utf8() })
+                })
+                .collect();
             m.replace_range(a..b, &s);
         };
         if let Some((_, body)) = frontmatter(d.content) {
@@ -739,6 +745,15 @@ mod tests {
         assert_eq!(u.iter().map(|b| b.path.as_str()).collect::<Vec<_>>(), ["A", "C"]);
         assert_eq!(u[0].snippets, ["J'aime Rust."]);
         assert_eq!(u[1].snippets, ["mais rustlang oui"]);
+
+        // accents dans le frontmatter et les liens : les positions ne doivent pas se décaler (panic avant)
+        let docs = [
+            doc(1, "Rust", ""),
+            doc(2, "D", "---\ntitre: Été réseau\n---\n[[Éléphant à cœur]] [[Ça]] Rust ici\n[[Été|déjà]] fin"),
+        ];
+        let u = unlinked_mentions(&docs, &docs[0]);
+        assert_eq!(u.len(), 1);
+        assert_eq!(u[0].snippets, ["[[Éléphant à cœur]] [[Ça]] Rust ici"]);
     }
 
     #[test]

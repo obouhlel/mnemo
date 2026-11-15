@@ -1190,10 +1190,12 @@ impl CommonMarkViewerInternal {
                             grid = grid.spacing(pad * 2.0);
                             ui.add_space(pad.y);
                         }
+                        // marge gauche hors de la grille : `add_space` n'a pas de sens dans une grille (debug_assert d'egui)
+                        ui.horizontal_top(|ui| {
+                        if bordered {
+                            ui.add_space(pad.x);
+                        }
                         grid.show(ui, |ui| {
-                            if bordered {
-                                ui.add_space(pad.x);
-                            }
                             for (c, col) in header.into_iter().enumerate() {
                                 let r = ui.horizontal(|ui| {
                                     let strong = std::mem::replace(&mut self.text_style.strong, bordered);
@@ -1218,9 +1220,6 @@ impl CommonMarkViewerInternal {
                             ui.end_row();
 
                             for (ri, row) in rows.into_iter().enumerate() {
-                                if bordered {
-                                    ui.add_space(pad.x);
-                                }
                                 for (c, col) in row.into_iter().enumerate() {
                                     let r = ui.horizontal(|ui| {
                                         for (e, src_span) in col {
@@ -1242,6 +1241,7 @@ impl CommonMarkViewerInternal {
 
                                 ui.end_row();
                             }
+                        });
                         });
                         if bordered && let Some(t) = &theme {
                             ui.add_space(pad.y);
