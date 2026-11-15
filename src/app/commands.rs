@@ -224,6 +224,12 @@ impl MnemoApp {
             }
             CoreCmd::ToggleTheme => {
                 self.cfg.dark_mode = !self.cfg.dark_mode;
+                // bascule explicite : quitte le mode « Système »
+                self.cfg.theme_mode = Some(if self.cfg.dark_mode {
+                    crate::config::ThemeMode::Dark
+                } else {
+                    crate::config::ThemeMode::Light
+                });
                 self.cfg.save();
             }
             CoreCmd::NewTab => {

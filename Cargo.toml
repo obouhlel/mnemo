@@ -20,6 +20,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 futures-util = "0.3.34"
 # diagrammes Mermaid rendus en SVG, sans navigateur ni JavaScript
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
+# sélecteur de dossier natif ; sous Linux, le portail XDG (pas besoin de GTK à la compilation)
+rfd = { version = "0.18.0", default-features = false, features = ["xdg-portal"] }
 rhai = { version = "1.27.0", features = ["sync"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde = { version = "1.0.229", features = ["derive"] }

@@ -191,7 +191,8 @@ pub(super) struct CssState {
     pub(super) active_snippets: Vec<String>,
     pub(super) report: Vec<String>,
     pub(super) last_check: f64,
-    pub(super) obsidian_input: String,
+    /// appearance.json du coffre Obsidian, quand son apparence est utilisée (affiché en lecture seule)
+    pub(super) vault_appearance: Option<crate::css::Appearance>,
     /// titre intégré, largeur de ligne, ruban (app.json / appearance.json du coffre suivi)
     pub(super) layout: crate::css::EditorLayout,
     /// polices demandées, et celles réellement installées dans egui

@@ -68,6 +68,17 @@ pub fn find(family: &str, bold: bool, italic: bool) -> Option<Face> {
     Some(Face { data, index, exact })
 }
 
+/// Familles installées (noms triés, sans doublons), pour les menus des paramètres. Lu une seule fois.
+pub fn families() -> &'static [String] {
+    static LIST: OnceLock<Vec<String>> = OnceLock::new();
+    LIST.get_or_init(|| {
+        let mut names: Vec<String> = db().faces().filter_map(|f| f.families.first().map(|(n, _)| n.clone())).collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        names
+    })
+}
+
 /// Police d'emoji en couleur du système (Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji…).
 pub fn color_emoji() -> Option<Face> {
     ["Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", "Twemoji", "Twitter Color Emoji", "JoyPixels"]

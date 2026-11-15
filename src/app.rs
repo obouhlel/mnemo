@@ -103,7 +103,8 @@ pub struct MnemoApp {
     board: Board,
     dash: dashboard::DashState,
     github_input: String,
-    vault_input: String,
+    /// sélecteur de dossier natif ouvert depuis les paramètres (résultat attendu)
+    folder_pick: Option<settings::FolderPick>,
     /// icônes de l'explorateur : chemin en minuscules → icône Lucide ou emoji
     icons: HashMap<String, String>,
     /// jeux d'icônes Iconize installés dans le coffre (`.obsidian/icons`)
@@ -240,7 +241,7 @@ impl MnemoApp {
             board: Board::default(),
             dash: dashboard::DashState::default(),
             github_input: String::new(),
-            vault_input: String::new(),
+            folder_pick: None,
             icons: HashMap::new(),
             iconize: Default::default(),
             icons_checked: false,
@@ -270,8 +271,6 @@ impl MnemoApp {
         if let Some(e) = app.cfg.load_error.take() {
             app.notices.push((e, 20.0, true));
         }
-        app.css.obsidian_input = app.cfg.obsidian_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
-        app.vault_input = app.cfg.vault_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         app.install_example_snippet();
         app.reload_css();
         // le dossier des notes est la référence : Mnemo fonctionne sans base de données
@@ -281,7 +280,6 @@ impl MnemoApp {
             app.cfg.vault_dir = Some(dir.clone());
             app.cfg.save();
         }
-        app.vault_input = dir.display().to_string();
         app.db.send(Cmd::SetRoot(dir.clone()));
         // le worker connaît le dossier dès le départ : la synchro ne dépend pas de l'affichage
         // (une fenêtre cachée ou réduite ne traite pas ses messages)
@@ -382,6 +380,7 @@ impl eframe::App for MnemoApp {
         let now = ctx.input(|i| i.time);
         self.now = now;
         self.watch_css(&ctx, now);
+        self.sync_theme_mode(&ctx);
         self.apply_theme(&ctx);
         self.handle_messages(now);
         self.apply_plugin_actions(&ctx, now);
