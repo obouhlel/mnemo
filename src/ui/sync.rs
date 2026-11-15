@@ -220,7 +220,11 @@ impl MnemoApp {
                     }
                     self.load_svg_icons();
                 }
-                Msg::Graph(g) => self.graph.set_data(g),
+                Msg::Graph(g) => {
+                    self.graph_data = Some(g.clone());
+                    self.graph_gen += 1;
+                    self.graph.set_data(g);
+                }
                 Msg::Plugins(states) => {
                     self.adopt_core_plugins(&states);
                     self.plugins.apply_states(states);

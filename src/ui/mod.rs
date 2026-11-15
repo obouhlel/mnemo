@@ -12,6 +12,7 @@ pub(crate) mod graph;
 mod icons;
 mod layout;
 mod notes;
+mod panes;
 mod settings;
 mod sidebar;
 mod state;
@@ -57,7 +58,7 @@ pub struct MnemoApp {
     open: Option<OpenNote>,
     restore_done: bool,
 
-    left_tab: LeftTab,
+    left_tab: Pane,
     search_q: String,
     search_due: Option<f64>,
     search_results: Vec<SearchHit>,
@@ -96,7 +97,14 @@ pub struct MnemoApp {
     open_mode: OpenMode,
     expanded: std::collections::HashSet<String>,
     sort: SortOrder,
-    right_tab: usize,
+    right_tab: Pane,
+    /// graphe local de la note ouverte (bas du panneau de gauche), et données du graphe complet
+    local_graph: GraphView,
+    graph_data: Option<GraphData>,
+    /// note et version des données pour lesquelles le graphe local a été calculé
+    local_graph_for: Option<(Uuid, usize)>,
+    graph_gen: usize,
+    graph_requested: bool,
     /// inline title editing: (note id, basename when editing started, buffer)
     title_edit: Option<(Uuid, String, String)>,
     css: CssState,
@@ -201,7 +209,7 @@ impl MnemoApp {
             tree: TreeFolder::default(),
             open: None,
             restore_done: false,
-            left_tab: LeftTab::Files,
+            left_tab: Pane::Files,
             search_q: String::new(),
             search_due: None,
             search_results: vec![],
@@ -237,7 +245,12 @@ impl MnemoApp {
             open_mode: OpenMode::Replace,
             expanded: Default::default(),
             sort: SortOrder::NameAsc,
-            right_tab: 0,
+            right_tab: Pane::Backlinks,
+            local_graph: GraphView::default(),
+            graph_data: None,
+            local_graph_for: None,
+            graph_gen: 0,
+            graph_requested: false,
             title_edit: None,
             css: CssState::default(),
             focus_search: false,
@@ -440,7 +453,7 @@ impl eframe::App for MnemoApp {
                 .size_range(180.0..=520.0)
                 .resizable(true)
                 .frame(egui::Frame::new().fill(p.bg2))
-                .show(ui, |ui| self.right_sidebar(ui));
+                .show(ui, |ui| self.right_sidebar(ui, now));
         }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(p.bg)).show(ui, |ui| self.editor_area(ui, now));
         if let Some(id) = self.focus_editor.take() {

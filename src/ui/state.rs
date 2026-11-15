@@ -14,13 +14,18 @@ pub(super) enum ConnState {
     Connected,
 }
 
-#[derive(PartialEq, Clone, Copy)]
-pub(super) enum LeftTab {
-    Files,
-    Search,
-    Tags,
-    Bookmarks,
+pub(super) use crate::config::Pane;
+
+/// Côté d'un panneau latéral.
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub(super) enum Side {
+    Left,
+    Right,
 }
+
+/// Volet glissé d'un panneau à l'autre (charge utile du glisser-déposer).
+#[derive(Clone, Debug)]
+pub(super) struct PaneDrag(pub Pane);
 
 #[derive(PartialEq, Clone, Copy)]
 pub(super) enum SettingsTab {

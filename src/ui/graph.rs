@@ -18,6 +18,8 @@ pub struct GraphView {
     pan: Vec2,
     zoom: f32,
     pub show_ghosts: bool,
+    /// petit graphe (graphe local) : sans barre d'outils, libellés toujours visibles
+    pub compact: bool,
     pub loaded: bool,
     /// keep fitting the view to the layout until the user pans/zooms
     auto_fit: bool,
@@ -129,18 +131,20 @@ impl GraphView {
         if self.alpha >= 0.005 {
             ui.ctx().request_repaint();
         }
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.show_ghosts, "Notes inexistantes");
-            if ui.button("Recentrer").clicked() {
-                self.auto_fit = true;
-            }
-            if ui.button("Réorganiser").clicked() {
-                self.alpha = 1.0;
-            }
-            let links =
-                self.edges.iter().filter(|(a, b)| self.show_ghosts || (!self.ghost[*a] && !self.ghost[*b])).count();
-            ui.weak(format!("{} notes · {links} liens", self.ghost.iter().filter(|g| !**g).count()));
-        });
+        if !self.compact {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.show_ghosts, "Notes inexistantes");
+                if ui.button("Recentrer").clicked() {
+                    self.auto_fit = true;
+                }
+                if ui.button("Réorganiser").clicked() {
+                    self.alpha = 1.0;
+                }
+                let links =
+                    self.edges.iter().filter(|(a, b)| self.show_ghosts || (!self.ghost[*a] && !self.ghost[*b])).count();
+                ui.weak(format!("{} notes · {links} liens", self.ghost.iter().filter(|g| !**g).count()));
+            });
+        }
         let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         let rect = resp.rect;
         painter.rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
@@ -214,7 +218,7 @@ impl GraphView {
                 Color32::from_rgb(130, 160, 190)
             };
             painter.circle_filled(p, radius(i), color);
-            if self.zoom > 0.7 || hovered == Some(i) || is_current {
+            if self.compact || self.zoom > 0.7 || hovered == Some(i) || is_current {
                 painter.text(
                     p + vec2(0.0, radius(i) + 2.0),
                     egui::Align2::CENTER_TOP,

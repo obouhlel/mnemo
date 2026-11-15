@@ -74,6 +74,7 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `sync.rs` | connexion, traitement des `Msg`, événements live, rechargements groupés (`flush_needs`) |
 | `notes.rs` | ouverture / onglets / historique de navigation, sauvegarde automatique |
 | `layout.rs` | écran de connexion, barre d'onglets, en-tête de vue, indicateur de synchronisation, notifications |
+| `panes.rs` | volets des panneaux latéraux déplaçables d'un panneau à l'autre (ordre gardé dans la configuration), graphe local en bas à gauche |
 | `sidebar.rs` | ruban, explorateur (arbre de dossiers, glisser-déposer), panneau de droite |
 | `editor.rs` | éditeur, titre intégré, autocomplétion `[[`, aperçu, volet Propriétés modifiable, rendu des diagrammes Mermaid (cache) |
 | `commands.rs` | `CoreCmd` (palette Ctrl+P), raccourcis, `UiAction`, actions des plugins |

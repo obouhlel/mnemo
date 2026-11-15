@@ -229,7 +229,8 @@ impl MnemoApp {
 
     /// Un onglet « Graphe » est ouvert (il faut alors garder les données du graphe à jour).
     pub(super) fn graph_shown(&self) -> bool {
-        self.tabs.iter().any(|t| t.graph)
+        // vue graphe ouverte, ou graphe local visible en bas du panneau de gauche
+        self.tabs.iter().any(|t| t.graph) || (self.cfg.local_graph && self.cfg.show_left)
     }
 
     /// Ouvre la vue graphe dans un onglet (réutilise l'onglet existant s'il y en a un).

@@ -181,9 +181,9 @@ impl MnemoApp {
                             self.actions.push(UiAction::OpenLink(path));
                         }
                     }
-                    "folder" => self.left_tab = LeftTab::Files,
+                    "folder" => self.show_pane(Pane::Files),
                     "search" => {
-                        self.left_tab = LeftTab::Search;
+                        self.show_pane(Pane::Search);
                         self.search_q = b.target.clone();
                         self.search_due = Some(now);
                     }

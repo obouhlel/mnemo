@@ -267,30 +267,7 @@ impl MnemoApp {
 
     pub(super) fn left_sidebar(&mut self, ui: &mut egui::Ui, now: f64) {
         let p = self.palette();
-        // header: view tabs
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), HEADER_H),
-            // en bas de la rangée, alignées sur le titre des onglets
-            egui::Layout::left_to_right(egui::Align::Max),
-            |ui| {
-                ui.add_space(SIDE_PAD);
-                ui.spacing_mut().item_spacing.x = 4.0;
-                for (tab, ic, tip) in [
-                    (LeftTab::Files, icon::FILES_TAB, "Fichiers"),
-                    (LeftTab::Search, icon::SEARCH, "Rechercher"),
-                    (LeftTab::Tags, icon::TAG, "Tags"),
-                    (LeftTab::Bookmarks, icon::BOOKMARK, "Signets"),
-                ] {
-                    if theme::icon_button_sized(ui, ic, tip, self.left_tab == tab, true, 16.0).clicked() {
-                        self.left_tab = tab;
-                        if tab == LeftTab::Search {
-                            self.focus_search = true;
-                        }
-                    }
-                }
-            },
-        );
-        // sans ruban : paramètres, aide et état de la synchronisation en bas du panneau, comme dans Obsidian
+        self.pane_tabs(ui, Side::Left, now);
         let footer_h = if self.css.layout.ribbon { 0.0 } else { 40.0 };
         let body_h = (ui.available_height() - footer_h).max(50.0);
         if footer_h > 0.0 {
@@ -313,307 +290,293 @@ impl MnemoApp {
             }
             self.sync_indicator(&mut foot);
         }
-        ui.allocate_ui(egui::vec2(ui.available_width(), body_h), |ui| {
-            ui.set_min_height(body_h);
-            match self.left_tab {
-                LeftTab::Files => {
-                    // même hauteur que l'en-tête de la note (flèches, fil d'Ariane) pour aligner les rangées
-                    let row = egui::vec2(ui.available_width(), 40.0);
-                    ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        let total = 4.0 * 28.0 + 3.0 * 4.0;
-                        ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        if theme::icon_button_sized(ui, icon::NEW_NOTE, "Nouvelle note", false, true, 16.0).clicked() {
-                            self.actions.push(UiAction::Core(CoreCmd::NewNote));
-                        }
-                        if theme::icon_button_sized(ui, icon::NEW_FOLDER, "Nouveau dossier", false, true, 16.0)
-                            .clicked()
-                        {
-                            self.actions.push(UiAction::Core(CoreCmd::NewFolder));
-                        }
-                        let sort =
-                            theme::icon_button_sized(ui, icon::SORT, "Changer l'ordre de tri", false, true, 16.0);
-                        egui::Popup::menu(&sort).show(|ui| {
-                            for (o, label) in [
-                                (SortOrder::NameAsc, "Nom du fichier (A à Z)"),
-                                (SortOrder::NameDesc, "Nom du fichier (Z à A)"),
-                                (SortOrder::Modified, "Date de modification (récent d'abord)"),
-                            ] {
-                                if ui.selectable_label(self.sort == o, label).clicked() {
-                                    self.actions.push(UiAction::SetSort(o));
-                                    ui.close();
-                                }
-                            }
-                        });
-                        if theme::icon_button_sized(ui, icon::COLLAPSE, "Tout replier", false, true, 16.0).clicked() {
-                            self.actions.push(UiAction::Core(CoreCmd::CollapseAll));
-                        }
-                    });
-                    let ctx = ui.ctx().clone();
-                    let internal = egui::DragAndDrop::has_payload_of_type::<DragItem>(&ctx);
-                    let external = ctx.input(|i| !i.raw.hovered_files.is_empty());
-                    let mut cx = TreeCx {
-                        open: self.open.as_ref().map(|n| n.id),
-                        actions: &mut self.actions,
-                        expanded: &self.expanded,
-                        sort: self.sort,
-                        icons: &self.icons,
-                        dragging: internal || external,
-                        target: None,
-                        accent: p.accent,
-                    };
-                    let scroll = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 0)).show(
-                            ui,
-                            |ui| {
-                                ui.spacing_mut().item_spacing.y = 0.0;
-                                tree_ui(ui, &self.tree, 0, &mut cx);
-                                let rest = ui.allocate_response(
-                                    ui.available_size().max(egui::vec2(10.0, 40.0)),
-                                    egui::Sense::click(),
-                                );
-                                if cx.dragging && rest.contains_pointer() {
-                                    cx.target = Some(String::new());
-                                }
-                                rest.context_menu(|ui| {
-                                    if ui.button("Nouvelle note").clicked() {
-                                        cx.actions.push(UiAction::Core(CoreCmd::NewNote));
-                                        ui.close();
-                                    }
-                                    if ui.button("Nouveau dossier").clicked() {
-                                        cx.actions.push(UiAction::Core(CoreCmd::NewFolder));
-                                        ui.close();
-                                    }
-                                });
-                            },
-                        );
-                    });
-                    let target = cx.target.take();
-                    // racine visée : contour de toute la zone
-                    if target.as_deref() == Some("") {
-                        ui.painter().rect_stroke(
-                            scroll.inner_rect.shrink(3.0),
-                            5.0,
-                            egui::Stroke::new(1.0, p.accent.gamma_multiply(0.6)),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-                    if internal {
-                        // étiquette qui suit le pointeur
-                        if let (Some(item), Some(pos)) =
-                            (egui::DragAndDrop::payload::<DragItem>(&ctx), ctx.pointer_interact_pos())
-                        {
-                            egui::Area::new(egui::Id::unique("tree-drag-ghost"))
-                                .fixed_pos(pos + egui::vec2(14.0, 8.0))
-                                .order(egui::Order::Tooltip)
-                                .interactable(false)
-                                .show(&ctx, |ui| {
-                                    egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(8, 4)).show(
-                                        ui,
-                                        |ui| {
-                                            ui.label(RichText::new(basename(item.path())).color(p.text));
-                                        },
-                                    );
-                                });
-                        }
-                        if ctx.input(|i| i.pointer.any_released())
-                            && let Some(t) = &target
-                            && let Some(item) = egui::DragAndDrop::take_payload::<DragItem>(&ctx)
-                        {
-                            self.actions.push(UiAction::Move((*item).clone(), t.clone()));
-                        }
-                    }
-                    // fichiers du système survolant l'explorateur : seulement si le pointeur est vraiment sur
-                    // l'arbre (sinon un fichier déposé sur l'éditeur serait importé à la racine au lieu d'être
-                    // intégré à la note)
-                    if external && let Some(t) = &target {
-                        self.os_drop_target = Some((t.clone(), ctx.input(|i| i.time)));
-                    }
-                }
-                LeftTab::Search => {
-                    ui.add_space(6.0);
-                    egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8, 0)).show(ui, |ui| {
-                        let r = ui.add(
-                            egui::TextEdit::singleline(&mut self.search_q)
-                                .id(egui::Id::unique("search-box"))
-                                .hint_text("Rechercher…")
-                                .margin(egui::Margin::symmetric(8, 5))
-                                .background_color(p.bg)
-                                .desired_width(f32::INFINITY),
-                        );
-                        if std::mem::take(&mut self.focus_search) {
-                            r.request_focus();
-                        }
-                        if r.changed() {
-                            self.search_due = Some(now + 0.25);
-                            if self.search_q.trim().is_empty() {
-                                self.search_results.clear();
-                            }
-                        }
-                    });
-                    ui.add_space(8.0);
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 0)).show(
-                            ui,
-                            |ui| {
-                                if self.search_results.is_empty() && !self.search_q.trim().is_empty() {
-                                    ui.label(RichText::new("Aucun résultat.").color(p.faint));
-                                }
-                                let open_id = self.open.as_ref().map(|n| n.id);
-                                for hit in &self.search_results {
-                                    if theme::tree_row(ui, basename(&hit.path), 0, open_id == Some(hit.id), Some(true))
-                                        .clicked()
-                                    {
-                                        self.actions.push(UiAction::OpenId(hit.id));
-                                    }
-                                    egui::Frame::new()
-                                        .fill(p.bg)
-                                        .corner_radius(4.0)
-                                        .inner_margin(egui::Margin::symmetric(8, 5))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.label(highlight_job(&hit.snippet.replace('\n', " "), ui));
-                                        });
-                                    ui.add_space(6.0);
-                                }
-                            },
-                        );
-                    });
-                }
-                LeftTab::Bookmarks => {
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 6)).show(
-                            ui,
-                            |ui| {
-                                ui.spacing_mut().item_spacing.y = 0.0;
-                                let ctx = ui.ctx().clone();
-                                self.bookmarks_panel(ui, &ctx, now);
-                            },
-                        );
-                    });
-                }
-                LeftTab::Tags => {
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 6)).show(
-                            ui,
-                            |ui| {
-                                ui.spacing_mut().item_spacing.y = 0.0;
-                                if self.tags.is_empty() {
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new("Aucun tag. Écrivez #montag dans une note.").color(p.faint),
-                                        )
-                                        .wrap(),
-                                    );
-                                }
-                                for (tag, count) in &self.tags {
-                                    if theme::count_row(ui, &format!("#{tag}"), &count.to_string()).clicked() {
-                                        self.actions.push(UiAction::OpenTag(tag.clone()));
-                                    }
-                                }
-                            },
-                        );
-                    });
-                }
-            }
+        // graphe local en bas du panneau, hauteur réglable en glissant sa bordure
+        let graph_h = if self.cfg.local_graph {
+            self.cfg.local_graph_height.clamp(120.0, (body_h - 160.0).max(120.0))
+        } else {
+            30.0
+        };
+        let top_h = (body_h - graph_h).max(60.0);
+        ui.allocate_ui(egui::vec2(ui.available_width(), top_h), |ui| {
+            ui.set_min_height(top_h);
+            ui.set_max_height(top_h);
+            let pane = self.left_tab.clone();
+            self.pane_body(ui, &pane, now);
+        });
+        ui.allocate_ui(egui::vec2(ui.available_width(), graph_h), |ui| {
+            ui.set_min_height(graph_h);
+            self.local_graph_ui(ui);
         });
     }
 
-    pub(super) fn right_sidebar(&mut self, ui: &mut egui::Ui) {
+    /// Volet affiché dans un panneau, quel que soit son côté.
+    fn pane_body(&mut self, ui: &mut egui::Ui, pane: &Pane, now: f64) {
         let p = self.palette();
-        let tabs: Vec<(&str, String)> = std::iter::once((icon::LINK, "Rétroliens".to_string()))
-            .chain(std::iter::once((icon::TICKET, "Tickets liés".to_string())))
-            .chain(
-                self.plugin_panels
-                    .iter()
-                    .map(|(name, _)| (if name == "Plan" { icon::LIST } else { icon::PUZZLE }, name.clone())),
-            )
-            .collect();
-        self.right_tab = self.right_tab.min(tabs.len() - 1);
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), HEADER_H),
-            // en bas de la rangée, alignées sur le titre des onglets
-            egui::Layout::left_to_right(egui::Align::Max),
-            |ui| {
-                ui.add_space(SIDE_PAD);
-                ui.spacing_mut().item_spacing.x = 4.0;
-                for (i, (ic, name)) in tabs.iter().enumerate() {
-                    if theme::icon_button_sized(ui, ic, name, self.right_tab == i, true, 16.0).clicked() {
-                        self.right_tab = i;
+        match pane {
+            Pane::Files => {
+                // même hauteur que l'en-tête de la note (flèches, fil d'Ariane) pour aligner les rangées
+                let row = egui::vec2(ui.available_width(), 40.0);
+                ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let total = 4.0 * 28.0 + 3.0 * 4.0;
+                    ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if theme::icon_button_sized(ui, icon::NEW_NOTE, "Nouvelle note", false, true, 16.0).clicked() {
+                        self.actions.push(UiAction::Core(CoreCmd::NewNote));
                     }
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-                    ui.add_space(SIDE_PAD);
-                    if theme::icon_button_sized(
-                        ui,
-                        icon::PANEL_RIGHT,
-                        "Masquer le panneau de droite",
-                        false,
-                        true,
-                        16.0,
-                    )
-                    .clicked()
-                    {
-                        self.actions.push(UiAction::Core(CoreCmd::ToggleRight));
+                    if theme::icon_button_sized(ui, icon::NEW_FOLDER, "Nouveau dossier", false, true, 16.0).clicked() {
+                        self.actions.push(UiAction::Core(CoreCmd::NewFolder));
+                    }
+                    let sort = theme::icon_button_sized(ui, icon::SORT, "Changer l'ordre de tri", false, true, 16.0);
+                    egui::Popup::menu(&sort).show(|ui| {
+                        for (o, label) in [
+                            (SortOrder::NameAsc, "Nom du fichier (A à Z)"),
+                            (SortOrder::NameDesc, "Nom du fichier (Z à A)"),
+                            (SortOrder::Modified, "Date de modification (récent d'abord)"),
+                        ] {
+                            if ui.selectable_label(self.sort == o, label).clicked() {
+                                self.actions.push(UiAction::SetSort(o));
+                                ui.close();
+                            }
+                        }
+                    });
+                    if theme::icon_button_sized(ui, icon::COLLAPSE, "Tout replier", false, true, 16.0).clicked() {
+                        self.actions.push(UiAction::Core(CoreCmd::CollapseAll));
                     }
                 });
-            },
-        );
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 8, bottom: 4 }).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                if self.open.is_none() {
-                    ui.horizontal(|ui| ui.label(RichText::new("Aucun fichier actif.").color(p.faint)));
-                    return;
-                }
-                if self.right_tab == 0 {
-                    let linked = std::mem::take(&mut self.backlinks);
-                    self.mentions_section(ui, "Mentions liées", &linked, true);
-                    self.backlinks = linked;
-                    ui.add_space(10.0);
-                    let unlinked = std::mem::take(&mut self.unlinked);
-                    let id = ui.make_persistent_id("unlinked-mentions");
-                    let open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-                    let head = ui.horizontal(|ui| {
-                        let arrow = if open { icon::CHEVRON_DOWN } else { icon::CHEVRON_RIGHT };
-                        let a = ui.add(
-                            egui::Label::new(theme::icon_text(arrow, 12.0).color(p.faint))
-                                .selectable(false)
-                                .sense(egui::Sense::click()),
-                        );
-                        let r = ui.add(
-                            egui::Label::new(RichText::new("Mentions non liées").color(p.text).strong())
-                                .selectable(false)
-                                .sense(egui::Sense::click()),
-                        );
-                        let r = r.union(a);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(unlinked.len().to_string()).color(p.faint).small());
+                let ctx = ui.ctx().clone();
+                let internal = egui::DragAndDrop::has_payload_of_type::<DragItem>(&ctx);
+                let external = ctx.input(|i| !i.raw.hovered_files.is_empty());
+                let mut cx = TreeCx {
+                    open: self.open.as_ref().map(|n| n.id),
+                    actions: &mut self.actions,
+                    expanded: &self.expanded,
+                    sort: self.sort,
+                    icons: &self.icons,
+                    dragging: internal || external,
+                    target: None,
+                    accent: p.accent,
+                };
+                let scroll = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 0)).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        tree_ui(ui, &self.tree, 0, &mut cx);
+                        let rest =
+                            ui.allocate_response(ui.available_size().max(egui::vec2(10.0, 40.0)), egui::Sense::click());
+                        if cx.dragging && rest.contains_pointer() {
+                            cx.target = Some(String::new());
+                        }
+                        rest.context_menu(|ui| {
+                            if ui.button("Nouvelle note").clicked() {
+                                cx.actions.push(UiAction::Core(CoreCmd::NewNote));
+                                ui.close();
+                            }
+                            if ui.button("Nouveau dossier").clicked() {
+                                cx.actions.push(UiAction::Core(CoreCmd::NewFolder));
+                                ui.close();
+                            }
                         });
-                        r
                     });
-                    if head.inner.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        ui.data_mut(|d| d.insert_temp(id, !open));
-                    }
-                    if open {
-                        self.mentions_section(ui, "", &unlinked, false);
-                    }
-                    self.unlinked = unlinked;
-                } else if self.right_tab == 1 {
-                    self.note_tickets_panel(ui);
-                } else if let Some((name, md)) = self.plugin_panels.get(self.right_tab - 2) {
-                    ui.label(RichText::new(name).color(p.text).strong());
-                    ui.add_space(4.0);
-                    let src = markdown::preprocess(md);
-                    CommonMarkViewer::new().show_with_id(
-                        egui::Id::unique(("plugin-panel", self.right_tab)),
-                        ui,
-                        &mut self.md_cache,
-                        &src,
+                });
+                let target = cx.target.take();
+                // racine visée : contour de toute la zone
+                if target.as_deref() == Some("") {
+                    ui.painter().rect_stroke(
+                        scroll.inner_rect.shrink(3.0),
+                        5.0,
+                        egui::Stroke::new(1.0, p.accent.gamma_multiply(0.6)),
+                        egui::StrokeKind::Inside,
                     );
                 }
-            });
-        });
+                if internal {
+                    // étiquette qui suit le pointeur
+                    if let (Some(item), Some(pos)) =
+                        (egui::DragAndDrop::payload::<DragItem>(&ctx), ctx.pointer_interact_pos())
+                    {
+                        egui::Area::new(egui::Id::unique("tree-drag-ghost"))
+                            .fixed_pos(pos + egui::vec2(14.0, 8.0))
+                            .order(egui::Order::Tooltip)
+                            .interactable(false)
+                            .show(&ctx, |ui| {
+                                egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(8, 4)).show(
+                                    ui,
+                                    |ui| {
+                                        ui.label(RichText::new(basename(item.path())).color(p.text));
+                                    },
+                                );
+                            });
+                    }
+                    if ctx.input(|i| i.pointer.any_released())
+                        && let Some(t) = &target
+                        && let Some(item) = egui::DragAndDrop::take_payload::<DragItem>(&ctx)
+                    {
+                        self.actions.push(UiAction::Move((*item).clone(), t.clone()));
+                    }
+                }
+                // fichiers du système survolant l'explorateur : seulement si le pointeur est vraiment sur
+                // l'arbre (sinon un fichier déposé sur l'éditeur serait importé à la racine au lieu d'être
+                // intégré à la note)
+                if external && let Some(t) = &target {
+                    self.os_drop_target = Some((t.clone(), ctx.input(|i| i.time)));
+                }
+            }
+            Pane::Search => {
+                ui.add_space(6.0);
+                egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8, 0)).show(ui, |ui| {
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.search_q)
+                            .id(egui::Id::unique("search-box"))
+                            .hint_text("Rechercher…")
+                            .margin(egui::Margin::symmetric(8, 5))
+                            .background_color(p.bg)
+                            .desired_width(f32::INFINITY),
+                    );
+                    if std::mem::take(&mut self.focus_search) {
+                        r.request_focus();
+                    }
+                    if r.changed() {
+                        self.search_due = Some(now + 0.25);
+                        if self.search_q.trim().is_empty() {
+                            self.search_results.clear();
+                        }
+                    }
+                });
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 0)).show(ui, |ui| {
+                        if self.search_results.is_empty() && !self.search_q.trim().is_empty() {
+                            ui.label(RichText::new("Aucun résultat.").color(p.faint));
+                        }
+                        let open_id = self.open.as_ref().map(|n| n.id);
+                        for hit in &self.search_results {
+                            if theme::tree_row(ui, basename(&hit.path), 0, open_id == Some(hit.id), Some(true))
+                                .clicked()
+                            {
+                                self.actions.push(UiAction::OpenId(hit.id));
+                            }
+                            egui::Frame::new()
+                                .fill(p.bg)
+                                .corner_radius(4.0)
+                                .inner_margin(egui::Margin::symmetric(8, 5))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.label(highlight_job(&hit.snippet.replace('\n', " "), ui));
+                                });
+                            ui.add_space(6.0);
+                        }
+                    });
+                });
+            }
+            Pane::Bookmarks => {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 6)).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let ctx = ui.ctx().clone();
+                        self.bookmarks_panel(ui, &ctx, now);
+                    });
+                });
+            }
+            Pane::Tags => {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 6)).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        if self.tags.is_empty() {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new("Aucun tag. Écrivez #montag dans une note.").color(p.faint),
+                                )
+                                .wrap(),
+                            );
+                        }
+                        for (tag, count) in &self.tags {
+                            if theme::count_row(ui, &format!("#{tag}"), &count.to_string()).clicked() {
+                                self.actions.push(UiAction::OpenTag(tag.clone()));
+                            }
+                        }
+                    });
+                });
+            }
+            Pane::Backlinks | Pane::Tickets | Pane::Plugin(_) => {
+                egui::ScrollArea::vertical().id_salt(("pane", format!("{pane:?}"))).auto_shrink([false, false]).show(
+                    ui,
+                    |ui| {
+                        egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 8, bottom: 4 }).show(
+                            ui,
+                            |ui| {
+                                ui.set_width(ui.available_width());
+                                if self.open.is_none() {
+                                    ui.horizontal(|ui| ui.label(RichText::new("Aucun fichier actif.").color(p.faint)));
+                                    return;
+                                }
+                                self.note_pane(ui, pane);
+                            },
+                        );
+                    },
+                );
+            }
+        }
+    }
+
+    /// Volets liés à la note ouverte : rétroliens, tickets, panneaux des plugins.
+    fn note_pane(&mut self, ui: &mut egui::Ui, pane: &Pane) {
+        let p = self.palette();
+        match pane {
+            Pane::Backlinks => {
+                let linked = std::mem::take(&mut self.backlinks);
+                self.mentions_section(ui, "Mentions liées", &linked, true);
+                self.backlinks = linked;
+                ui.add_space(10.0);
+                let unlinked = std::mem::take(&mut self.unlinked);
+                let id = ui.make_persistent_id("unlinked-mentions");
+                let open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+                let head = ui.horizontal(|ui| {
+                    let arrow = if open { icon::CHEVRON_DOWN } else { icon::CHEVRON_RIGHT };
+                    let a = ui.add(
+                        egui::Label::new(theme::icon_text(arrow, 12.0).color(p.faint))
+                            .selectable(false)
+                            .sense(egui::Sense::click()),
+                    );
+                    let r = ui.add(
+                        egui::Label::new(RichText::new("Mentions non liées").color(p.text).strong())
+                            .selectable(false)
+                            .sense(egui::Sense::click()),
+                    );
+                    let r = r.union(a);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(unlinked.len().to_string()).color(p.faint).small());
+                    });
+                    r
+                });
+                if head.inner.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    ui.data_mut(|d| d.insert_temp(id, !open));
+                }
+                if open {
+                    self.mentions_section(ui, "", &unlinked, false);
+                }
+                self.unlinked = unlinked;
+            }
+            Pane::Tickets => self.note_tickets_panel(ui),
+            Pane::Plugin(name) => {
+                let Some((name, md)) = self.plugin_panels.iter().find(|(n, _)| n == name).cloned() else { return };
+                let md = &md;
+                let name = &name;
+                ui.label(RichText::new(name).color(p.text).strong());
+                ui.add_space(4.0);
+                let src = markdown::preprocess(md);
+                CommonMarkViewer::new().show_with_id(
+                    egui::Id::unique(("plugin-panel", name.as_str())),
+                    ui,
+                    &mut self.md_cache,
+                    &src,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn right_sidebar(&mut self, ui: &mut egui::Ui, now: f64) {
+        self.pane_tabs(ui, Side::Right, now);
+        let pane = self.right_tab.clone();
+        self.pane_body(ui, &pane, now);
     }
 
     /// Déplace une note ou un dossier dans `target` ("" = racine), liens [[…]] mis à jour par le worker.

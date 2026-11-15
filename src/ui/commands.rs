@@ -82,7 +82,7 @@ impl MnemoApp {
                     }
                 }
                 UiAction::OpenTag(t) => {
-                    self.left_tab = LeftTab::Search;
+                    self.show_pane(Pane::Search);
                     self.search_q = format!("#{t}");
                     self.search_due = Some(now);
                 }
@@ -180,7 +180,7 @@ impl MnemoApp {
                 self.focus_dialog = true;
             }
             CoreCmd::Search => {
-                self.left_tab = LeftTab::Search;
+                self.show_pane(Pane::Search);
                 self.focus_search = true;
                 if !self.cfg.show_left {
                     self.cfg.show_left = true;

@@ -18,6 +18,19 @@ pub enum ThemeMode {
     System,
 }
 
+/// Volet d'un panneau latéral. Chaque volet peut être glissé d'un panneau à l'autre, comme dans Obsidian.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Pane {
+    Files,
+    Search,
+    Tags,
+    Bookmarks,
+    Backlinks,
+    Tickets,
+    /// panneau d'un plugin (par son nom)
+    Plugin(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -39,6 +52,12 @@ pub struct Config {
     pub last_note: Option<String>,
     pub show_left: bool,
     pub show_right: bool,
+    /// volets du panneau de gauche et de droite, dans l'ordre des onglets
+    pub left_panes: Vec<Pane>,
+    pub right_panes: Vec<Pane>,
+    /// graphe local (liens de la note ouverte) en bas du panneau de gauche, et sa hauteur
+    pub local_graph: bool,
+    pub local_graph_height: f32,
     /// Override of the plugins folder (defaults to <config dir>/plugins)
     pub plugins_dir: Option<PathBuf>,
     /// `.obsidian` folder of an existing vault, to reuse its themes / snippets / appearance.json
@@ -85,6 +104,10 @@ impl Default for Config {
             last_note: None,
             show_left: true,
             show_right: true,
+            left_panes: vec![Pane::Files, Pane::Search, Pane::Tags, Pane::Bookmarks],
+            right_panes: vec![Pane::Backlinks, Pane::Tickets],
+            local_graph: true,
+            local_graph_height: 240.0,
             plugins_dir: None,
             obsidian_dir: None,
             vault_dir: None,
