@@ -75,6 +75,14 @@ pub fn color_emoji() -> Option<Face> {
         .find_map(|name| find(name, false, false))
 }
 
+/// Police du système qui couvre les symboles mathématiques (∀, ℝ, ∮…) absents d'Inter : dernier recours des
+/// formules `$…$`.
+pub fn math_symbols() -> Option<Face> {
+    ["Noto Sans Math", "STIX Two Math", "Cambria Math", "DejaVu Sans", "Segoe UI Symbol", "Apple Symbols"]
+        .iter()
+        .find_map(|name| find(name, false, false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

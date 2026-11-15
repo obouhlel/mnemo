@@ -388,6 +388,17 @@ pub fn install_fonts(ctx: &egui::Context, choice: &FontChoice) -> Vec<String> {
             }
         }
     }
+    // symboles mathématiques (∀, ℝ…) : police du système, en tout dernier recours (pas pour les icônes)
+    if let Some(face) = crate::fonts::math_symbols() {
+        let mut data = FontData::from_owned(face.data);
+        data.index = face.index;
+        fonts.font_data.insert("math-symbols".into(), Arc::new(data));
+        for (family, list) in fonts.families.iter_mut() {
+            if *family != icon_family() {
+                list.push("math-symbols".into());
+            }
+        }
+    }
     ctx.set_fonts(fonts);
     missing
 }

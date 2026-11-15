@@ -452,6 +452,9 @@ impl eframe::App for MnemoApp {
         self.image_viewer(&ctx);
         if std::mem::take(&mut self.forget_images) {
             ctx.forget_all_images();
+            // les diagrammes Mermaid (`bytes://`) sont oubliés aussi : rendus de nouveau
+            self.diagrams.clear();
+            self.preview_gen = u64::MAX;
         }
         self.notices_ui(&ctx, now);
 

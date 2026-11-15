@@ -909,7 +909,12 @@ fn mermaid_uri(
     diagrams
         .entry(key)
         .or_insert_with(|| {
-            let theme = if dark { mermaid_rs_renderer::Theme::dark() } else { mermaid_rs_renderer::Theme::modern() };
+            let mut theme =
+                if dark { mermaid_rs_renderer::Theme::dark() } else { mermaid_rs_renderer::Theme::modern() };
+            // polices présentes sur Windows, macOS et Linux (le texte est rendu avec celles du système)
+            theme.font_family = "Inter, \"Segoe UI\", \"Helvetica Neue\", Arial, \"DejaVu Sans\", \"Noto Sans\", \
+                                 \"Liberation Sans\", Cantarell, Ubuntu, sans-serif"
+                .into();
             let options = mermaid_rs_renderer::RenderOptions { theme, ..mermaid_rs_renderer::RenderOptions::default() };
             // bibliothèque tierce : un diagramme mal formé ne doit pas faire tomber l'application
             let code = code.to_string();
