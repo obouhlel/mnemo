@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ViewMode {
@@ -9,14 +9,32 @@ pub enum ViewMode {
     Preview,
 }
 
+/// Mode clair / sombre choisi dans les paramètres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThemeMode {
+    Light,
+    Dark,
+    /// suit le réglage du système
+    System,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     /// Optional sync database: postgres://user:password@host:5432/db (add ?sslmode=require for remote servers).
     /// Empty: local only.
     pub database_url: String,
+    /// Mode effectivement appliqué (déduit de `theme_mode`, du système ou du coffre Obsidian)
     pub dark_mode: bool,
+    /// Clair / Sombre / Système ; absent des anciennes configurations : déduit de `dark_mode`
+    pub theme_mode: Option<ThemeMode>,
     pub font_size: f32,
+    /// Couleur d'accent choisie (#rrggbb) quand l'apparence du coffre n'est pas utilisée ; sinon celle du thème
+    pub accent_color: Option<String>,
+    /// Polices choisies (familles installées sur le système) ; `None` : celles du thème, sinon de Mnemo
+    pub text_font: Option<String>,
+    pub interface_font: Option<String>,
+    pub mono_font: Option<String>,
     pub view_mode: ViewMode,
     pub last_note: Option<String>,
     pub show_left: bool,
@@ -27,7 +45,8 @@ pub struct Config {
     pub obsidian_dir: Option<PathBuf>,
     /// Notes folder: Markdown files, the source of truth (e.g. an Obsidian vault). Mirrored with the database if any.
     pub vault_dir: Option<PathBuf>,
-    /// Follow that vault's appearance.json (theme, snippets, font size, accent, light/dark)
+    /// « Utiliser l'apparence du coffre Obsidian » : son appearance.json (thème, snippets, taille, accent,
+    /// clair / sombre, polices) et son app.json
     pub follow_appearance: bool,
     /// Selected CSS theme (by name) when not following appearance.json
     pub css_theme: Option<String>,
@@ -53,7 +72,12 @@ impl Default for Config {
             // vide : Mnemo travaille en local ; une base PostgreSQL ne sert qu'à synchroniser plusieurs appareils
             database_url: String::new(),
             dark_mode: true,
+            theme_mode: None,
             font_size: 16.0,
+            accent_color: None,
+            text_font: None,
+            interface_font: None,
+            mono_font: None,
             view_mode: ViewMode::Edit,
             last_note: None,
             show_left: true,
@@ -144,6 +168,11 @@ impl Config {
         }
     }
 
+    /// Mode choisi ; les anciennes configurations n'ont que `dark_mode`.
+    pub fn mode(&self) -> ThemeMode {
+        self.theme_mode.unwrap_or(if self.dark_mode { ThemeMode::Dark } else { ThemeMode::Light })
+    }
+
     pub fn plugins_dir(&self) -> PathBuf {
         if let Ok(dir) = std::env::var("MNEMO_PLUGINS_DIR") {
             return PathBuf::from(dir);
@@ -195,9 +224,94 @@ pub fn redact_url(url: &str) -> String {
         .join(" ")
 }
 
+/// Chemin lisible et court pour l'interface, `max` caractères au plus (le chemin complet va dans l'infobulle).
+pub fn display_path(path: &Path, max: usize) -> String {
+    let home = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf());
+    short_path(path, home.as_deref(), max)
+}
+
+/// Remplace le dossier personnel par `~`, puis, si le chemin dépasse `max` caractères, ne garde que
+/// la fin : `…/Obsidian/.obsidian`. Le dernier élément est toujours gardé en entier.
+pub fn short_path(path: &Path, home: Option<&Path>, max: usize) -> String {
+    let sep = std::path::MAIN_SEPARATOR_STR;
+    let full = match home.and_then(|h| path.strip_prefix(h).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~{sep}{}", rest.display()),
+        None => path.display().to_string(),
+    };
+    if full.chars().count() <= max {
+        return full;
+    }
+    let parts: Vec<String> = path
+        .components()
+        .filter(|c| matches!(c, std::path::Component::Normal(_)))
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+    let mut tail = String::new();
+    for part in parts.iter().rev() {
+        let next = if tail.is_empty() { part.clone() } else { format!("{part}{sep}{tail}") };
+        // « …/ » compte pour deux caractères
+        if !tail.is_empty() && next.chars().count() + 2 > max {
+            break;
+        }
+        tail = next;
+    }
+    format!("…{sep}{tail}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_paths() {
+        let home = Path::new("/home/ana");
+        assert_eq!(short_path(Path::new("/home/ana/Notes"), Some(home), 36), "~/Notes");
+        assert_eq!(short_path(Path::new("/home/ana"), Some(home), 36), "~");
+        assert_eq!(short_path(Path::new("/tmp/x"), Some(home), 36), "/tmp/x");
+        assert_eq!(short_path(Path::new("/tmp/x"), None, 36), "/tmp/x");
+        assert_eq!(
+            short_path(Path::new("/home/ana/Documents/Coffres/Obsidian/.obsidian"), Some(home), 24),
+            "…/Obsidian/.obsidian"
+        );
+        // le dernier élément reste entier, même trop long
+        assert_eq!(short_path(Path::new("/a/un-nom-vraiment-tres-long"), None, 10), "…/un-nom-vraiment-tres-long");
+    }
+
+    #[test]
+    fn old_config_still_loads() {
+        // configuration écrite par la 0.5.0, avant la refonte des paramètres : aucun des nouveaux champs
+        let old = r#"
+database_url = ""
+dark_mode = false
+font_size = 15.0
+view_mode = "Split"
+show_left = true
+show_right = false
+obsidian_dir = "/home/ana/Coffre/.obsidian"
+vault_dir = "/home/ana/Coffre"
+follow_appearance = true
+css_theme = "Minimal"
+css_snippets = ["a", "b"]
+github_api = "https://api.github.com"
+github_auto_sync = false
+"#;
+        let mut cfg: Config = toml::from_str(old).unwrap();
+        assert_eq!(cfg.mode(), ThemeMode::Light);
+        assert!(cfg.follow_appearance);
+        assert_eq!(cfg.font_size, 15.0);
+        assert_eq!(cfg.view_mode, ViewMode::Split);
+        assert_eq!(cfg.css_theme.as_deref(), Some("Minimal"));
+        assert_eq!(cfg.css_snippets, ["a", "b"]);
+        assert_eq!(cfg.accent_color, None);
+        assert_eq!(cfg.interface_font, None);
+        // les nouveaux champs survivent à l'écriture
+        cfg.theme_mode = Some(ThemeMode::System);
+        cfg.accent_color = Some("#ff8800".into());
+        let again: Config = toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert_eq!(again.mode(), ThemeMode::System);
+        assert_eq!(again.accent_color.as_deref(), Some("#ff8800"));
+    }
 
     #[test]
     fn passwords_are_hidden() {

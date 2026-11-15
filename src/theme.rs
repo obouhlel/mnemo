@@ -394,6 +394,8 @@ pub fn install_fonts(ctx: &egui::Context, choice: &FontChoice) -> Vec<String> {
 /// `size` is the interface font size (the editor has its own size).
 pub fn apply(ctx: &egui::Context, dark: bool, size: f32) {
     let p = palette(dark);
+    // Mnemo choisit lui-même clair / sombre (mode « Système » compris) : egui ne bascule pas seul
+    ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
     let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
     v.panel_fill = p.bg2;
     v.window_fill = p.bg2;
@@ -497,6 +499,32 @@ pub fn icon_button_sized(
     };
     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon, FontId::new(icon_size, icon_family()), color);
     if tooltip.is_empty() { resp } else { resp.on_hover_text(tooltip) }
+}
+
+/// Interrupteur façon Obsidian (remplace les cases à cocher des paramètres) ; `changed()` au clic.
+pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
+    let p = palette(ui.visuals().dark_mode);
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(36.0, 20.0), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, ui.is_enabled(), *on, ""));
+    if ui.is_rect_visible(rect) {
+        let t = ui.ctx().animate_bool_responsive(resp.id, *on);
+        let off_bg = if resp.hovered() { p.border.gamma_multiply(1.4) } else { p.border };
+        let bg = lerp_color(off_bg, p.accent, t);
+        ui.painter().rect_filled(rect, rect.height() / 2.0, bg);
+        let r = rect.height() / 2.0 - 2.5;
+        let x = egui::lerp((rect.left() + r + 2.5)..=(rect.right() - r - 2.5), t);
+        ui.painter().circle_filled(egui::pos2(x, rect.center().y), r, Color32::WHITE);
+    }
+    resp
+}
+
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgba_unmultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
 }
 
 /// One row of the file explorer: indentation guides, chevron for folders, hover/active background.

@@ -37,7 +37,7 @@ Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle
 |---|---|
 | `main.rs` | point d'entrée : options de la fenêtre, message d'aide si une bibliothèque graphique manque |
 | `model.rs` | types partagés : `Note`, `NoteMeta`, `VaultEvent`, `GraphData`… |
-| `config.rs` | configuration locale (URL de la base, préférences), lue et écrite en TOML |
+| `config.rs` | configuration locale (URL de la base, préférences), lue et écrite en TOML (champs nouveaux toujours avec une valeur par défaut : les anciennes configurations restent lisibles), chemins raccourcis pour l'affichage (`short_path`) |
 | `schema.sql` | tables, triggers (version, liens, `pg_notify`). Rejoué à chaque connexion : il doit rester **idempotent** |
 | `db/mod.rs` | `Cmd`, `Msg`, `DbHandle`, `spawn`, `Worker::run` et l'aiguillage `handle` |
 | `db/connection.rs` | ouverture (TLS si `sslmode=require`), migration sous verrou consultatif, boucle `LISTEN` avec backoff |
@@ -76,12 +76,12 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `commands.rs` | `CoreCmd` (palette Ctrl+P), raccourcis, `UiAction`, actions des plugins |
 | `dialogs.rs` | palette, sélecteur de notes, saisie de nom, confirmations |
 | `conflict.rs` | fenêtre de résolution de conflit (choix par bloc, diff) |
-| `settings.rs` | fenêtre des paramètres (général, plugins, GitHub) |
+| `settings.rs` | fenêtre des paramètres : barre latérale, recherche, ligne de réglage commune `setting_row`, sélecteur de dossier natif (`rfd`, sur un autre thread) ; onglets Synchronisation, Plugins, GitHub, À propos |
 | `whiteboard.rs` | onglet whiteboard : outils, vue (zoom, déplacement), annuler / rétablir, enregistrement, aperçu dans les notes |
 | `attachments.rs` | pièces jointes : résolution des images, collage (Ctrl+V), dépôt, dossier des pièces jointes, visionneuse |
 | `icons.rs` | icônes des dossiers / notes : fenêtre de choix (Lucide, emoji), import depuis Iconize |
-| `vault.rs` | onglet Coffre Obsidian, liaison du coffre et dernier passage de synchronisation, import des fichiers déposés, `settings_row` |
-| `appearance.rs` | onglet Apparence, chargement et surveillance des fichiers CSS |
+| `vault.rs` | onglet Coffre Obsidian, liaison du coffre et dernier passage de synchronisation, import des fichiers déposés, dossier `.obsidian` utilisé (`obsidian_dir`) |
+| `appearance.rs` | onglet Apparence (mode clair / sombre / système, thème, accent, polices, snippets), chargement et surveillance des fichiers CSS |
 | `dashboard/` | tableau de bord : `mod.rs` (état, vue principale), `rows.rs`, `columns.rs`, `ticket.rs`, `actions.rs` |
 
 ### `android/` : l'application mobile (Kotlin, Jetpack Compose, Android 8.0+)
