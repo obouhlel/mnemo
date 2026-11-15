@@ -256,7 +256,29 @@ impl MnemoApp {
                 }
             },
         );
-        let body_h = ui.available_height().max(50.0);
+        // sans ruban : paramètres, aide et état de la synchronisation en bas du panneau, comme dans Obsidian
+        let footer_h = if self.css.layout.ribbon { 0.0 } else { 40.0 };
+        let body_h = (ui.available_height() - footer_h).max(50.0);
+        if footer_h > 0.0 {
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(ui.max_rect().left(), ui.max_rect().bottom() - footer_h),
+                ui.max_rect().right_bottom(),
+            );
+            let mut foot = ui.new_child(
+                egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            foot.painter().hline(rect.x_range(), rect.top(), egui::Stroke::new(1.0, p.border));
+            foot.add_space(SIDE_PAD);
+            foot.spacing_mut().item_spacing.x = 4.0;
+            if theme::icon_button(&mut foot, icon::SETTINGS, "Paramètres (Ctrl+,)", self.show_settings).clicked() {
+                self.actions.push(UiAction::Core(CoreCmd::Settings));
+            }
+            if theme::icon_button(&mut foot, icon::HELP, "Aide et raccourcis", false).clicked() {
+                self.settings_tab = SettingsTab::About;
+                self.show_settings = true;
+            }
+            self.sync_indicator(&mut foot);
+        }
         ui.allocate_ui(egui::vec2(ui.available_width(), body_h), |ui| {
             ui.set_min_height(body_h);
             match self.left_tab {

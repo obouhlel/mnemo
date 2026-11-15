@@ -149,6 +149,125 @@ fn classify(selectors: &str) -> Option<Scope> {
     scope
 }
 
+/// Élément du rendu Markdown visé par une règle CSS (titres, code, citations, liens, tableaux…).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Element {
+    Heading(usize),
+    Code,
+    Quote,
+    Link,
+    Bold,
+    Italic,
+    Table,
+    TableHeader,
+}
+
+/// Règle qui vise un élément du texte (`.markdown-rendered h1`, `.cm-header-1`, `.markdown-rendered code`,
+/// `blockquote`…) : ces règles sont courantes dans les thèmes (Omarchy colore ainsi ses titres). Toutes les
+/// parties de la liste de sélecteurs doivent viser le même élément ; les règles conditionnelles (`:hover`,
+/// éléments imbriqués…) sont ignorées.
+fn element_rule(selectors: &str) -> Option<(Scope, Element)> {
+    let mut found: Option<(Scope, Element)> = None;
+    for sel in selectors.split(',') {
+        let sel = sel.trim().to_lowercase();
+        let scope = if sel.contains("theme-dark") {
+            Scope::Dark
+        } else if sel.contains("theme-light") {
+            Scope::Light
+        } else {
+            Scope::Both
+        };
+        let mut parts: Vec<&str> = sel.split_whitespace().filter(|p| *p != ">").collect();
+        let last = parts.pop()?;
+        // ancêtres admis : thème, conteneurs de la note
+        const CONTAINERS: &[&str] = &[
+            ".markdown-rendered",
+            ".markdown-preview-view",
+            ".markdown-reading-view",
+            ".markdown-source-view",
+            ".markdown-source-view.mod-cm6",
+            ".cm-s-obsidian",
+            ".cm-editor",
+            ".cm-content",
+            ".view-content",
+            ".workspace-leaf-content",
+        ];
+        let ok_ancestor = |p: &str| {
+            let p = p.replace(".theme-dark", "").replace(".theme-light", "").replace("body", "").replace(":root", "");
+            p.is_empty() || CONTAINERS.contains(&p.as_str())
+        };
+        if !parts.iter().all(|p| ok_ancestor(p)) {
+            return None;
+        }
+        let last = last.replace("span", "");
+        let heading = |s: &str| -> Option<usize> {
+            let n = s
+                .strip_prefix(".cm-header-")
+                .or_else(|| s.strip_prefix(".hypermd-header-"))
+                .or_else(|| s.strip_prefix('h'))
+                .or_else(|| s.strip_prefix(".h"))?;
+            let n: usize = n.parse().ok()?;
+            (1..=6).contains(&n).then(|| n - 1)
+        };
+        let el = match last.as_str() {
+            "code" | ".cm-inline-code" | "code:not(pre code)" => Element::Code,
+            "blockquote" | ".cm-quote" => Element::Quote,
+            "a" | ".internal-link" | ".external-link" | ".cm-hmd-internal-link" | ".cm-link" | ".cm-url" => {
+                Element::Link
+            }
+            "strong" | "b" | ".cm-strong" => Element::Bold,
+            "em" | "i" | ".cm-em" => Element::Italic,
+            "table" | "td" | "tr" => Element::Table,
+            "th" | "thead" => Element::TableHeader,
+            s => Element::Heading(heading(s)?),
+        };
+        match found {
+            None => found = Some((scope, el)),
+            Some((s, e)) if e == el => found = Some((if s == scope { s } else { Scope::Both }, e)),
+            Some(_) => return None,
+        }
+    }
+    found
+}
+
+/// Propriétés d'une règle d'élément → variables Obsidian équivalentes (`color` d'un `h1` → `--h1-color`).
+fn element_declarations(block: &str, scope: Scope, el: Element, out: &mut Parsed) {
+    let mut decls = Parsed::default();
+    // les propriétés se lisent comme des variables : on réutilise le découpage (avec un préfixe factice)
+    let prefixed: String =
+        block.split(';').filter(|d| !d.trim().is_empty()).map(|d| format!("--@{};", d.trim())).collect();
+    declarations(&prefixed, scope, &mut decls);
+    for (s, name, value) in decls.vars {
+        let prop = name.trim_start_matches("--@");
+        let var = match (el, prop) {
+            (Element::Heading(i), "color") => format!("--h{}-color", i + 1),
+            (Element::Heading(i), "font-size") => format!("--h{}-size", i + 1),
+            (Element::Code, "color") => "--code-normal".into(),
+            (Element::Code, "background" | "background-color") => "--code-background".into(),
+            (Element::Quote, "border-left-color" | "border-color") => "--blockquote-border-color".into(),
+            (Element::Quote, "border-left") => match value.split_whitespace().find(|t| parse_color(t).is_some()) {
+                Some(c) => {
+                    out.vars.push((s, "--blockquote-border-color".into(), c.to_string()));
+                    continue;
+                }
+                None => continue,
+            },
+            (Element::Quote, "color") => "--blockquote-color".into(),
+            (Element::Link, "color") => "--link-color".into(),
+            (Element::Bold, "color") => "--bold-color".into(),
+            (Element::Italic, "color") => "--italic-color".into(),
+            (Element::Table | Element::TableHeader, "border-color") => "--table-border-color".into(),
+            (Element::TableHeader, "background" | "background-color") => "--table-header-background".into(),
+            _ => continue,
+        };
+        // `h1 { color: var(--h1-color) }` : rien à traduire (et pas de variable qui se référence elle-même)
+        if value.contains(&format!("var({var}")) {
+            continue;
+        }
+        out.vars.push((s, var, value));
+    }
+}
+
 fn declarations(block: &str, scope: Scope, out: &mut Parsed) {
     let mut depth = 0i32;
     let mut start = 0;
@@ -293,7 +412,14 @@ fn parse_rules(css: &str, limit: Scope, depth: usize, out: &mut Parsed) {
                         declarations(&flat, scope, out)
                     }
                 }
-                None => out.ignored_rules += 1,
+                None => match element_rule(prelude) {
+                    Some((scope, target)) => {
+                        if let Some(scope) = narrow(limit, scope) {
+                            element_declarations(&flat, scope, target, out);
+                        }
+                    }
+                    None => out.ignored_rules += 1,
+                },
             }
         }
         i = close + 1;
@@ -592,7 +718,8 @@ pub fn parse_color(s: &str) -> Option<Color32> {
                     hsl_to_rgb(eval_number(&a[0])?, eval_number(&a[1])? / 100.0, eval_number(&a[2])? / 100.0);
                 Some(rgba(r, g, b, alpha_of(a.get(3))?))
             }
-            _ => None, // color-mix(), lab(), … not supported
+            "color-mix" => color_mix(&s[open + 1..s.len() - 1]),
+            _ => None, // lab(), oklch(), … not supported
         };
     }
     Some(match s.as_str() {
@@ -607,6 +734,72 @@ pub fn parse_color(s: &str) -> Option<Color32> {
         "purple" => Color32::from_rgb(128, 0, 128),
         _ => return None,
     })
+}
+
+/// Découpe aux virgules qui ne sont pas entre parenthèses.
+fn split_top(s: &str) -> Vec<&str> {
+    let (mut out, mut depth, mut start) = (vec![], 0i32, 0);
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(s[start..].trim());
+    out
+}
+
+/// `color-mix(in <espace>, <couleur> [p%], <couleur> [p%])`, mélangé en sRGB (les autres espaces de
+/// couleur sont approchés par sRGB), avec alpha prémultiplié comme dans les navigateurs : mélanger avec
+/// `transparent` donne la couleur rendue partiellement transparente.
+fn color_mix(inner: &str) -> Option<Color32> {
+    let parts = split_top(inner);
+    let [space, a, b] = parts.as_slice() else { return None };
+    if !space.starts_with("in ") {
+        return None;
+    }
+    let side = |part: &str| -> Option<(Color32, Option<f32>)> {
+        let part = part.trim();
+        let pct = |t: &str| t.strip_suffix('%').and_then(eval_number).map(|v| (v / 100.0).clamp(0.0, 1.0));
+        if let Some((rest, last)) = part.rsplit_once(char::is_whitespace)
+            && let Some(p) = pct(last)
+        {
+            return Some((parse_color(rest)?, Some(p)));
+        }
+        if let Some((first, rest)) = part.split_once(char::is_whitespace)
+            && let Some(p) = pct(first)
+        {
+            return Some((parse_color(rest)?, Some(p)));
+        }
+        Some((parse_color(part)?, None))
+    };
+    let ((c1, p1), (c2, p2)) = (side(a)?, side(b)?);
+    let (p1, p2) = match (p1, p2) {
+        (None, None) => (0.5, 0.5),
+        (Some(x), None) => (x, 1.0 - x),
+        (None, Some(y)) => (1.0 - y, y),
+        (Some(x), Some(y)) => (x, y),
+    };
+    let sum = p1 + p2;
+    if sum <= 0.0 {
+        return None;
+    }
+    let scale = sum.min(1.0);
+    let (w1, w2) = (p1 / sum, p2 / sum);
+    let [r1, g1, b1, a1] = c1.to_srgba_unmultiplied().map(|v| v as f32 / 255.0);
+    let [r2, g2, b2, a2] = c2.to_srgba_unmultiplied().map(|v| v as f32 / 255.0);
+    let alpha = a1 * w1 + a2 * w2;
+    let to8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    if alpha <= 0.0 {
+        return Some(Color32::TRANSPARENT);
+    }
+    let ch = |x: f32, y: f32| (x * a1 * w1 + y * a2 * w2) / alpha;
+    Some(Color32::from_rgba_unmultiplied(to8(ch(r1, r2)), to8(ch(g1, g2)), to8(ch(b1, b2)), to8(alpha * scale)))
 }
 
 /// Length in px (`16px`, `1.2em`/`rem` relative to 16px, plain numbers, calc()).
@@ -709,6 +902,9 @@ const KNOWN: &[&str] = &[
     "--tag-color",
     "--checkbox-color",
     "--blockquote-border-color",
+    "--blockquote-color",
+    "--table-border-color",
+    "--table-header-background",
     "--bold-color",
     "--italic-color",
     "--font-text-size",
@@ -799,6 +995,9 @@ pub fn apply(parsed: &Parsed, extra: &[(String, String)], dark: bool, base: Pale
     m.italic = opt_color("--italic-color");
     m.checkbox = opt_color("--checkbox-color");
     m.quote_bar = opt_color("--blockquote-border-color");
+    m.quote_text = opt_color("--blockquote-color");
+    m.table_border = opt_color("--table-border-color");
+    m.table_header = opt_color("--table-header-background");
     m.tag_color = opt_color("--tag-color");
     m.selection = opt_color("--text-selection");
     let mut used: Vec<String> = user.into_iter().collect();
@@ -862,6 +1061,42 @@ pub struct Appearance {
     pub base_font_size: Option<f32>,
     pub dark: Option<bool>,
     pub accent: Option<String>,
+    /// polices (`textFontFamily`, `interfaceFontFamily`, `monospaceFontFamily`)
+    pub text_font: Option<String>,
+    pub interface_font: Option<String>,
+    pub mono_font: Option<String>,
+    /// ruban de gauche (`showRibbon`)
+    pub show_ribbon: Option<bool>,
+}
+
+/// Mise en page de l'éditeur réglée dans `.obsidian/app.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorLayout {
+    /// titre intégré au-dessus de la note (`showInlineTitle`, oui par défaut)
+    pub inline_title: bool,
+    /// largeur de ligne limitée (`readableLineLength`, oui par défaut)
+    pub readable_line: bool,
+    /// ruban de gauche (`showRibbon` d'appearance.json, oui par défaut)
+    pub ribbon: bool,
+}
+
+impl Default for EditorLayout {
+    fn default() -> Self {
+        Self { inline_title: true, readable_line: true, ribbon: true }
+    }
+}
+
+pub fn read_app_json(obsidian_dir: &Path) -> EditorLayout {
+    let mut l = EditorLayout::default();
+    if let Some(v) = std::fs::read_to_string(obsidian_dir.join("app.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    {
+        let flag = |k: &str| v.get(k).and_then(|x| x.as_bool());
+        l.inline_title = flag("showInlineTitle").unwrap_or(true);
+        l.readable_line = flag("readableLineLength").unwrap_or(true);
+    }
+    l
 }
 
 pub fn read_appearance(obsidian_dir: &Path) -> Option<Appearance> {
@@ -881,7 +1116,27 @@ pub fn read_appearance(obsidian_dir: &Path) -> Option<Appearance> {
             _ => None,
         }),
         accent: v.get("accentColor").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(str::to_string),
+        text_font: font(&v, "textFontFamily"),
+        interface_font: font(&v, "interfaceFontFamily"),
+        mono_font: font(&v, "monospaceFontFamily"),
+        show_ribbon: v.get("showRibbon").and_then(|x| x.as_bool()),
     })
+}
+
+fn font(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|x| x.as_str()).and_then(crate::fonts::first_family)
+}
+
+/// Dernière valeur déclarée d'une variable pour ce mode (thème puis snippets), `var()` résolus.
+pub fn var_value(parsed: &Parsed, name: &str, dark: bool) -> Option<String> {
+    let scope = if dark { Scope::Dark } else { Scope::Light };
+    let vars: HashMap<String, String> = parsed
+        .vars
+        .iter()
+        .filter(|(s, _, _)| *s == Scope::Both || *s == scope)
+        .map(|(_, k, v)| (k.clone(), v.clone()))
+        .collect();
+    resolve_var(name, &vars)
 }
 
 #[cfg(test)]
@@ -897,7 +1152,12 @@ mod tests {
         assert_eq!(parse_color("rgb(10 20 30 / 50%)").map(|c| c.a()), Some(128));
         let c = parse_color("hsl(254, 80%, calc(68% + 0%))").unwrap();
         assert_eq!((c.r(), c.g(), c.b()), (0x8b, 0x6c, 0xef));
-        assert_eq!(parse_color("color-mix(in srgb, red, blue)"), None);
+        assert_eq!(parse_color("color-mix(in srgb, red, blue)"), Some(Color32::from_rgb(128, 0, 128)));
+        // mélange avec transparent : même couleur, partiellement transparente (thème Omarchy)
+        let m = parse_color("color-mix(in srgb, #cdd6f4 70%, transparent)").unwrap();
+        assert_eq!(m.to_srgba_unmultiplied(), [0xcd, 0xd6, 0xf4, 179]);
+        assert_eq!(parse_color("color-mix(in oklab, 25% #ffffff, #000000)"), Some(Color32::from_rgb(64, 64, 64)));
+        assert_eq!(parse_color("color-mix(srgb, red, blue)"), None);
         assert_eq!(eval_number("calc(68% - 3.8%)"), Some(64.2));
         assert_eq!(eval_number("calc((2 + 3) * 4px)"), Some(20.0));
     }
@@ -1023,5 +1283,34 @@ mod tests {
             assert_eq!(a.palette.text, b.text);
             assert_eq!(a.palette.accent, b.accent);
         }
+    }
+    /// Thème Omarchy (coffre réel) : titres colorés par des règles `.markdown-rendered hN`, code, citations.
+    #[test]
+    fn element_rules_become_variables() {
+        let css = r#"
+            .theme-dark, .theme-light {
+              --text-normal: #cdd6f4;
+              --text-title-h1: #f38ba8;
+              --text-title-h2: #a6e3a1;
+              --text-muted: color-mix(in srgb, #cdd6f4 70%, transparent);
+            }
+            .cm-header-1, .markdown-rendered h1 { color: var(--text-title-h1); }
+            .cm-header-2, .markdown-rendered h2 { color: var(--text-title-h2); }
+            .markdown-rendered code { color: #94e2d5; }
+            .markdown-rendered blockquote { border-left-color: #89b4fa; }
+            .markdown-rendered h3 { color: var(--h3-color); }
+            .nav-file-title.is-active { color: red; }
+            .markdown-rendered h1:hover { color: blue; }
+        "#;
+        let mut p = Parsed::default();
+        parse(css, &mut p);
+        assert_eq!(p.ignored_rules, 2);
+        let a = apply(&p, &[], true, theme::builtin_palette(true), theme::Metrics::default());
+        assert_eq!(a.metrics.h_color[0], Some(Color32::from_rgb(0xf3, 0x8b, 0xa8)));
+        assert_eq!(a.metrics.h_color[1], Some(Color32::from_rgb(0xa6, 0xe3, 0xa1)));
+        assert_eq!(a.metrics.h_color[2], None);
+        assert_eq!(a.palette.code_text, Color32::from_rgb(0x94, 0xe2, 0xd5));
+        assert_eq!(a.metrics.quote_bar, Some(Color32::from_rgb(0x89, 0xb4, 0xfa)));
+        assert_eq!(a.palette.muted.to_srgba_unmultiplied(), [0xcd, 0xd6, 0xf4, 179]);
     }
 }

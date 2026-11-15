@@ -40,7 +40,11 @@ pub fn parse_wikilink(inner: &str) -> (String, String) {
     let target = target_part.split('#').next().unwrap_or("").trim().to_string();
     let display = match alias {
         Some(a) if !a.is_empty() => a.to_string(),
-        _ => target_part.trim().replace('#', " > "),
+        // lien vers un titre de la même note (`[[#Titre]]`) : le titre seul, comme Obsidian
+        _ => match target_part.trim().strip_prefix('#') {
+            Some(heading) => heading.trim().replace('#', " > "),
+            None => target_part.trim().replace('#', " > "),
+        },
     };
     (target, display)
 }
@@ -242,6 +246,80 @@ pub fn pending_wikilink(text_before_cursor: &str) -> Option<&str> {
     Some(partial)
 }
 
+/// Propriété du frontmatter YAML d'une note (comme le panneau « Propriétés » d'Obsidian).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Property {
+    pub key: String,
+    pub values: Vec<String>,
+    /// valeur en liste (`[a, b]` ou lignes `- a`) : affichée en pastilles
+    pub list: bool,
+}
+
+/// Frontmatter en tête de note (`---` … `---`) : ses propriétés et l'octet où commence le reste de la note.
+/// Couvre ce qu'écrit Obsidian : valeurs simples, listes `[a, b]` et listes en lignes `- a` ; une valeur plus
+/// complexe (dictionnaire imbriqué, texte sur plusieurs lignes) est montrée telle quelle.
+pub fn frontmatter(src: &str) -> Option<(Vec<Property>, usize)> {
+    let first = src.split_inclusive('\n').next()?;
+    if first.trim_end() != "---" {
+        return None;
+    }
+    let mut offset = first.len();
+    let mut props: Vec<Property> = vec![];
+    for line in src[offset..].split_inclusive('\n') {
+        offset += line.len();
+        let t = line.trim_end();
+        if t == "---" || t == "..." {
+            return Some((props, offset));
+        }
+        if t.trim().is_empty() || t.trim_start().starts_with('#') {
+            continue;
+        }
+        let indented = t.starts_with([' ', '\t']);
+        if let (true, Some(item)) = (indented || t.starts_with("- "), t.trim_start().strip_prefix('-'))
+            && let Some(last) = props.last_mut()
+        {
+            last.list = true;
+            let v = unquote(item.trim());
+            if !v.is_empty() {
+                last.values.push(v);
+            }
+            continue;
+        }
+        if indented {
+            // suite d'une valeur complexe : gardée telle quelle
+            if let Some(last) = props.last_mut() {
+                match last.values.last_mut() {
+                    Some(v) if !last.list => {
+                        v.push(' ');
+                        v.push_str(t.trim());
+                    }
+                    _ => last.values.push(t.trim().to_string()),
+                }
+            }
+            continue;
+        }
+        let Some((key, value)) = t.split_once(':') else { continue };
+        let value = value.trim();
+        let (values, list) = match value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) {
+            Some(inner) => (inner.split(',').map(|v| unquote(v.trim())).filter(|v| !v.is_empty()).collect(), true),
+            None if value.is_empty() || value == "|" || value == ">" => (vec![], false),
+            None => (vec![unquote(value)], false),
+        };
+        props.push(Property { key: unquote(key.trim()), values, list });
+    }
+    None // pas de fin : ce n'est pas un frontmatter
+}
+
+fn unquote(s: &str) -> String {
+    let s = s.trim();
+    for q in ['"', '\''] {
+        if s.len() >= 2 && s.starts_with(q) && s.ends_with(q) {
+            return s[1..s.len() - 1].to_string();
+        }
+    }
+    s.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,5 +380,33 @@ mod tests {
         assert_eq!(pending_wikilink("abc [[No"), Some("No"));
         assert_eq!(pending_wikilink("abc [[No]] d"), None);
         assert_eq!(headings("# A\n```\n# no\n```\n## B ##")[1].1, "B");
+    }
+
+    #[test]
+    fn frontmatter_properties() {
+        let src = "---\ntags:\n  - moc\n  - algo\ncreated: 2026-06-14\naliases: [MOC, \"Index\"]\ncssclasses:\nsource: \"[[Autre note]]\"\n---\n\n# Titre\n";
+        let (props, body) = frontmatter(src).unwrap();
+        assert_eq!(&src[body..], "\n# Titre\n");
+        let p = |k: &str| props.iter().find(|p| p.key == k).unwrap();
+        assert_eq!(p("tags").values, ["moc", "algo"]);
+        assert!(p("tags").list);
+        assert_eq!(p("created").values, ["2026-06-14"]);
+        assert!(!p("created").list);
+        assert_eq!(p("aliases").values, ["MOC", "Index"]);
+        assert!(p("cssclasses").values.is_empty());
+        assert_eq!(p("source").values, ["[[Autre note]]"]);
+        // liste au même niveau que la clé (autre style YAML)
+        let (props, _) = frontmatter("---\ntags:\n- a\n- b\n---\n").unwrap();
+        assert_eq!(props[0].values, ["a", "b"]);
+        assert!(frontmatter("# Pas de frontmatter\n").is_none());
+        assert!(frontmatter("---\nnon fermé\n").is_none());
+        assert!(frontmatter("---\n---\ntexte").is_some_and(|(p, b)| p.is_empty() && b == 8));
+    }
+
+    #[test]
+    fn heading_link_display() {
+        assert_eq!(parse_wikilink("#🖥️ Prérequis").1, "🖥️ Prérequis");
+        assert_eq!(parse_wikilink("Note#Titre").1, "Note > Titre");
+        assert_eq!(parse_wikilink("#Titre|Alias").1, "Alias");
     }
 }

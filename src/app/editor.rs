@@ -135,12 +135,21 @@ impl MnemoApp {
         out
     }
 
+    /// Marge du haut de la page, puis le titre intégré, sauf si le coffre suivi le masque (`showInlineTitle`).
+    fn title_block(&mut self, ui: &mut egui::Ui, editable: bool) {
+        ui.add_space(26.0);
+        if self.css.layout.inline_title {
+            self.inline_title(ui, editable);
+            ui.add_space(14.0);
+        }
+    }
+
     pub(super) fn inline_title(&mut self, ui: &mut egui::Ui, editable: bool) {
         let p = self.palette();
         let Some(n) = &self.open else { return };
         let (id, path) = (n.id, n.path.clone());
         let base = basename(&path).to_string();
-        let font = FontId::new((self.text_size() * self.metrics().h_scale[0]).round(), theme::bold_family());
+        let font = FontId::new((self.text_size() * self.metrics().h_scale[0]).round(), theme::text_bold_family());
         if !editable {
             ui.add(egui::Label::new(RichText::new(&base).font(font).color(p.text)).wrap());
             return;
@@ -274,9 +283,7 @@ impl MnemoApp {
                 let reading = self.cfg.view_mode == ViewMode::Preview;
                 egui::ScrollArea::vertical().id_salt(("page", reading)).auto_shrink([false, false]).show(ui, |ui| {
                     centered(ui, width, |ui| {
-                        ui.add_space(26.0);
-                        self.inline_title(ui, !reading);
-                        ui.add_space(14.0);
+                        self.title_block(ui, !reading);
                         if reading {
                             self.preview(ui, now);
                         } else {
@@ -292,9 +299,7 @@ impl MnemoApp {
                         &mut cols[0],
                         |ui| {
                             centered(ui, width, |ui| {
-                                ui.add_space(26.0);
-                                self.inline_title(ui, true);
-                                ui.add_space(14.0);
+                                self.title_block(ui, true);
                                 self.editor(ui, note_id, now);
                                 ui.add_space(120.0);
                             });
@@ -304,9 +309,7 @@ impl MnemoApp {
                         &mut cols[1],
                         |ui| {
                             centered(ui, width, |ui| {
-                                ui.add_space(26.0);
-                                self.inline_title(ui, false);
-                                ui.add_space(14.0);
+                                self.title_block(ui, false);
                                 self.preview(ui, now);
                                 ui.add_space(120.0);
                             });
@@ -574,26 +577,36 @@ impl MnemoApp {
             {
                 use egui::TextStyle::*;
                 let st = ui.style_mut();
-                st.text_styles.insert(Body, FontId::proportional(fs));
+                st.text_styles.insert(Body, FontId::new(fs, theme::text_family()));
                 st.text_styles.insert(Monospace, FontId::monospace(fs - 1.5));
-                st.text_styles.insert(Heading, FontId::new(fs * 1.802, theme::bold_family()));
+                st.text_styles.insert(Heading, FontId::new(fs * 1.802, theme::text_bold_family()));
                 st.spacing.item_spacing.y = 8.0;
             }
-            let mut copy = self.preview_src.clone();
+            // frontmatter : bloc « Propriétés » comme dans Obsidian, pas du Markdown
+            let body_at = markdown::frontmatter(&self.preview_src).map_or(0, |(_, b)| b);
+            if let Some((props, _)) = self.open.as_ref().and_then(|n| markdown::frontmatter(&n.content))
+                && !props.is_empty()
+            {
+                self.properties(ui, &props);
+            }
+            let body = self.preview_src[body_at..].to_string();
+            let mut copy = body.clone();
             CommonMarkViewer::new().default_width(Some(ui.available_width() as usize)).show_mut(
                 ui,
                 &mut self.md_cache,
                 &mut copy,
             );
-            if copy != self.preview_src {
+            if copy != body {
                 // a checkbox was toggled in the preview: apply it to the real source
-                let before = task_positions(&self.preview_src);
+                let before = task_positions(&body);
                 let after = task_positions(&copy);
                 if let Some(k) = before.iter().zip(after.iter()).position(|(a, b)| a.1 != b.1)
                     && let Some(n) = &mut self.open
                 {
-                    let tasks = task_positions(&n.content);
+                    let start = markdown::frontmatter(&n.content).map_or(0, |(_, b)| b);
+                    let tasks = task_positions(&n.content[start..]);
                     if let Some(&(pos, checked)) = tasks.get(k) {
+                        let pos = start + pos;
                         n.content.replace_range(pos..pos + 1, if checked { " " } else { "x" });
                         n.last_edit = Some(now);
                         self.content_gen += 1;
@@ -601,5 +614,83 @@ impl MnemoApp {
                 }
             }
         });
+    }
+
+    /// Propriétés de la note (frontmatter) en mode lecture : icône et nom à gauche, valeurs à droite ; tags et
+    /// listes en pastilles, `[[liens]]` et adresses cliquables.
+    fn properties(&mut self, ui: &mut egui::Ui, props: &[markdown::Property]) {
+        let p = self.palette();
+        let m = self.metrics();
+        let fs = (self.text_size() - 1.5).max(11.0);
+        ui.label(RichText::new("Propriétés").size(fs).color(p.muted).family(theme::text_bold_family()));
+        ui.add_space(4.0);
+        let is_date = |v: &str| {
+            let b = v.as_bytes();
+            b.len() >= 10 && b[4] == b'-' && b[7] == b'-' && b[..4].iter().all(u8::is_ascii_digit)
+        };
+        egui::Grid::new("note-properties").num_columns(2).spacing([12.0, 6.0]).min_col_width(140.0).show(ui, |ui| {
+            for prop in props {
+                let key = prop.key.to_lowercase();
+                let tags = matches!(key.as_str(), "tags" | "tag");
+                let icon = match key.as_str() {
+                    "tags" | "tag" => "tags",
+                    "aliases" | "alias" => "forward",
+                    "cssclasses" | "cssclass" => "paintbrush",
+                    _ if prop.values.first().is_some_and(|v| is_date(v)) => "calendar",
+                    _ if prop.list => "list",
+                    _ => "text",
+                };
+                ui.horizontal(|ui| {
+                    if let Some(c) = theme::lucide(icon) {
+                        ui.label(theme::icon_text(&c.to_string(), fs).color(p.faint));
+                    }
+                    ui.label(RichText::new(&prop.key).size(fs).color(p.muted));
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if prop.values.is_empty() {
+                        ui.label(RichText::new("Vide").size(fs).color(p.faint));
+                    }
+                    for v in &prop.values {
+                        let link = v.strip_prefix("[[").and_then(|r| r.strip_suffix("]]"));
+                        if tags {
+                            let t = v.trim_start_matches('#');
+                            let txt = RichText::new(format!("#{t}")).size(fs).color(m.tag_color.unwrap_or(p.link));
+                            let r = egui::Frame::new()
+                                .fill(p.tag_bg)
+                                .corner_radius(10.0)
+                                .inner_margin(egui::Margin::symmetric(8, 1))
+                                .show(ui, |ui| ui.add(egui::Label::new(txt).sense(egui::Sense::click())))
+                                .inner;
+                            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                self.actions.push(UiAction::OpenTag(t.to_string()));
+                            }
+                        } else if let Some(target) = link {
+                            let (target, alias) = markdown::parse_wikilink(target);
+                            let shown = alias;
+                            if ui.link(RichText::new(shown).size(fs).color(p.link)).clicked() {
+                                self.actions.push(UiAction::OpenLink(target.to_string()));
+                            }
+                        } else if v.starts_with("http://") || v.starts_with("https://") {
+                            ui.hyperlink_to(RichText::new(v).size(fs), v);
+                        } else if prop.list {
+                            egui::Frame::new()
+                                .fill(p.hover)
+                                .corner_radius(10.0)
+                                .inner_margin(egui::Margin::symmetric(8, 1))
+                                .show(ui, |ui| ui.label(RichText::new(v).size(fs).color(p.text)));
+                        } else {
+                            ui.label(RichText::new(v).size(fs).color(p.text));
+                        }
+                    }
+                });
+                ui.end_row();
+            }
+        });
+        ui.add_space(10.0);
+        let w = ui.available_width();
+        let (r, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
+        ui.painter().hline(r.x_range(), r.center().y, egui::Stroke::new(1.0, p.border));
+        ui.add_space(10.0);
     }
 }

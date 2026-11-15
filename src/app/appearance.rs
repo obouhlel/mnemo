@@ -34,11 +34,21 @@ impl MnemoApp {
         let mut watched: Vec<std::path::PathBuf> = vec![];
         let mut extra: Vec<(String, String)> = vec![];
         let mut report = vec![];
+        let mut layout = crate::css::EditorLayout::default();
+        let mut fonts = theme::FontChoice::default();
         let (theme_name, snippet_names) = match (&self.cfg.obsidian_dir, self.cfg.follow_appearance) {
             (Some(dir), true) => {
                 watched.push(dir.join("appearance.json"));
+                watched.push(dir.join("app.json"));
+                layout = crate::css::read_app_json(dir);
                 match crate::css::read_appearance(dir) {
                     Some(a) => {
+                        layout.ribbon = a.show_ribbon.unwrap_or(true);
+                        fonts = theme::FontChoice {
+                            text: a.text_font.clone(),
+                            interface: a.interface_font.clone(),
+                            mono: a.mono_font.clone(),
+                        };
                         if let Some(size) = a.base_font_size {
                             extra.push(("--font-text-size".into(), format!("{size}px")));
                         }
@@ -116,9 +126,13 @@ impl MnemoApp {
                     parsed.ignored_rules
                 ));
             }
-            if names.iter().any(|n| n.starts_with("--font-") && !n.ends_with("-size")) {
-                report.push("Polices personnalisées (--font-text / --font-interface) non prises en charge : Inter reste utilisée".into());
-            }
+            // polices du thème, si appearance.json n'en impose pas
+            let theme_font = |name: &str| {
+                crate::css::var_value(&parsed, name, self.cfg.dark_mode).and_then(|v| crate::fonts::first_family(&v))
+            };
+            fonts.text = fonts.text.or_else(|| theme_font("--font-text-theme"));
+            fonts.interface = fonts.interface.or_else(|| theme_font("--font-interface-theme"));
+            fonts.mono = fonts.mono.or_else(|| theme_font("--font-monospace-theme"));
             let _ = (d.used.len(), l.used.len());
             theme::set_override(Some(theme::Override { dark: (d.palette, d.metrics), light: (l.palette, l.metrics) }));
         }
@@ -130,7 +144,14 @@ impl MnemoApp {
                 (p, t)
             })
             .collect();
+        for (what, f) in [("texte", &fonts.text), ("interface", &fonts.interface), ("code", &fonts.mono)] {
+            if let Some(f) = f {
+                report.push(format!("Police du {what} : {f}"));
+            }
+        }
         self.css.report = report;
+        self.css.layout = layout;
+        self.css.fonts = fonts;
         self.theme_applied = None;
         self.preview_gen = u64::MAX;
     }

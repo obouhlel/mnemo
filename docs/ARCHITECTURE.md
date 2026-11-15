@@ -52,7 +52,9 @@ Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle
 | `merge.rs` | fusion à 3 voies et diff unifié (testés) |
 | `markdown.rs` | transforme `[[wikilinks]]` et `#tags` en liens `mnemo:` cliquables |
 | `plugins.rs` | hôte de plugins Rhai (voir [plugins.md](plugins.md)) |
-| `css.rs` | lit les thèmes / snippets CSS au format Obsidian (voir [themes.md](themes.md)) |
+| `css.rs` | lit les thèmes / snippets CSS au format Obsidian, `appearance.json` et `app.json` (voir [themes.md](themes.md)) |
+| `fonts.rs` | polices installées sur le système (police du texte, de l'interface, du code ; emoji en couleur) |
+| `iconize.rs` | jeux d'icônes du plugin Iconize (`.obsidian/icons`, dossiers de SVG ou `.zip`) |
 | `theme.rs` | palette, polices, visuels egui, coloration de l'éditeur, widgets maison |
 | `sketch.rs` | format `.mnemo-board` du whiteboard (JSON partagé avec l'appli Android) et géométrie, testés |
 | `graph.rs` | vue graphe (disposition par forces) |
@@ -159,25 +161,35 @@ quand il n'y a rien à faire :
   les leurs à chaque connexion ;
 - ne supprimez pas une colonne ou un index qu'une version publiée référence dans son propre schéma.
 
-## Le patch `vendor/egui_commonmark_backend`
+## Les patchs `vendor/egui_commonmark` et `vendor/egui_commonmark_backend`
 
-Le mode lecture utilise `egui_commonmark`. Par défaut, son backend affiche le gras en changeant seulement la
-couleur. Mnemo utilise une copie locale de `egui_commonmark_backend` **0.26.0**, branchée dans `Cargo.toml` par :
+Le mode lecture utilise `egui_commonmark`. Mnemo utilise une copie locale des deux crates en version **0.26.0**,
+branchées dans `Cargo.toml` par :
 
 ```toml
 [patch.crates-io]
+egui_commonmark = { path = "vendor/egui_commonmark" }
 egui_commonmark_backend = { path = "vendor/egui_commonmark_backend" }
 ```
 
-La seule modification se trouve dans `src/misc.rs`, au commentaire `// Mnemo patch` : le gras et les titres
-de niveau 1 à 3 utilisent la vraie police Inter SemiBold enregistrée par l'application.
+Les modifications sont marquées « Patch Mnemo » / « Mnemo patch » :
+
+- `egui_commonmark_backend/src/lib.rs` : `MdTheme`, le thème du mode lecture (couleurs des titres, du code, des
+  citations, des tableaux ; polices du texte ; icônes), posé par `MnemoApp::apply_theme` dans `ctx.data` ;
+- `egui_commonmark_backend/src/misc.rs` (`Style::to_richtext`) : vraies graisses de police, couleurs de `MdTheme`,
+  couleur et gras imposés (titre d'un callout) ;
+- `egui_commonmark/src/parsers/pulldown.rs` : barre des citations à la couleur du thème, tableaux à bordures avec
+  en-tête en gras (`paint_table`), callouts Obsidian (`parse_callout`, `callout`, `callout_style`).
+
+Les tests des callouts sont dans le crate vendorisé ; il n'est pas membre du workspace, ils ne tournent donc pas avec
+`make check` (copiez le crate hors du dépôt avec un `[workspace]` vide pour les lancer).
 
 **Quand vous mettez à jour `egui_commonmark`** :
 
-1. récupérez la nouvelle version du backend (`cargo download egui_commonmark_backend==X.Y.Z`, ou copiez-la
-   depuis `~/.cargo/registry/src/*/egui_commonmark_backend-X.Y.Z`) ;
-2. remplacez `vendor/egui_commonmark_backend`, puis réappliquez le bloc `// Mnemo patch` dans `src/misc.rs` ;
-3. vérifiez que les versions du backend et de `egui_commonmark` correspondent. Sinon, Cargo ignore le patch
+1. récupérez les nouvelles versions des deux crates (copiez-les depuis
+   `~/.cargo/registry/src/*/egui_commonmark-X.Y.Z` et `…/egui_commonmark_backend-X.Y.Z`) ;
+2. remplacez les dossiers de `vendor/`, puis réappliquez les blocs « Patch Mnemo » ;
+3. vérifiez que les versions des deux crates correspondent. Sinon, Cargo ignore le patch
    et affiche l'avertissement « patch was not used ».
 
 ## Vérifier avant de commiter

@@ -18,6 +18,26 @@ pub fn italic_family() -> FontFamily {
     FontFamily::Name(FONT_ITALIC.into())
 }
 
+/// Texte des notes (éditeur, aperçu, titre intégré) : sa propre famille, comme `--font-text` dans Obsidian,
+/// distincte de la police de l'interface. Inter par défaut.
+pub fn text_family() -> FontFamily {
+    FontFamily::Name("mnemo-text".into())
+}
+pub fn text_bold_family() -> FontFamily {
+    FontFamily::Name("mnemo-text-bold".into())
+}
+pub fn text_italic_family() -> FontFamily {
+    FontFamily::Name("mnemo-text-italic".into())
+}
+
+/// Polices demandées par l'apparence (noms de familles installées sur le système) ; `None` : celles de Mnemo.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FontChoice {
+    pub text: Option<String>,
+    pub interface: Option<String>,
+    pub mono: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Palette {
     /// Main background (editor / reading area)
@@ -52,6 +72,12 @@ pub struct Metrics {
     pub italic: Option<Color32>,
     pub checkbox: Option<Color32>,
     pub quote_bar: Option<Color32>,
+    /// texte des citations (`--blockquote-color`) ; sinon le texte normal, comme dans Obsidian
+    pub quote_text: Option<Color32>,
+    /// bordures des tableaux (`--table-border-color`) ; sinon la couleur des bordures
+    pub table_border: Option<Color32>,
+    /// fond de l'en-tête des tableaux (`--table-header-background`)
+    pub table_header: Option<Color32>,
     pub tag_color: Option<Color32>,
     pub selection: Option<Color32>,
 }
@@ -68,6 +94,9 @@ impl Default for Metrics {
             italic: None,
             checkbox: None,
             quote_bar: None,
+            quote_text: None,
+            table_border: None,
+            table_header: None,
             tag_color: None,
             selection: None,
         }
@@ -217,7 +246,39 @@ pub fn lucide(name: &str) -> Option<char> {
 }
 
 /// Dessine l'icône d'un dossier / d'une note : nom Lucide, sinon le texte tel quel (emoji).
+/// Icônes SVG des jeux Iconize utilisées par l'explorateur (`iconize:<Nom>`), déjà blanchies.
+static SVG_ICONS: std::sync::RwLock<Option<std::collections::HashMap<String, Arc<[u8]>>>> =
+    std::sync::RwLock::new(None);
+
+pub fn register_svg_icon(name: &str, svg: Vec<u8>) {
+    SVG_ICONS.write().unwrap().get_or_insert_default().insert(name.to_string(), svg.into());
+}
+
+pub fn has_svg_icon(name: &str) -> bool {
+    SVG_ICONS.read().unwrap().as_ref().is_some_and(|m| m.contains_key(name))
+}
+
+/// Dessine une icône SVG Iconize teinte à `color` ; rien tant qu'elle n'est pas chargée.
+fn paint_svg_icon(painter: &egui::Painter, center: egui::Pos2, name: &str, size: f32, color: Color32) {
+    let Some(bytes) = SVG_ICONS.read().unwrap().as_ref().and_then(|m| m.get(name).cloned()) else { return };
+    let ctx = painter.ctx();
+    let uri = format!("bytes://iconize/{name}.svg");
+    ctx.include_bytes(uri.clone(), bytes);
+    let px = (size * ctx.pixels_per_point()).round().max(8.0) as u32;
+    if let Ok(egui::load::TexturePoll::Ready { texture }) = ctx.try_load_texture(
+        &uri,
+        egui::TextureOptions::LINEAR,
+        egui::SizeHint::Size { width: px, height: px, maintain_aspect_ratio: true },
+    ) {
+        let r = egui::Rect::from_center_size(center, Vec2::splat(size * 0.92));
+        painter.image(texture.id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), color);
+    }
+}
+
 pub fn paint_entry_icon(painter: &egui::Painter, center: egui::Pos2, icon: &str, size: f32, color: Color32) {
+    if let Some(name) = icon.strip_prefix("iconize:") {
+        return paint_svg_icon(painter, center, name, size, color);
+    }
     match lucide(icon) {
         Some(c) => {
             painter.text(center, egui::Align2::CENTER_CENTER, c, FontId::new(size, icon_family()), color);
@@ -236,7 +297,9 @@ pub fn icon_text(icon: &str, size: f32) -> egui::RichText {
     egui::RichText::new(icon).font(FontId::new(size, icon_family()))
 }
 
-pub fn install_fonts(ctx: &egui::Context) {
+/// Installe les polices ; renvoie les familles demandées introuvables sur le système.
+pub fn install_fonts(ctx: &egui::Context, choice: &FontChoice) -> Vec<String> {
+    let mut missing = vec![];
     let mut fonts = FontDefinitions::default();
     fonts
         .font_data
@@ -262,7 +325,70 @@ pub fn install_fonts(ctx: &egui::Context) {
         list.extend(fallbacks.iter().cloned());
         fonts.families.insert(family, list);
     }
+    // police choisie : en tête de la famille, Mnemo garde les siennes pour les caractères qui lui manquent
+    let load = |fonts: &mut FontDefinitions, key: &str, family: &str, bold: bool, italic: bool| -> bool {
+        match crate::fonts::find(family, bold, italic) {
+            // face grasse / italique absente : la famille retombe sur sa face normale
+            Some(face) if (bold || italic) && !face.exact => false,
+            Some(face) => {
+                let mut data = FontData::from_owned(face.data);
+                data.index = face.index;
+                fonts.font_data.insert(key.into(), Arc::new(data));
+                true
+            }
+            None => false,
+        }
+    };
+    let text = choice.text.as_deref().filter(|f| load(&mut fonts, "text-regular", f, false, false));
+    if let Some(f) = text {
+        load(&mut fonts, "text-bold", f, true, false);
+        load(&mut fonts, "text-italic", f, false, true);
+    } else if let Some(f) = &choice.text {
+        missing.push(f.clone());
+    }
+    let has = |fonts: &FontDefinitions, k: &str| fonts.font_data.contains_key(k);
+    for (family, own, inter) in [
+        (text_family(), "text-regular", "inter"),
+        (text_bold_family(), "text-bold", FONT_BOLD),
+        (text_italic_family(), "text-italic", FONT_ITALIC),
+    ] {
+        let mut list = vec![];
+        if has(&fonts, own) {
+            list.push(own.to_string());
+        } else if has(&fonts, "text-regular") {
+            list.push("text-regular".to_string()); // pas de face grasse / italique : la face normale
+        }
+        list.push(inter.to_string());
+        list.extend(fallbacks.iter().cloned());
+        fonts.families.insert(family, list);
+    }
+    if let Some(f) = &choice.interface {
+        if load(&mut fonts, "interface", f, false, false) {
+            fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "interface".into());
+        } else {
+            missing.push(f.clone());
+        }
+    }
+    if let Some(f) = &choice.mono {
+        if load(&mut fonts, "mono", f, false, false) {
+            fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "mono".into());
+        } else {
+            missing.push(f.clone());
+        }
+    }
+    // emoji en couleur (police du système), avant les emoji monochromes fournis par egui
+    if let Some(face) = crate::fonts::color_emoji() {
+        let mut data = FontData::from_owned(face.data);
+        data.index = face.index;
+        fonts.font_data.insert("color-emoji".into(), Arc::new(data));
+        for list in fonts.families.values_mut() {
+            if let Some(i) = list.iter().position(|n| n == "NotoEmoji-Regular") {
+                list.insert(i, "color-emoji".into());
+            }
+        }
+    }
     ctx.set_fonts(fonts);
+    missing
 }
 
 /// `size` is the interface font size (the editor has its own size).
@@ -565,7 +691,7 @@ pub fn markdown_job(
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap_width;
     let base = TextFormat {
-        font_id: FontId::proportional(size),
+        font_id: FontId::new(size, text_family()),
         color: p.text,
         line_height: Some(size * m.line_height),
         ..Default::default()
@@ -623,7 +749,7 @@ pub fn markdown_job(
         if (1..=6).contains(&level) && t[level..].starts_with(' ') {
             let hs = size * m.h_scale[level - 1];
             let hf = TextFormat {
-                font_id: FontId::new(hs, bold_family()),
+                font_id: FontId::new(hs, text_bold_family()),
                 color: m.h_color[level - 1].unwrap_or(p.heading),
                 line_height: Some(hs * 1.45),
                 ..Default::default()
@@ -653,7 +779,8 @@ pub fn markdown_job(
                 if reveal { TextFormat { color: p.accent, ..base.clone() } } else { invisible.clone() },
             );
             rest = &rest[n..];
-            fmt = TextFormat { color: p.muted, font_id: FontId::new(size, italic_family()), ..base.clone() };
+            // citation : texte normal, comme dans Obsidian (`--blockquote-color` si le thème en donne un)
+            fmt = TextFormat { color: m.quote_text.unwrap_or(p.text), ..base.clone() };
         }
         // list markers & tasks
         let marker = if rest.starts_with("- ") || rest.starts_with("* ") || rest.starts_with("+ ") {
@@ -867,12 +994,13 @@ fn inline(job: &mut LayoutJob, s: &str, base: &TextFormat, p: &Palette, m: &Metr
         {
             flush(job, plain_start, i);
             let b = TextFormat {
-                font_id: FontId::new(base.font_id.size, bold_family()),
+                font_id: FontId::new(base.font_id.size, text_bold_family()),
                 color: m.bold.unwrap_or(p.heading),
                 ..base.clone()
             };
             job.append(&rest[..2], 0.0, faint.clone());
-            job.append(&rest[2..2 + end], 0.0, b);
+            // le contenu est lui-même analysé : `code`, liens, italique… dans le gras
+            inline(job, &rest[2..2 + end], &b, p, m, mono, reveal);
             job.append(&rest[2 + end..4 + end], 0.0, faint.clone());
             i += end + 4;
             plain_start = i;
@@ -887,12 +1015,12 @@ fn inline(job: &mut LayoutJob, s: &str, base: &TextFormat, p: &Palette, m: &Metr
         {
             flush(job, plain_start, i);
             let it = TextFormat {
-                font_id: FontId::new(base.font_id.size, italic_family()),
+                font_id: FontId::new(base.font_id.size, text_italic_family()),
                 color: m.italic.unwrap_or(base.color),
                 ..base.clone()
             };
             job.append(&rest[..1], 0.0, faint.clone());
-            job.append(&rest[1..1 + end], 0.0, it);
+            inline(job, &rest[1..1 + end], &it, p, m, mono, reveal);
             job.append(&rest[1 + end..2 + end], 0.0, faint.clone());
             i += end + 2;
             plain_start = i;
@@ -905,11 +1033,8 @@ fn inline(job: &mut LayoutJob, s: &str, base: &TextFormat, p: &Palette, m: &Metr
         {
             flush(job, plain_start, i);
             job.append(&rest[..2], 0.0, faint.clone());
-            job.append(
-                &rest[2..2 + end],
-                0.0,
-                TextFormat { background: Color32::from_rgba_unmultiplied(255, 208, 0, 60), ..base.clone() },
-            );
+            let hl = TextFormat { background: Color32::from_rgba_unmultiplied(255, 208, 0, 60), ..base.clone() };
+            inline(job, &rest[2..2 + end], &hl, p, m, mono, reveal);
             job.append(&rest[2 + end..4 + end], 0.0, faint.clone());
             i += end + 4;
             plain_start = i;

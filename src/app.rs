@@ -103,6 +103,10 @@ pub struct MnemoApp {
     vault_input: String,
     /// icônes de l'explorateur : chemin en minuscules → icône Lucide ou emoji
     icons: HashMap<String, String>,
+    /// jeux d'icônes Iconize installés dans le coffre (`.obsidian/icons`)
+    iconize: crate::iconize::Index,
+    /// la première liste d'icônes est arrivée (import automatique depuis Iconize si elle est vide)
+    icons_checked: bool,
     icon_pick: Option<icons::IconPick>,
     /// pièces jointes du dossier (chemins relatifs avec extension)
     files: Vec<String>,
@@ -156,7 +160,6 @@ fn fold_accents(s: &str) -> String {
 
 impl MnemoApp {
     pub fn new(cc: &eframe::CreationContext<'_>, cfg: Config) -> Self {
-        theme::install_fonts(&cc.egui_ctx);
         // images des notes (file://) : PNG, JPEG, GIF, WebP, BMP, SVG
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let client_id = Uuid::new_v4().to_string();
@@ -225,6 +228,8 @@ impl MnemoApp {
             github_input: String::new(),
             vault_input: String::new(),
             icons: HashMap::new(),
+            iconize: Default::default(),
+            icons_checked: false,
             icon_pick: None,
             files: vec![],
             image_view: None,
@@ -283,7 +288,33 @@ impl MnemoApp {
             return;
         }
         self.theme_applied = Some(key);
+        if self.css.fonts_installed.as_ref() != Some(&self.css.fonts) {
+            let missing = theme::install_fonts(ctx, &self.css.fonts);
+            for f in missing {
+                self.css.report.push(format!("Police « {f} » introuvable sur ce système : Inter reste utilisée"));
+            }
+            self.css.fonts_installed = Some(self.css.fonts.clone());
+        }
         theme::apply(ctx, self.cfg.dark_mode, 14.0);
+        // mode lecture : couleurs et polices du thème CSS (titres, code, citations, tableaux), comme Obsidian
+        let (p, m) = (self.palette(), self.metrics());
+        egui_commonmark::MdTheme::set(
+            ctx,
+            egui_commonmark::MdTheme {
+                heading: m.h_color,
+                code: Some(p.code_text),
+                quote_bar: Some(m.quote_bar.unwrap_or(p.accent)),
+                quote_text: Some(m.quote_text.unwrap_or(p.text)),
+                bold: m.bold,
+                italic: m.italic,
+                table_border: Some(m.table_border.unwrap_or(p.border)),
+                table_header: m.table_header,
+                bold_family: Some(theme::text_bold_family()),
+                italic_family: Some(theme::text_italic_family()),
+                icon_family: Some(theme::icon_family()),
+                icon_glyph: Some(theme::lucide),
+            },
+        );
     }
 
     fn palette(&self) -> theme::Palette {
@@ -299,7 +330,11 @@ impl MnemoApp {
         self.metrics().font_size.unwrap_or(self.cfg.font_size)
     }
 
+    /// Largeur maximale du texte ; illimitée si le coffre suivi désactive « Readable line length ».
     fn readable_width(&self) -> f32 {
+        if !self.css.layout.readable_line {
+            return f32::INFINITY;
+        }
         self.metrics().line_width.unwrap_or(700.0 * self.text_size() / 16.0)
     }
 
@@ -357,11 +392,15 @@ impl eframe::App for MnemoApp {
         self.update_plugin_outputs(&ctx, now);
 
         let p = self.palette();
-        egui::Panel::left("ribbon")
-            .exact_size(44.0)
-            .resizable(false)
-            .frame(egui::Frame::new().fill(p.bg2))
-            .show(ui, |ui| self.ribbon(ui));
+        // ruban masqué par le coffre suivi (`showRibbon`) : ses commandes restent dans la palette (Ctrl+P),
+        // le bouton du panneau passe dans la barre d'onglets et les paramètres en bas du panneau latéral
+        if self.css.layout.ribbon {
+            egui::Panel::left("ribbon")
+                .exact_size(44.0)
+                .resizable(false)
+                .frame(egui::Frame::new().fill(p.bg2))
+                .show(ui, |ui| self.ribbon(ui));
+        }
         if self.left_visible(&ctx) {
             egui::Panel::left("sidebar")
                 .default_size(260.0)
