@@ -88,6 +88,8 @@ pub struct CommonMarkViewerInternal {
     is_table: bool,
     is_blockquote: bool,
     checkbox_events: Vec<CheckboxClickEvent>,
+    /// Patch Mnemo : style du texte à rétablir à la fin d'une tâche faite (barré, couleur)
+    task_done_restore: Option<(bool, Option<egui::Color32>)>,
     deferred_scroll_to_heading: Option<String>,
     /// Set during a full render if any image rendered at zero height (texture
     /// still loading). When true, split points are discarded and the full render
@@ -114,6 +116,14 @@ pub(crate) struct CheckboxClickEvent {
 }
 
 impl CommonMarkViewerInternal {
+    /// Patch Mnemo : fin du style « tâche faite » (texte barré et atténué).
+    fn end_task_done(&mut self) {
+        if let Some((strike, color)) = self.task_done_restore.take() {
+            self.text_style.strikethrough = strike;
+            self.text_style.color = color;
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             curr_table: 0,
@@ -129,6 +139,7 @@ impl CommonMarkViewerInternal {
             is_table: false,
             is_blockquote: false,
             checkbox_events: Vec::new(),
+            task_done_restore: None,
             deferred_scroll_to_heading: None,
             any_image_loading: false,
             want_scroll_to_active_match: false,
@@ -1285,6 +1296,16 @@ impl CommonMarkViewerInternal {
         options: &CommonMarkOptions,
         max_width: f32,
     ) {
+        // Patch Mnemo : puce de l'élément de liste dessinée maintenant, sauf devant une case de tâche
+        if self.list.has_pending_marker()
+            && !matches!(
+                event,
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Paragraph)
+            )
+        {
+            let task = matches!(event, pulldown_cmark::Event::TaskListMarker(_));
+            self.list.flush_marker(ui, task);
+        }
         match event {
             pulldown_cmark::Event::Start(tag) => self.start_tag(ui, tag, cache, options),
             pulldown_cmark::Event::End(tag) => self.end_tag(ui, tag, cache, options, max_width),
@@ -1318,19 +1339,19 @@ impl CommonMarkViewerInternal {
                 self.line.try_insert_start(ui);
                 rule(ui, self.line.can_insert_end());
             }
-            pulldown_cmark::Event::TaskListMarker(mut checkbox) => {
-                if options.mutable {
-                    if ui
-                        .add(egui::Checkbox::without_text(&mut checkbox))
-                        .clicked()
-                    {
-                        self.checkbox_events.push(CheckboxClickEvent {
-                            checked: checkbox,
-                            span: src_span,
-                        });
-                    }
-                } else {
-                    ui.add(ImmutableCheckbox::without_text(&mut checkbox));
+            pulldown_cmark::Event::TaskListMarker(checkbox) => {
+                // Patch Mnemo : case façon Obsidian ; texte d'une tâche faite atténué et barré
+                if task_checkbox(ui, checkbox, options.mutable).clicked() && options.mutable {
+                    self.checkbox_events.push(CheckboxClickEvent {
+                        checked: !checkbox,
+                        span: src_span,
+                    });
+                }
+                if checkbox {
+                    self.task_done_restore =
+                        Some((self.text_style.strikethrough, self.text_style.color));
+                    self.text_style.strikethrough = true;
+                    self.text_style.color = Some(ui.visuals().weak_text_color());
                 }
             }
             pulldown_cmark::Event::InlineMath(tex) => {
@@ -1522,6 +1543,8 @@ impl CommonMarkViewerInternal {
             }
 
             pulldown_cmark::Tag::Item => {
+                // une sous-tâche n'hérite pas du style « faite » de sa tâche parente
+                self.end_task_done();
                 self.is_list_item = true;
                 self.list.start_item(ui, options);
             }
@@ -1617,7 +1640,7 @@ impl CommonMarkViewerInternal {
                     self.list = List::default();
                 }
             }
-            pulldown_cmark::TagEnd::Item => {}
+            pulldown_cmark::TagEnd::Item => self.end_task_done(),
             pulldown_cmark::TagEnd::FootnoteDefinition => {
                 self.line.should_start_newline = true;
                 self.line.should_end_newline = true;

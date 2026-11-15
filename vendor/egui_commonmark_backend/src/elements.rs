@@ -290,6 +290,51 @@ pub fn code_block<'t>(
     (output.galley_pos, output.galley)
 }
 
+/// Patch Mnemo : case d'une tâche (`- [ ]` / `- [x]`) comme dans Obsidian : carré arrondi à la hauteur du
+/// texte, bordure discrète, rempli de la couleur d'accent avec une coche quand la tâche est faite.
+/// Cliquable seulement si `interactive` (aperçu modifiable).
+pub fn task_checkbox(ui: &mut Ui, checked: bool, interactive: bool) -> egui::Response {
+    let h = height_body(ui);
+    let side = (h * 0.8).round().max(12.0);
+    let sense = if interactive { Sense::click() } else { Sense::hover() };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(side + 8.0, h), sense);
+    let response = if interactive {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    };
+    if ui.is_rect_visible(rect) {
+        let boxr = Rect::from_center_size(
+            egui::pos2(rect.left() + side / 2.0 + 1.0, rect.center().y),
+            egui::vec2(side, side),
+        );
+        let accent = ui.visuals().hyperlink_color;
+        let radius = (side * 0.25).round();
+        if checked {
+            ui.painter().rect_filled(boxr, radius, accent);
+            let s = side;
+            let c = boxr.left_top();
+            let mark = vec![
+                c + egui::vec2(s * 0.24, s * 0.52),
+                c + egui::vec2(s * 0.42, s * 0.70),
+                c + egui::vec2(s * 0.76, s * 0.32),
+            ];
+            let fg = if ui.visuals().dark_mode { Color32::from_gray(20) } else { Color32::WHITE };
+            ui.painter().add(egui::Shape::line(mark, egui::Stroke::new((s * 0.13).max(1.6), fg)));
+        } else {
+            let hovered = interactive && response.hovered();
+            let color = if hovered { accent } else { ui.visuals().weak_text_color() };
+            ui.painter().rect_stroke(
+                boxr,
+                radius,
+                egui::Stroke::new(1.5, color),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    response
+}
+
 // Stripped down version of egui's Checkbox. The only difference is that this
 // creates a noninteractive checkbox. ui.add_enabled could have been used instead,
 // but it makes the checkbox too grey.

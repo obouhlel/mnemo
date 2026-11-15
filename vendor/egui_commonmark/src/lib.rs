@@ -437,10 +437,19 @@ pub(crate) struct ListLevel {
     current_number: Option<u64>,
 }
 
+/// Patch Mnemo : puce d'un élément de liste, dessinée au premier contenu de l'élément (pas de puce devant
+/// une tâche `- [ ]`, la case en tient lieu, comme dans Obsidian).
+pub(crate) enum Marker {
+    Number(String),
+    Hollow,
+    Solid,
+}
+
 #[derive(Default)]
 pub(crate) struct List {
     items: Vec<ListLevel>,
     has_list_begun: bool,
+    pending: Option<Marker>,
 }
 
 impl List {
@@ -476,14 +485,16 @@ impl List {
         if let Some(item) = self.items.last_mut() {
             ui.label(" ".repeat((len - 1) * options.indentation_spaces));
 
-            if let Some(number) = &mut item.current_number {
-                number_point(ui, &number.to_string());
+            self.pending = Some(if let Some(number) = &mut item.current_number {
+                let n = number.to_string();
                 *number += 1;
+                Marker::Number(n)
             } else if len > 1 {
-                bullet_point_hollow(ui);
+                Marker::Hollow
             } else {
-                bullet_point(ui);
-            }
+                Marker::Solid
+            });
+            return;
         } else {
             // The list stack is empty.  This can happen in the viewport-cache
             // path when the visible slice starts with a Start(Item) event whose
@@ -495,6 +506,24 @@ impl List {
         }
 
         ui.add_space(4.0);
+    }
+
+    /// Dessine la puce en attente (voir `Marker`) ; `task` : l'élément est une tâche, pas de puce.
+    pub fn flush_marker(&mut self, ui: &mut egui::Ui, task: bool) {
+        let Some(marker) = self.pending.take() else { return };
+        if task {
+            return;
+        }
+        match marker {
+            Marker::Number(n) => number_point(ui, &n),
+            Marker::Hollow => bullet_point_hollow(ui),
+            Marker::Solid => bullet_point(ui),
+        }
+        ui.add_space(4.0);
+    }
+
+    pub fn has_pending_marker(&self) -> bool {
+        self.pending.is_some()
     }
 
     pub fn end_level(&mut self, ui: &mut egui::Ui, insert_newline: bool) {
