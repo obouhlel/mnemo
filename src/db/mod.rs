@@ -204,6 +204,8 @@ pub enum Msg {
     Backlinks {
         id: Uuid,
         links: Vec<Backlink>,
+        /// mentions non liées : le nom de la note écrit en toutes lettres, sans lien
+        unlinked: Vec<Backlink>,
     },
     Tags(Vec<(String, i64)>),
     /// chemin en minuscules → icône

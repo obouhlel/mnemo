@@ -144,7 +144,7 @@ impl Store {
     }
 
     fn docs(&self) -> Vec<Doc<'_>> {
-        self.notes.iter().map(|(id, n)| Doc { id: *id, path: &n.path, content: &n.content }).collect()
+        self.notes.iter().map(|(id, n)| Doc::new(*id, &n.path, &n.content)).collect()
     }
 
     /// Écrit le contenu d'une note sur le disque et met l'index à jour (nouvelle version).
@@ -405,6 +405,10 @@ impl Store {
                         let note = self.note(id).expect("note");
                         self.emit(Msg::Loaded { note, purpose: LoadPurpose::Open });
                     }
+                    // pièce jointe absente : jamais créée comme une note vide « x.png »
+                    None if crate::markdown::is_attachment(&link) => {
+                        self.error(format!("Pièce jointe introuvable : « {} »", link.trim()))
+                    }
                     None => match normalize_path(link.trim().trim_end_matches(".md")) {
                         Ok(path) => {
                             self.handle(Cmd::Create { path, content: String::new(), open: true, if_missing: true })
@@ -524,7 +528,8 @@ impl Store {
                 let docs = self.docs();
                 let Some(target) = docs.iter().find(|d| d.id == id) else { return };
                 let links = index::backlinks(&docs, target);
-                self.emit(Msg::Backlinks { id, links });
+                let unlinked = index::unlinked_mentions(&docs, target);
+                self.emit(Msg::Backlinks { id, links, unlinked });
             }
             Cmd::Tags => self.emit(Msg::Tags(index::tag_counts(&self.docs()))),
             Cmd::Graph => self.emit(Msg::Graph(index::graph(&self.docs()))),

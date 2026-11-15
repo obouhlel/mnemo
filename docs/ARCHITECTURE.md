@@ -37,20 +37,21 @@ Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle
 |---|---|
 | `main.rs` | point d'entrée : options de la fenêtre, message d'aide si une bibliothèque graphique manque |
 | `model.rs` | types partagés : `Note`, `NoteMeta`, `VaultEvent`, `GraphData`… |
-| `config.rs` | configuration locale (URL de la base, préférences), lue et écrite en TOML |
+| `config.rs` | configuration locale (URL de la base, préférences), lue et écrite en TOML (champs nouveaux toujours avec une valeur par défaut : les anciennes configurations restent lisibles), chemins raccourcis pour l'affichage (`short_path`) |
 | `schema.sql` | tables, triggers (version, liens, `pg_notify`). Rejoué à chaque connexion : il doit rester **idempotent** |
 | `db/mod.rs` | `Cmd`, `Msg`, `DbHandle`, `spawn`, `Worker::run` et l'aiguillage `handle` |
 | `db/connection.rs` | ouverture (TLS si `sslmode=require`), migration sous verrou consultatif, boucle `LISTEN` avec backoff |
 | `db/board.rs` | commandes projets / tickets / rapports, chargement du tableau de bord |
 | `db/vault_sync.rs` | synchro dossier ↔ base : notes, dossiers, renommages, suppressions, icônes, plugins et pièces jointes (table `files`) |
 | `local/mod.rs` | stockage local : commandes des notes sur les fichiers, relecture du disque |
-| `local/index.rs` | liens, résolution, tags, recherche, rétroliens, graphe, réécriture des liens (fonctions pures) |
+| `local/index.rs` | liens (`[[…]]` et `[texte](Note.md)`), résolution (chemins, alias), tags (corps et frontmatter), recherche, rétroliens, mentions non liées, graphe, réécriture des liens (fonctions pures) |
 | `local/shared.rs` | identifiants des notes (`.mnemo/ids.json`) et fichiers d'état partagés avec la synchro |
 | `db/github_sync.rs` | publication et synchronisation des tickets avec les issues GitHub |
 | `board.rs` | domaine du tableau de bord et **plan** de synchronisation GitHub (fonctions pures, testées) |
 | `github.rs` | client REST GitHub bloquant (appelé via `spawn_blocking`) |
 | `merge.rs` | fusion à 3 voies et diff unifié (testés) |
-| `markdown.rs` | transforme `[[wikilinks]]` et `#tags` en liens `mnemo:` cliquables |
+| `markdown.rs` | transforme `[[wikilinks]]`, liens Markdown internes et `#tags` en liens `mnemo:` cliquables ; images, `==surligné==`, formules, blocs Mermaid ; frontmatter (lecture et écriture d'une propriété) |
+| `math.rs` | formules LaTeX (`$…$`, `$$…$$`) en texte mathématique Unicode |
 | `plugins.rs` | hôte de plugins Rhai (voir [plugins.md](plugins.md)) |
 | `css.rs` | lit les thèmes / snippets CSS au format Obsidian, `appearance.json` et `app.json` (voir [themes.md](themes.md)) |
 | `fonts.rs` | polices installées sur le système (police du texte, de l'interface, du code ; emoji en couleur) |
@@ -72,16 +73,17 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `notes.rs` | ouverture / onglets / historique de navigation, sauvegarde automatique |
 | `layout.rs` | écran de connexion, barre d'onglets, en-tête de vue, indicateur de synchronisation, notifications |
 | `sidebar.rs` | ruban, explorateur (arbre de dossiers, glisser-déposer), panneau de droite |
-| `editor.rs` | éditeur, titre intégré, autocomplétion `[[`, aperçu |
+| `editor.rs` | éditeur, titre intégré, autocomplétion `[[`, aperçu, volet Propriétés modifiable, rendu des diagrammes Mermaid (cache) |
 | `commands.rs` | `CoreCmd` (palette Ctrl+P), raccourcis, `UiAction`, actions des plugins |
 | `dialogs.rs` | palette, sélecteur de notes, saisie de nom, confirmations |
 | `conflict.rs` | fenêtre de résolution de conflit (choix par bloc, diff) |
-| `settings.rs` | fenêtre des paramètres (général, plugins, GitHub) |
+| `settings.rs` | fenêtre des paramètres : barre latérale, recherche, ligne de réglage commune `setting_row`, sélecteur de dossier natif (`rfd`, sur un autre thread) ; onglets Synchronisation, Plugins, GitHub, À propos |
 | `whiteboard.rs` | onglet whiteboard : outils, vue (zoom, déplacement), annuler / rétablir, enregistrement, aperçu dans les notes |
 | `attachments.rs` | pièces jointes : résolution des images, collage (Ctrl+V), dépôt, dossier des pièces jointes, visionneuse |
+| `bookmarks.rs` | signets (`.obsidian/bookmarks.json`, partagés avec Obsidian), reprise des plugins cœur (`core-plugins.json`) |
 | `icons.rs` | icônes des dossiers / notes : fenêtre de choix (Lucide, emoji), import depuis Iconize |
-| `vault.rs` | onglet Coffre Obsidian, liaison du coffre et dernier passage de synchronisation, import des fichiers déposés, `settings_row` |
-| `appearance.rs` | onglet Apparence, chargement et surveillance des fichiers CSS |
+| `vault.rs` | onglet Coffre Obsidian, liaison du coffre et dernier passage de synchronisation, import des fichiers déposés, dossier `.obsidian` utilisé (`obsidian_dir`) |
+| `appearance.rs` | onglet Apparence (mode clair / sombre / système, thème, accent, polices, snippets), chargement et surveillance des fichiers CSS |
 | `dashboard/` | tableau de bord : `mod.rs` (état, vue principale), `rows.rs`, `columns.rs`, `ticket.rs`, `actions.rs` |
 
 ### `android/` : l'application mobile (Kotlin, Jetpack Compose, Android 8.0+)

@@ -37,7 +37,7 @@ impl MnemoApp {
             return Some(Embed::Board(rel));
         }
         if !is_image(&rel) {
-            return None;
+            return Some(Embed::File(file_uri_plain(&self.file_abs(&rel)?)));
         }
         // adresse non encodée : `markdown::preprocess_with` encode lui-même ce que l'aperçu exige
         Some(Embed::Image(file_uri_plain(&self.file_abs(&rel)?)))

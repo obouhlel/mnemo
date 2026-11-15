@@ -219,6 +219,7 @@ pub mod icon {
     pub const LOCAL: &str = "\u{e0f0}"; // hard-drive
     pub const ALERT: &str = "\u{e07b}";
     pub const CHEVRON_RIGHT: &str = "\u{e073}";
+    pub const BOOKMARK: &str = "\u{e064}";
     pub const CHEVRON_DOWN: &str = "\u{e071}";
     pub const WHITEBOARD: &str = "\u{e135}"; // pen-tool
     pub const DASHBOARD: &str = "\u{e1c1}"; // layout-dashboard
@@ -387,6 +388,17 @@ pub fn install_fonts(ctx: &egui::Context, choice: &FontChoice) -> Vec<String> {
             }
         }
     }
+    // symboles mathématiques (∀, ℝ…) : police du système, en tout dernier recours (pas pour les icônes)
+    if let Some(face) = crate::fonts::math_symbols() {
+        let mut data = FontData::from_owned(face.data);
+        data.index = face.index;
+        fonts.font_data.insert("math-symbols".into(), Arc::new(data));
+        for (family, list) in fonts.families.iter_mut() {
+            if *family != icon_family() {
+                list.push("math-symbols".into());
+            }
+        }
+    }
     ctx.set_fonts(fonts);
     missing
 }
@@ -394,6 +406,8 @@ pub fn install_fonts(ctx: &egui::Context, choice: &FontChoice) -> Vec<String> {
 /// `size` is the interface font size (the editor has its own size).
 pub fn apply(ctx: &egui::Context, dark: bool, size: f32) {
     let p = palette(dark);
+    // Mnemo choisit lui-même clair / sombre (mode « Système » compris) : egui ne bascule pas seul
+    ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
     let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
     v.panel_fill = p.bg2;
     v.window_fill = p.bg2;
@@ -497,6 +511,32 @@ pub fn icon_button_sized(
     };
     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon, FontId::new(icon_size, icon_family()), color);
     if tooltip.is_empty() { resp } else { resp.on_hover_text(tooltip) }
+}
+
+/// Interrupteur façon Obsidian (remplace les cases à cocher des paramètres) ; `changed()` au clic.
+pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
+    let p = palette(ui.visuals().dark_mode);
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(36.0, 20.0), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, ui.is_enabled(), *on, ""));
+    if ui.is_rect_visible(rect) {
+        let t = ui.ctx().animate_bool_responsive(resp.id, *on);
+        let off_bg = if resp.hovered() { p.border.gamma_multiply(1.4) } else { p.border };
+        let bg = lerp_color(off_bg, p.accent, t);
+        ui.painter().rect_filled(rect, rect.height() / 2.0, bg);
+        let r = rect.height() / 2.0 - 2.5;
+        let x = egui::lerp((rect.left() + r + 2.5)..=(rect.right() - r - 2.5), t);
+        ui.painter().circle_filled(egui::pos2(x, rect.center().y), r, Color32::WHITE);
+    }
+    resp
+}
+
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgba_unmultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
 }
 
 /// One row of the file explorer: indentation guides, chevron for folders, hover/active background.
@@ -1064,8 +1104,63 @@ fn inline(job: &mut LayoutJob, s: &str, base: &TextFormat, p: &Palette, m: &Metr
     flush(job, plain_start, s.len());
 }
 
+/// Curseur main au survol de tout ce qui est cliquable (comme Obsidian), appelé en fin de frame : le widget
+/// cliquable sous le pointeur (`hits.click`) qui n'a pas choisi lui-même un curseur (texte, redimensionnement…)
+/// le reçoit. Les grandes zones (graphe, whiteboard, fond de liste) gardent la flèche.
+pub fn pointing_hand_on_clickables(ctx: &egui::Context) {
+    if ctx.output(|o| o.cursor_icon) != egui::CursorIcon::Default || ctx.dragged_id().is_some() {
+        return;
+    }
+    let Some(hit) = ctx.viewport(|v| v.hits.click) else { return };
+    let r = hit.interact_rect;
+    if hit.enabled && hit.sense.senses_click() && r.width() * r.height() < 120_000.0 && r.height() < 200.0 {
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// Curseur obtenu en survolant `at` après deux frames (les zones cliquables viennent de la frame précédente).
+    fn cursor_over(at: egui::Pos2) -> egui::CursorIcon {
+        let ctx = egui::Context::default();
+        let mut cursor = egui::CursorIcon::Default;
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                events: vec![egui::Event::PointerMoved(at)],
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.put(
+                        egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(100.0, 24.0)),
+                        egui::Button::new("ok"),
+                    );
+                    ui.put(
+                        egui::Rect::from_min_size(egui::pos2(10.0, 60.0), egui::vec2(100.0, 24.0)),
+                        egui::Label::new("texte"),
+                    );
+                    ui.put(
+                        egui::Rect::from_min_size(egui::pos2(10.0, 110.0), egui::vec2(100.0, 24.0)),
+                        egui::Label::new("lien").selectable(false).sense(egui::Sense::click()),
+                    );
+                });
+                super::pointing_hand_on_clickables(ui.ctx());
+            });
+            cursor = out.platform_output.cursor_icon;
+            out.textures_delta.clear();
+        }
+        cursor
+    }
+
+    #[test]
+    fn hand_cursor_on_clickables_only() {
+        assert_eq!(cursor_over(egui::pos2(50.0, 22.0)), egui::CursorIcon::PointingHand);
+        assert_eq!(cursor_over(egui::pos2(50.0, 122.0)), egui::CursorIcon::PointingHand);
+        assert_ne!(cursor_over(egui::pos2(50.0, 72.0)), egui::CursorIcon::PointingHand);
+        assert_eq!(cursor_over(egui::pos2(500.0, 400.0)), egui::CursorIcon::Default);
+    }
+
     use super::*;
 
     #[test]

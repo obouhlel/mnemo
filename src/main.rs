@@ -13,6 +13,7 @@ mod graph;
 mod iconize;
 mod local;
 mod markdown;
+mod math;
 mod merge;
 mod model;
 mod plugins;

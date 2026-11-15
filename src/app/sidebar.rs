@@ -189,6 +189,39 @@ fn tree_ui(ui: &mut egui::Ui, folder: &TreeFolder, depth: usize, cx: &mut TreeCx
 }
 
 impl MnemoApp {
+    /// Liste de mentions (liées ou non) du volet de droite : note cliquable et lignes d'extrait.
+    fn mentions_section(&mut self, ui: &mut egui::Ui, title: &str, list: &[Backlink], show_empty: bool) {
+        let p = self.palette();
+        if !title.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(title).color(p.text).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(list.len().to_string()).color(p.faint).small());
+                });
+            });
+        }
+        ui.add_space(4.0);
+        if list.is_empty() && show_empty {
+            ui.label(RichText::new("Aucune mention trouvée.").color(p.faint));
+        }
+        for b in list {
+            if theme::tree_row(ui, basename(&b.path), 0, false, Some(true)).on_hover_text(&b.path).clicked() {
+                self.actions.push(UiAction::OpenId(b.id));
+            }
+            for s in &b.snippets {
+                egui::Frame::new().fill(p.bg).corner_radius(4.0).inner_margin(egui::Margin::symmetric(8, 5)).show(
+                    ui,
+                    |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.add(egui::Label::new(RichText::new(s).size(12.5).color(p.muted)).wrap());
+                    },
+                );
+                ui.add_space(3.0);
+            }
+            ui.add_space(6.0);
+        }
+    }
+
     pub(super) fn ribbon(&mut self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             // bouton de 30 px centré à 26 px du haut, comme le titre des onglets et les icônes des panneaux
@@ -246,6 +279,7 @@ impl MnemoApp {
                     (LeftTab::Files, icon::FILES_TAB, "Fichiers"),
                     (LeftTab::Search, icon::SEARCH, "Rechercher"),
                     (LeftTab::Tags, icon::TAG, "Tags"),
+                    (LeftTab::Bookmarks, icon::BOOKMARK, "Signets"),
                 ] {
                     if theme::icon_button_sized(ui, ic, tip, self.left_tab == tab, true, 16.0).clicked() {
                         self.left_tab = tab;
@@ -446,6 +480,18 @@ impl MnemoApp {
                         );
                     });
                 }
+                LeftTab::Bookmarks => {
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 6)).show(
+                            ui,
+                            |ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                let ctx = ui.ctx().clone();
+                                self.bookmarks_panel(ui, &ctx, now);
+                            },
+                        );
+                    });
+                }
                 LeftTab::Tags => {
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                         egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 6)).show(
@@ -521,34 +567,38 @@ impl MnemoApp {
                     return;
                 }
                 if self.right_tab == 0 {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mentions liées").color(p.text).strong());
+                    let linked = std::mem::take(&mut self.backlinks);
+                    self.mentions_section(ui, "Mentions liées", &linked, true);
+                    self.backlinks = linked;
+                    ui.add_space(10.0);
+                    let unlinked = std::mem::take(&mut self.unlinked);
+                    let id = ui.make_persistent_id("unlinked-mentions");
+                    let open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+                    let head = ui.horizontal(|ui| {
+                        let arrow = if open { icon::CHEVRON_DOWN } else { icon::CHEVRON_RIGHT };
+                        let a = ui.add(
+                            egui::Label::new(theme::icon_text(arrow, 12.0).color(p.faint))
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
+                        );
+                        let r = ui.add(
+                            egui::Label::new(RichText::new("Mentions non liées").color(p.text).strong())
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
+                        );
+                        let r = r.union(a);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(self.backlinks.len().to_string()).color(p.faint).small());
+                            ui.label(RichText::new(unlinked.len().to_string()).color(p.faint).small());
                         });
+                        r
                     });
-                    ui.add_space(4.0);
-                    if self.backlinks.is_empty() {
-                        ui.label(RichText::new("Aucune mention trouvée.").color(p.faint));
+                    if head.inner.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        ui.data_mut(|d| d.insert_temp(id, !open));
                     }
-                    for b in &self.backlinks {
-                        if theme::tree_row(ui, basename(&b.path), 0, false, Some(true)).on_hover_text(&b.path).clicked()
-                        {
-                            self.actions.push(UiAction::OpenId(b.id));
-                        }
-                        for s in &b.snippets {
-                            egui::Frame::new()
-                                .fill(p.bg)
-                                .corner_radius(4.0)
-                                .inner_margin(egui::Margin::symmetric(8, 5))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.add(egui::Label::new(RichText::new(s).size(12.5).color(p.muted)).wrap());
-                                });
-                            ui.add_space(3.0);
-                        }
-                        ui.add_space(6.0);
+                    if open {
+                        self.mentions_section(ui, "", &unlinked, false);
                     }
+                    self.unlinked = unlinked;
                 } else if self.right_tab == 1 {
                     self.note_tickets_panel(ui);
                 } else if let Some((name, md)) = self.plugin_panels.get(self.right_tab - 2) {

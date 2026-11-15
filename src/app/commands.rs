@@ -27,6 +27,7 @@ pub(super) enum CoreCmd {
     CloseTab,
     Dashboard,
     CollapseAll,
+    ToggleBookmark,
 }
 
 pub(super) const CORE_COMMANDS: &[(CoreCmd, &str, &str)] = &[
@@ -49,6 +50,7 @@ pub(super) const CORE_COMMANDS: &[(CoreCmd, &str, &str)] = &[
     (CoreCmd::NewTab, "Nouvel onglet", "Ctrl+T"),
     (CoreCmd::CloseTab, "Fermer l'onglet", "Ctrl+W"),
     (CoreCmd::CollapseAll, "Replier tous les dossiers", ""),
+    (CoreCmd::ToggleBookmark, "Ajouter la note aux signets / l'en retirer", ""),
     (CoreCmd::ToggleLeft, "Afficher / masquer l'explorateur", "Ctrl+Shift+L"),
     (CoreCmd::ToggleRight, "Afficher / masquer le panneau de droite", "Ctrl+Shift+R"),
 ];
@@ -64,6 +66,16 @@ impl MnemoApp {
                         self.db.send(Cmd::OpenLink(rest.to_string()));
                     } else if let Ok(id) = Uuid::parse_str(&l) {
                         self.open_id(id);
+                    } else if crate::markdown::is_attachment(&l) {
+                        // pièce jointe : ouverte si elle existe, jamais créée comme une note
+                        let from = self.open.as_ref().map(|n| n.path.clone()).unwrap_or_default();
+                        match self.find_file(&l, &from) {
+                            Some(rel) => {
+                                self.actions.push(UiAction::OpenFile(rel));
+                                ctx.request_repaint();
+                            }
+                            None => self.notice(format!("Pièce jointe introuvable : « {l} »"), true, now),
+                        }
                     } else {
                         self.flush_save();
                         self.db.send(Cmd::OpenLink(l));
@@ -212,6 +224,12 @@ impl MnemoApp {
             }
             CoreCmd::ToggleTheme => {
                 self.cfg.dark_mode = !self.cfg.dark_mode;
+                // bascule explicite : quitte le mode « Système »
+                self.cfg.theme_mode = Some(if self.cfg.dark_mode {
+                    crate::config::ThemeMode::Dark
+                } else {
+                    crate::config::ThemeMode::Light
+                });
                 self.cfg.save();
             }
             CoreCmd::NewTab => {
@@ -223,6 +241,7 @@ impl MnemoApp {
             CoreCmd::CloseTab => self.close_tab(self.active_tab),
             CoreCmd::Dashboard => self.open_dashboard(None),
             CoreCmd::CollapseAll => self.expanded.clear(),
+            CoreCmd::ToggleBookmark => self.toggle_bookmark(now),
             CoreCmd::ToggleLeft => {
                 self.cfg.show_left = !self.left_visible(ctx);
                 self.cfg.save();

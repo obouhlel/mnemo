@@ -1,17 +1,13 @@
 //! Dossier du coffre sur le disque (Obsidian) : liaison (la synchronisation périodique tourne dans le
 //! worker, voir `db::Worker::run`), affichage du dernier passage, onglet des paramètres, et import de fichiers / dossiers déposés depuis le système.
 
+use super::settings::{PickTarget, path_label, setting_row, settings_note};
 use super::*;
 use crate::db::VaultStats;
 use std::path::PathBuf;
 
-/// `~/x` → dossier personnel ; accepte aussi le dossier `.obsidian` (on remonte au coffre).
-pub(super) fn expand_dir(raw: &str) -> PathBuf {
-    let raw = raw.trim();
-    let p = match raw.strip_prefix("~/") {
-        Some(rest) => directories::BaseDirs::new().map(|b| b.home_dir().join(rest)).unwrap_or_else(|| raw.into()),
-        None => PathBuf::from(raw),
-    };
+/// Le dossier choisi : `.obsidian` désigne son coffre (on remonte d'un niveau).
+pub(super) fn notes_dir_of(p: PathBuf) -> PathBuf {
     if p.file_name().is_some_and(|n| n == ".obsidian")
         && let Some(parent) = p.parent()
     {
@@ -50,14 +46,16 @@ impl MnemoApp {
             self.notice(format!("Dossier introuvable : {}", dir.display()), true, now);
             return;
         }
-        // un coffre Obsidian : ses thèmes / snippets et ses icônes Iconize sont repris
-        if self.cfg.obsidian_dir.is_none() && dir.join(".obsidian").is_dir() {
+        let was_vault = self.vault_obsidian_dir().is_some();
+        let is_vault = dir.join(".obsidian").is_dir();
+        // un coffre Obsidian : ses thèmes / snippets, ses réglages et ses icônes Iconize sont repris
+        if is_vault {
             self.cfg.obsidian_dir = Some(dir.join(".obsidian"));
-            self.css.obsidian_input = dir.join(".obsidian").display().to_string();
+        }
+        self.cfg.vault_dir = Some(dir.clone());
+        if was_vault || is_vault {
             self.reload_css();
         }
-        self.vault_input = dir.display().to_string();
-        self.cfg.vault_dir = Some(dir.clone());
         self.vault_last = None;
         self.cfg.save();
         self.leave_note();
@@ -80,44 +78,31 @@ impl MnemoApp {
     }
 
     pub(super) fn vault_settings(&mut self, ui: &mut egui::Ui, now: f64) {
-        let p = self.palette();
-        ui.add(
-            egui::Label::new(
-                RichText::new(
-                    "Vos notes sont des fichiers Markdown (.md) dans ce dossier : Mnemo fonctionne sans base de données. \
-                     Choisissez le dossier d'un coffre Obsidian pour retrouver toutes vos notes ; les changements faits \
-                     par Obsidian ou un autre éditeur apparaissent dans Mnemo en une seconde. Les icônes et réglages \
-                     de Mnemo sont rangés dans le sous-dossier .mnemo.",
-                )
-                .size(12.5)
-                .color(p.muted),
-            )
-            .wrap(),
-        );
-        ui.add_space(14.0);
-        let mut input = self.vault_input.clone();
-        let mut change = false;
-        settings_row(
+        settings_note(
             ui,
-            &p,
+            "Vos notes sont des fichiers Markdown (.md) dans ce dossier : Mnemo fonctionne sans base de données. \
+             Choisissez le dossier d'un coffre Obsidian pour retrouver toutes vos notes ; les changements faits \
+             par Obsidian ou un autre éditeur apparaissent dans Mnemo en une seconde. Les icônes et réglages \
+             de Mnemo sont rangés dans le sous-dossier .mnemo.",
+        );
+        let mut browse = false;
+        let current = self.cfg.vault_dir.clone();
+        let busy = self.folder_pick.is_some();
+        setting_row(
+            ui,
             "Dossier des notes",
-            "Un dossier de fichiers .md (par exemple un coffre Obsidian).",
+            "Un dossier de fichiers .md, par exemple un coffre Obsidian. Le changement s'applique tout de suite.",
             |ui| {
-                if ui.button("Changer").clicked() {
-                    change = true;
+                if ui.add_enabled(!busy, egui::Button::new("Parcourir…")).clicked() {
+                    browse = true;
                 }
-                let r = ui.add(egui::TextEdit::singleline(&mut input).hint_text("~/MonCoffre").desired_width(240.0));
-                if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                    change = true;
+                if let Some(dir) = &current {
+                    path_label(ui, dir);
                 }
             },
         );
-        self.vault_input = input;
-        if change && !self.vault_input.trim().is_empty() {
-            let dir = expand_dir(&self.vault_input);
-            if Some(&dir) != self.cfg.vault_dir.as_ref() {
-                self.set_notes_dir(dir, now);
-            }
+        if browse {
+            self.pick_folder(ui.ctx(), PickTarget::Notes, current);
         }
         let state = match (&self.conn, &self.vault_last) {
             (ConnState::Connected, Some((s, at))) => {
@@ -126,22 +111,22 @@ impl MnemoApp {
             (ConnState::Connected, None) => "Première synchronisation avec la base en cours…".into(),
             _ if self.cfg.database_url.trim().is_empty() => {
                 "Local uniquement. Pour retrouver vos notes sur plusieurs appareils, connectez une base PostgreSQL \
-                 dans « Base de données »."
+                 dans « Synchronisation »."
                     .into()
             }
             _ => "Base injoignable : tout est gardé en local et sera synchronisé au retour de la connexion.".into(),
         };
         let mut rescan = false;
         let mut iconize = false;
-        settings_row(ui, &p, "Synchronisation", &state, |ui| {
-            if self.conn == ConnState::Connected && ui.button("Synchroniser maintenant").clicked() {
+        let connected = self.conn == ConnState::Connected;
+        setting_row(ui, "Synchronisation", &state, |ui| {
+            if connected && ui.button("Synchroniser maintenant").clicked() {
                 rescan = true;
             }
         });
         if let Some(dir) = self.cfg.vault_dir.clone() {
-            settings_row(
+            setting_row(
                 ui,
-                &p,
                 "Icônes",
                 "Reprend les icônes de dossiers et de notes réglées avec le plugin Iconize d'Obsidian.",
                 |ui| {
@@ -157,17 +142,21 @@ impl MnemoApp {
         if rescan {
             self.db.send(Cmd::VaultScan);
         }
-        ui.add(
-            egui::Label::new(
-                RichText::new(
-                    "Les notes supprimées vont dans le dossier .trash. Les pièces jointes (images, PDF…) restent \
-                     sur le disque.",
-                )
-                .size(12.5)
-                .color(p.faint),
-            )
-            .wrap(),
+        settings_note(
+            ui,
+            "Les notes supprimées vont dans le dossier .trash. Les pièces jointes (images, PDF…) restent sur le disque.",
         );
+    }
+
+    /// Dossier .obsidian du dossier des notes, si c'est un coffre Obsidian.
+    pub(super) fn vault_obsidian_dir(&self) -> Option<PathBuf> {
+        self.cfg.vault_dir.as_ref().map(|d| d.join(".obsidian")).filter(|d| d.is_dir())
+    }
+
+    /// Dossier .obsidian dont l'apparence est reprise : celui du coffre ouvert, sinon celui choisi
+    /// dans les options avancées.
+    pub(super) fn obsidian_dir(&self) -> Option<PathBuf> {
+        self.vault_obsidian_dir().or_else(|| self.cfg.obsidian_dir.clone())
     }
 
     /// Dossier des notes par défaut (premier lancement) : ~/Documents/Mnemo.
@@ -234,28 +223,4 @@ impl MnemoApp {
         }
         self.notice(msg, skipped > 0 && count == 0, now);
     }
-}
-
-/// Une ligne de réglage : titre et description à gauche, contrôles alignés à droite, séparateur.
-pub(super) fn settings_row(
-    ui: &mut egui::Ui,
-    p: &theme::Palette,
-    title: &str,
-    desc: &str,
-    add: impl FnOnce(&mut egui::Ui),
-) {
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width((ui.available_width() - 280.0).max(200.0));
-            ui.label(RichText::new(title).color(p.text));
-            if !desc.is_empty() {
-                ui.add(egui::Label::new(RichText::new(desc).size(12.5).color(p.muted)).wrap());
-            }
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add);
-    });
-    ui.add_space(8.0);
-    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-    ui.painter().hline(r.x_range(), r.center().y, egui::Stroke::new(1.0, p.border));
-    ui.add_space(10.0);
 }

@@ -1,5 +1,6 @@
 mod appearance;
 mod attachments;
+mod bookmarks;
 mod commands;
 mod conflict;
 mod dashboard;
@@ -58,6 +59,8 @@ pub struct MnemoApp {
     search_results: Vec<SearchHit>,
     tags: Vec<(String, i64)>,
     backlinks: Vec<Backlink>,
+    /// mentions non liées de la note ouverte (volet des rétroliens)
+    unlinked: Vec<Backlink>,
 
     md_cache: CommonMarkCache,
     content_gen: u64,
@@ -100,7 +103,8 @@ pub struct MnemoApp {
     board: Board,
     dash: dashboard::DashState,
     github_input: String,
-    vault_input: String,
+    /// sélecteur de dossier natif ouvert depuis les paramètres (résultat attendu)
+    folder_pick: Option<settings::FolderPick>,
     /// icônes de l'explorateur : chemin en minuscules → icône Lucide ou emoji
     icons: HashMap<String, String>,
     /// jeux d'icônes Iconize installés dans le coffre (`.obsidian/icons`)
@@ -116,6 +120,16 @@ pub struct MnemoApp {
     sketch_cache: HashMap<String, (Option<std::time::SystemTime>, crate::sketch::Sketch)>,
     /// image ouverte depuis l'explorateur
     image_view: Option<String>,
+    /// signets lus sur le disque : (fichier, date de modification, contenu)
+    bookmarks: Option<(std::path::PathBuf, Option<std::time::SystemTime>, serde_json::Value)>,
+    /// coffre dont les plugins cœur ont déjà été repris (`core-plugins.json`)
+    core_plugins_checked: Option<std::path::PathBuf>,
+    /// diagrammes Mermaid déjà rendus : empreinte du bloc → adresse de l'image (`None` : non pris en charge)
+    diagrams: std::collections::HashMap<u64, Option<String>>,
+    /// types des propriétés (`.obsidian/types.json`) : (dossier lu, propriété → type)
+    prop_types: Option<(Option<std::path::PathBuf>, std::collections::HashMap<String, String>)>,
+    /// nom de la propriété en cours d'ajout dans le volet « Propriétés »
+    new_prop: Option<String>,
     /// une pièce jointe a changé : oublier les images en cache
     forget_images: bool,
     /// donne le focus à cet éditeur à la prochaine frame (note qui vient d'être créée)
@@ -189,6 +203,7 @@ impl MnemoApp {
             search_results: vec![],
             tags: vec![],
             backlinks: vec![],
+            unlinked: vec![],
             md_cache: CommonMarkCache::default(),
             content_gen: 0,
             preview_gen: u64::MAX,
@@ -226,13 +241,18 @@ impl MnemoApp {
             board: Board::default(),
             dash: dashboard::DashState::default(),
             github_input: String::new(),
-            vault_input: String::new(),
+            folder_pick: None,
             icons: HashMap::new(),
             iconize: Default::default(),
             icons_checked: false,
             icon_pick: None,
             files: vec![],
             image_view: None,
+            bookmarks: None,
+            core_plugins_checked: None,
+            diagrams: Default::default(),
+            prop_types: None,
+            new_prop: None,
             boards: HashMap::new(),
             sketch_cache: HashMap::new(),
             forget_images: false,
@@ -251,8 +271,6 @@ impl MnemoApp {
         if let Some(e) = app.cfg.load_error.take() {
             app.notices.push((e, 20.0, true));
         }
-        app.css.obsidian_input = app.cfg.obsidian_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
-        app.vault_input = app.cfg.vault_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         app.install_example_snippet();
         app.reload_css();
         // le dossier des notes est la référence : Mnemo fonctionne sans base de données
@@ -262,7 +280,6 @@ impl MnemoApp {
             app.cfg.vault_dir = Some(dir.clone());
             app.cfg.save();
         }
-        app.vault_input = dir.display().to_string();
         app.db.send(Cmd::SetRoot(dir.clone()));
         // le worker connaît le dossier dès le départ : la synchro ne dépend pas de l'affichage
         // (une fenêtre cachée ou réduite ne traite pas ses messages)
@@ -288,6 +305,8 @@ impl MnemoApp {
             return;
         }
         self.theme_applied = Some(key);
+        // l'aperçu est refait (diagrammes Mermaid aux couleurs du nouveau thème)
+        self.preview_gen = u64::MAX;
         if self.css.fonts_installed.as_ref() != Some(&self.css.fonts) {
             let missing = theme::install_fonts(ctx, &self.css.fonts);
             for f in missing {
@@ -361,6 +380,7 @@ impl eframe::App for MnemoApp {
         let now = ctx.input(|i| i.time);
         self.now = now;
         self.watch_css(&ctx, now);
+        self.sync_theme_mode(&ctx);
         self.apply_theme(&ctx);
         self.handle_messages(now);
         self.apply_plugin_actions(&ctx, now);
@@ -431,6 +451,9 @@ impl eframe::App for MnemoApp {
         self.image_viewer(&ctx);
         if std::mem::take(&mut self.forget_images) {
             ctx.forget_all_images();
+            // les diagrammes Mermaid (`bytes://`) sont oubliés aussi : rendus de nouveau
+            self.diagrams.clear();
+            self.preview_gen = u64::MAX;
         }
         self.notices_ui(&ctx, now);
 
@@ -477,6 +500,7 @@ impl eframe::App for MnemoApp {
             }
         }
         self.process_actions(&ctx, now);
+        theme::pointing_hand_on_clickables(&ctx);
         self.apply_plugin_actions(&ctx, now);
     }
 
