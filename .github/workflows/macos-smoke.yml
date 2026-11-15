@@ -10,7 +10,7 @@ jobs:
   smoke:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Compilation (Mnemo.app universelle + .dmg)
         run: make macos
@@ -42,6 +42,6 @@ jobs:
           $(brew --prefix postgresql@16)/bin/psql -h localhost -d vault -Atc "select path from notes" | tee smoke/notes.txt
           grep -q Bienvenue smoke/notes.txt
           kill $PID
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: mnemo-macos-smoke, path: smoke/ }

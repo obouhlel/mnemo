@@ -17,7 +17,7 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt, clippy" }
       - run: make check
@@ -26,12 +26,12 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Outils de compilation croisée (zig pour glibc 2.28)
         run: pip install ziglang && make setup
       - run: make linux deb
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: mnemo-linux, path: dist/* }
 
   # Paquet Arch Linux (.pkg.tar.zst), construit dans un conteneur Arch avec le PKGBUILD du dépôt.
@@ -41,35 +41,35 @@ jobs:
     container: archlinux:base-devel
     steps:
       - run: pacman -Syu --noconfirm git rust libx11 libxkbcommon-x11 libglvnd wayland libxcursor libxrandr libxi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Paquet (makepkg refuse de tourner en root)
         run: |
           useradd -m build
           chown -R build .
           su build -c "make arch"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: mnemo-arch, path: dist/*.pkg.tar.zst }
 
   windows:
     needs: check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Outils de compilation croisée (MinGW)
         run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 && make setup
       - run: make windows
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: mnemo-windows, path: dist/mnemo.exe }
 
   macos:
     needs: check
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: make macos
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: mnemo-macos, path: dist/Mnemo-macos.dmg }
 
   # Appli Android (Android 8.0 et plus). Signée avec la clé des secrets MNEMO_KEYSTORE_BASE64 /
@@ -79,8 +79,8 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "17" }
       - name: APK
         working-directory: android
@@ -96,7 +96,7 @@ jobs:
           fi
           ./gradlew --no-daemon assembleRelease
           mkdir -p ../dist && cp app/build/outputs/apk/release/app-release.apk ../dist/mnemo-android.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: mnemo-android, path: dist/mnemo-android.apk }
 
   # Sur un tag v* : page Releases publique avec les fichiers à télécharger directement.
@@ -107,7 +107,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { path: dist, merge-multiple: true }
       - name: Fichiers prêts à lancer (binaire Linux seul, .exe nommé)
         run: |

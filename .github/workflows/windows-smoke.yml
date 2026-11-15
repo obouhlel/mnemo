@@ -11,19 +11,19 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Outils de compilation croisée (MinGW)
         run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 && rustup target add x86_64-pc-windows-gnu
       - run: make windows
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: mnemo-exe, path: dist/mnemo.exe }
 
   smoke:
     needs: build
     runs-on: windows-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: mnemo-exe }
       - name: PostgreSQL (préinstallé sur le runner)
         shell: pwsh
@@ -59,6 +59,6 @@ jobs:
           Write-Host "Notes : $notes"
           Stop-Process -Id $p.Id
           if (-not ($notes -match "Bienvenue")) { Write-Host "Note de bienvenue absente"; exit 1 }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: mnemo-windows-smoke, path: smoke/ }

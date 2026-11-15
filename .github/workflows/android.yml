@@ -22,8 +22,8 @@ jobs:
     defaults:
       run: { working-directory: android }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "17" }
       - name: Tests (logique, synchro réelle, captures d'écran) et APK
         env:
@@ -34,14 +34,14 @@ jobs:
           if unzip -p app/build/outputs/apk/release/*.apk 'classes*.dex' | grep -aq "Ljava/lang/management"; then
             echo "L'APK référence java.lang.management (absent d'Android)"; exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-tests
           path: |
             android/app/build/screens/
             android/app/build/reports/tests/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: mnemo-android-apk, path: android/app/build/outputs/apk/release/app-release.apk }
 
   device:
@@ -53,8 +53,8 @@ jobs:
         ports: ["5432:5432"]
         options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "17" }
       - name: Base de test (schéma de Mnemo, une note avec image)
         env: { PGPASSWORD: postgres }
@@ -109,6 +109,6 @@ jobs:
             sleep 8
             adb exec-out screencap -p > device/release.png
             adb shell pidof dev.mnemo.app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: android-device, path: device/ }
