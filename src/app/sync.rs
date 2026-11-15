@@ -201,9 +201,10 @@ impl MnemoApp {
                         self.search_results = hits;
                     }
                 }
-                Msg::Backlinks { id, links } => {
+                Msg::Backlinks { id, links, unlinked } => {
                     if self.open.as_ref().is_some_and(|n| n.id == id) {
                         self.backlinks = links;
+                        self.unlinked = unlinked;
                     }
                 }
                 Msg::Tags(t) => self.tags = t,

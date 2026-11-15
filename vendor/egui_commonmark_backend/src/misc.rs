@@ -504,10 +504,19 @@ impl Image {
             alt_src_spans,
         } = self;
 
+        // Mnemo : largeur demandée par `![[image.png|300]]`, passée dans le fragment `#mnemo-w=300`
+        let (uri, width) = match uri.rsplit_once("#mnemo-w=") {
+            Some((u, w)) => (u.to_owned(), w.parse::<f32>().ok()),
+            None => (uri, None),
+        };
+        let max_width = match width {
+            Some(w) => w.min(options.max_width(ui)),
+            None => options.max_width(ui),
+        };
         let response = ui.add(
             egui::Image::from_uri(&uri)
                 .fit_to_original_size(1.0)
-                .max_width(options.max_width(ui)),
+                .max_width(max_width),
         );
         // Save the rect now; `on_hover_ui_at_pointer` consumes `response`.
         let rect = response.rect;

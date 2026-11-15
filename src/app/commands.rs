@@ -64,6 +64,16 @@ impl MnemoApp {
                         self.db.send(Cmd::OpenLink(rest.to_string()));
                     } else if let Ok(id) = Uuid::parse_str(&l) {
                         self.open_id(id);
+                    } else if crate::markdown::is_attachment(&l) {
+                        // pièce jointe : ouverte si elle existe, jamais créée comme une note
+                        let from = self.open.as_ref().map(|n| n.path.clone()).unwrap_or_default();
+                        match self.find_file(&l, &from) {
+                            Some(rel) => {
+                                self.actions.push(UiAction::OpenFile(rel));
+                                ctx.request_repaint();
+                            }
+                            None => self.notice(format!("Pièce jointe introuvable : « {l} »"), true, now),
+                        }
                     } else {
                         self.flush_save();
                         self.db.send(Cmd::OpenLink(l));

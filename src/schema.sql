@@ -129,6 +129,30 @@ END $$ LANGUAGE plpgsql;
 SELECT mnemo_ensure_trigger('notes', 'notes_before_write',
   'BEFORE INSERT OR UPDATE ON notes FOR EACH ROW EXECUTE FUNCTION notes_before_write()');
 
+-- Texte d'une note sans son code (blocs ``` / ~~~ et `code en ligne`) : un [[lien]] écrit dans du code n'en est pas un.
+CREATE OR REPLACE FUNCTION mnemo_strip_code(src text) RETURNS text AS $$
+DECLARE
+  line text;
+  fence text := NULL;
+  mark text;
+  out text := '';
+BEGIN
+  FOREACH line IN ARRAY string_to_array(coalesce(src, ''), E'\n') LOOP
+    mark := substring(line FROM '^ {0,3}(`{3,}|~{3,})');
+    IF fence IS NOT NULL THEN
+      IF mark IS NOT NULL AND left(mark, 1) = left(fence, 1) AND length(mark) >= length(fence)
+         AND btrim(substring(line FROM '^ {0,3}[`~]+(.*)$')) = '' THEN
+        fence := NULL;
+      END IF;
+    ELSIF mark IS NOT NULL AND NOT (left(mark, 1) = '`' AND substring(line FROM '^ {0,3}`+(.*)$') LIKE '%`%') THEN
+      fence := mark;
+    ELSE
+      out := out || regexp_replace(line, '(`+)[^`]*?\1', '', 'g') || E'\n';
+    END IF;
+  END LOOP;
+  RETURN out;
+END $$ LANGUAGE plpgsql IMMUTABLE;
+
 -- AFTER trigger: refresh links + broadcast through NOTIFY
 CREATE OR REPLACE FUNCTION notes_after_write() RETURNS trigger AS $$
 DECLARE
@@ -140,13 +164,18 @@ BEGIN
   ELSE
     IF TG_OP = 'INSERT' OR NEW.content IS DISTINCT FROM OLD.content THEN
       DELETE FROM links WHERE source_id = NEW.id;
+      -- même règle que l'index local (src/local/index.rs) : rien dans le code, pas de pièce jointe ;
+      -- [[wikiliens]] et liens Markdown internes [texte](Note.md)
       INSERT INTO links (source_id, target)
         SELECT DISTINCT NEW.id, t
         FROM (
           SELECT btrim(split_part(split_part(m[1], '|', 1), '#', 1)) AS t
-          FROM regexp_matches(NEW.content, '\[\[([^\]\n]+)\]\]', 'g') AS m
+          FROM regexp_matches(mnemo_strip_code(NEW.content), '\[\[([^\]\n]+)\]\]', 'g') AS m
+          UNION
+          SELECT regexp_replace(replace(m[1], '%20', ' '), '\.md$', '', 'i') AS t
+          FROM regexp_matches(mnemo_strip_code(NEW.content), '(?<![!\[])\[[^\]\n]*\]\(<?([^)>#\n:]+\.md)(#[^)>\n]*)?>?\)', 'gi') AS m
         ) s
-        WHERE t <> '';
+        WHERE t <> '' AND t !~* '\.(png|jpe?g|gif|webp|bmp|svg|avif|pdf|mp3|wav|ogg|m4a|webm|mp4|mov|mmd|canvas|mnemo-board)$';
     END IF;
     payload := json_build_object(
       'kind', 'note', 'op', lower(TG_OP), 'id', NEW.id, 'path', NEW.path,

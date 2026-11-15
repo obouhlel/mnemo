@@ -46,6 +46,7 @@ impl MnemoApp {
         self.cfg.save();
         self.db.send(Cmd::Backlinks(note.id));
         self.backlinks.clear();
+        self.unlinked.clear();
         self.autocomplete = None;
         self.open = Some(OpenNote {
             id: note.id,

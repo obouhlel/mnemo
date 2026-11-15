@@ -87,11 +87,18 @@ impl MnemoApp {
             if fence || active.is_some_and(|(a, b)| no >= a && no <= b) {
                 continue;
             }
+            // largeur demandée : `![[image.png|300]]` ou `![légende|300](image.png)`
+            let width: Option<f32>;
             let target = if let Some(inner) = t.strip_prefix("![[").and_then(|r| r.strip_suffix("]]")) {
-                inner.split('|').next().unwrap_or("").trim().to_string()
+                let (file, spec) = inner.split_once('|').unwrap_or((inner, ""));
+                width = spec.split('x').next().and_then(|w| w.trim().parse().ok());
+                file.trim().to_string()
             } else if t.starts_with("![") && t.ends_with(')') && !t[2..].contains("![") {
                 match t.find("](") {
-                    Some(i) => t[i + 2..t.len() - 1].trim().trim_matches(['<', '>']).replace("%20", " "),
+                    Some(i) => {
+                        width = t[2..i].rsplit_once('|').and_then(|(_, w)| w.trim().parse().ok());
+                        t[i + 2..t.len() - 1].trim().trim_matches(['<', '>']).replace("%20", " ")
+                    }
                     None => continue,
                 }
             } else {
@@ -115,7 +122,7 @@ impl MnemoApp {
                     out.insert(no, (format!("board:{rel}"), egui::vec2(max_w.min(640.0), h)));
                     continue;
                 }
-                None => continue,
+                Some(markdown::Embed::File(_)) | None => continue,
             };
             let placeholder = egui::vec2(max_w.min(400.0), 160.0);
             let size = match ui.ctx().try_load_texture(&uri, egui::TextureOptions::default(), egui::SizeHint::default())
@@ -129,7 +136,10 @@ impl MnemoApp {
                 // image illisible ou absente : rien à attendre (elle sera réessayée quand les fichiers changent)
                 Err(_) => placeholder,
             };
-            let scale = (max_w / size.x).min(1.0).min(600.0 / size.y.max(1.0));
+            let scale = match width.filter(|w: &f32| *w >= 1.0) {
+                Some(w) => (w.min(max_w) / size.x).min(1.0),
+                None => (max_w / size.x).min(1.0).min(600.0 / size.y.max(1.0)),
+            };
             out.insert(no, (uri, size * scale));
         }
         out
@@ -273,7 +283,10 @@ impl MnemoApp {
         if self.preview_gen != self.content_gen && self.cfg.view_mode != ViewMode::Edit {
             let (id, path, content) = self.note_ctx().unwrap();
             let pre = self.plugins.preprocess(content.clone(), Some(&NoteCtx { id, path: &path, content: &content }));
-            self.preview_src = markdown::preprocess_with(&pre, &|t| self.resolve_embed(t, &path));
+            let paths: Vec<&str> = self.notes.iter().map(|n| n.path.as_str()).collect();
+            self.preview_src = markdown::preprocess_links(&pre, &|t| self.resolve_embed(t, &path), &|raw| {
+                crate::local::index::md_link_path(&paths, &path, raw)
+            });
             self.preview_gen = self.content_gen;
         }
 

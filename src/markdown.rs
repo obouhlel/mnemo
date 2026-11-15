@@ -12,6 +12,8 @@ pub enum Embed {
     Image(String),
     /// whiteboard : chemin relatif du fichier `.mnemo-board`
     Board(String),
+    /// autre fichier (PDF, son…) : adresse ouverte avec l'application du système
+    File(String),
 }
 
 /// Extensions d'images affichées dans les notes.
@@ -21,7 +23,62 @@ pub fn is_image(path: &str) -> bool {
     path.rsplit_once('.').is_some_and(|(_, e)| IMAGE_EXTS.contains(&e.to_lowercase().as_str()))
 }
 
+/// Extensions des pièces jointes (fichiers qui ne sont pas des notes) reconnues dans les liens : `[[x.pdf]]`
+/// ou `![[x.png]]` désigne un fichier, jamais une note à créer, et n'est pas compté comme lien cassé.
+pub const FILE_EXTS: &[&str] = &[
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+    "svg",
+    "avif",
+    "ico",
+    "tif",
+    "tiff",
+    "pdf",
+    "mp3",
+    "wav",
+    "ogg",
+    "m4a",
+    "flac",
+    "webm",
+    "mp4",
+    "mov",
+    "mkv",
+    "ogv",
+    "3gp",
+    "zip",
+    "mmd",
+    "canvas",
+    "mnemo-board",
+    "excalidraw",
+    "csv",
+    "xlsx",
+    "docx",
+    "pptx",
+    "odt",
+    "txt",
+    "json",
+    "html",
+];
+
+/// Vrai si la cible d'un lien désigne une pièce jointe (voir `FILE_EXTS`), pas une note.
+pub fn is_attachment(target: &str) -> bool {
+    let name = target.rsplit('/').next().unwrap_or(target);
+    name.rsplit_once('.').is_some_and(|(stem, e)| !stem.is_empty() && FILE_EXTS.contains(&e.to_lowercase().as_str()))
+}
+
+/// Largeur demandée par `![[image.png|300]]` ou `![[image.png|300x200]]` (Obsidian) : la partie après `|`.
+fn embed_width(spec: &str) -> Option<u32> {
+    let w = spec.trim().split('x').next()?.trim();
+    w.parse::<u32>().ok().filter(|w| (1..=10_000).contains(w))
+}
+
 pub type Resolver<'a> = &'a dyn Fn(&str) -> Option<Embed>;
+/// Lien Markdown interne `[texte](Dossier/Note.md)` (cible brute) → chemin de la note à ouvrir.
+pub type LinkResolver<'a> = &'a dyn Fn(&str) -> Option<String>;
 
 fn encode(s: &str) -> String {
     s.replace('%', "%25").replace('<', "%3C").replace('>', "%3E")
@@ -58,6 +115,12 @@ pub fn preprocess(src: &str) -> String {
 /// Comme `preprocess`, et les fichiers intégrés (`![[image.png]]`, `![](dossier/image.png)`,
 /// `![[croquis.mnemo-board]]`) sont résolus par `resolve` : images affichées, whiteboards en lien.
 pub fn preprocess_with(src: &str, resolve: Resolver) -> String {
+    preprocess_links(src, resolve, &|_| None)
+}
+
+/// Comme `preprocess_with`, et les liens Markdown internes (`[texte](Dossier/Note.md)`) que `notes` résout
+/// deviennent des liens `mnemo:` vers la note, au lieu d'adresses que le système ne saurait pas ouvrir.
+pub fn preprocess_links(src: &str, resolve: Resolver, notes: LinkResolver) -> String {
     let mut out = String::with_capacity(src.len() + 64);
     let mut fence = Fence::default();
     for line in src.split_inclusive('\n') {
@@ -66,7 +129,7 @@ pub fn preprocess_with(src: &str, resolve: Resolver) -> String {
             out.push_str(line);
             continue;
         }
-        transform_line(line, &mut out, resolve);
+        transform_line(line, &mut out, resolve, notes);
     }
     out
 }
@@ -128,16 +191,26 @@ fn tag_len(rest: &str) -> usize {
     if rest[..len].chars().all(|c| c.is_ascii_digit()) { 0 } else { len }
 }
 
-/// `![[cible]]` ou `![](cible)` d'un fichier : image Markdown ou lien vers le whiteboard.
-fn embed_markdown(target: &str, label: &str, resolve: Resolver) -> Option<String> {
+/// `![[cible]]` ou `![](cible)` d'un fichier : image Markdown ou lien vers le whiteboard. Une largeur
+/// (`|300`) est passée au rendu dans le fragment de l'adresse (`#mnemo-w=300`, retiré avant le chargement).
+fn embed_markdown(target: &str, label: &str, width: Option<u32>, resolve: Resolver) -> Option<String> {
     let label = label.replace('[', "\\[").replace(']', "\\]");
     match resolve(target)? {
-        Embed::Image(uri) => Some(format!("![{label}](<{}>)", encode(&uri))),
+        Embed::Image(uri) => {
+            let w = width.map(|w| format!("#mnemo-w={w}")).unwrap_or_default();
+            Some(format!("![{label}](<{}{w}>)", encode(&uri)))
+        }
         Embed::Board(rel) => Some(format!("[🖊 {label}](<{BOARD_SCHEME}{}>)", encode(&rel))),
+        Embed::File(uri) => Some(format!("[📎 {label}](<{}>)", encode(&uri))),
     }
 }
 
-fn transform_line(line: &str, out: &mut String, resolve: Resolver) {
+/// Pièce jointe introuvable : texte barré, sans lien (un clic ne doit pas créer une note « x.png »).
+fn missing_file(target: &str) -> String {
+    format!("~~{}~~ *(introuvable)*", target.replace('[', "\\[").replace(']', "\\]").replace('~', "\\~"))
+}
+
+fn transform_line(line: &str, out: &mut String, resolve: Resolver, notes: LinkResolver) {
     let bytes = line.as_bytes();
     let mut i = 0;
     let mut last = 0;
@@ -156,12 +229,33 @@ fn transform_line(line: &str, out: &mut String, resolve: Resolver) {
                         let start = if embed { i - 1 } else { i };
                         out.push_str(&line[last..start]);
                         let (target, display) = parse_wikilink(inner);
-                        // ![[image.png|300]] : la partie après | est une taille (ignorée), pas un libellé
-                        if embed
-                            && let Some(md) =
-                                embed_markdown(inner.split('|').next().unwrap_or("").trim(), &target, resolve)
-                        {
+                        // ![[image.png|300]] : la partie après | est une largeur, pas un libellé
+                        let (file, spec) = inner.split_once('|').unwrap_or((inner, ""));
+                        if embed && let Some(md) = embed_markdown(file.trim(), &target, embed_width(spec), resolve) {
                             out.push_str(&md);
+                            i += 2 + end + 2;
+                            last = i;
+                            continue;
+                        }
+                        if embed && is_attachment(&target) {
+                            out.push_str(&missing_file(&target));
+                            i += 2 + end + 2;
+                            last = i;
+                            continue;
+                        }
+                        if is_attachment(&target) {
+                            // [[document.pdf]] : ouvert avec l'application du système s'il existe
+                            match resolve(&target) {
+                                Some(Embed::Image(uri) | Embed::File(uri)) => out.push_str(&format!(
+                                    "[{}](<{}>)",
+                                    display.replace('[', "\\[").replace(']', "\\]"),
+                                    encode(&uri)
+                                )),
+                                Some(Embed::Board(rel)) => {
+                                    out.push_str(&format!("[🖊 {display}](<{BOARD_SCHEME}{}>)", encode(&rel)))
+                                }
+                                None => out.push_str(&missing_file(&target)),
+                            }
                             i += 2 + end + 2;
                             last = i;
                             continue;
@@ -179,6 +273,23 @@ fn transform_line(line: &str, out: &mut String, resolve: Resolver) {
                 }
                 i += 1;
             }
+            // [texte](Dossier/Note.md) : lien Markdown interne vers une note
+            b'[' if (i == 0 || bytes[i - 1] != b'!') && bytes.get(i + 1) != Some(&b'[') => {
+                let rest = &line[i + 1..];
+                if let Some(close) = rest.find("](")
+                    && !rest[..close].contains(['[', ']'])
+                    && let Some(end) = rest[close + 2..].find(')')
+                    && let raw = rest[close + 2..close + 2 + end].trim()
+                    && let Some(path) = notes(raw.trim_start_matches('<').trim_end_matches('>'))
+                {
+                    out.push_str(&line[last..i]);
+                    out.push_str(&format!("[{}](<{NOTE_SCHEME}{}>)", &rest[..close], encode(&path)));
+                    i += 1 + close + 2 + end + 1;
+                    last = i;
+                    continue;
+                }
+                i += 1;
+            }
             // ![texte](chemin/relatif.png) : chemin du dossier des notes → adresse du fichier
             b'!' if bytes.get(i + 1) == Some(&b'[') && bytes.get(i + 2) != Some(&b'[') => {
                 let rest = &line[i + 2..];
@@ -188,7 +299,12 @@ fn transform_line(line: &str, out: &mut String, resolve: Resolver) {
                         let raw = after[..end].trim().trim_start_matches('<').trim_end_matches('>');
                         let target = raw.replace("%20", " ");
                         let external = raw.contains("://") || raw.starts_with("data:");
-                        if !external && let Some(md) = embed_markdown(&target, &rest[..close], resolve) {
+                        // ![légende|300](image.png) : largeur après | dans le texte, comme Obsidian
+                        let (label, width) = match rest[..close].rsplit_once('|') {
+                            Some((l, w)) if embed_width(w).is_some() => (l, embed_width(w)),
+                            _ => (&rest[..close], None),
+                        };
+                        if !external && let Some(md) = embed_markdown(&target, label, width, resolve) {
                             out.push_str(&line[last..i]);
                             out.push_str(&md);
                             i += 2 + close + 2 + end + 1;
@@ -310,6 +426,24 @@ pub fn frontmatter(src: &str) -> Option<(Vec<Property>, usize)> {
     None // pas de fin : ce n'est pas un frontmatter
 }
 
+/// Valeurs des propriétés `keys` du frontmatter (`tags`, `aliases`…), listes ou texte simple. Une valeur simple
+/// peut en contenir plusieurs, séparées par des virgules (`tags: a, b`, accepté par Obsidian).
+pub fn frontmatter_values(src: &str, keys: &[&str]) -> Vec<String> {
+    let Some((props, _)) = frontmatter(src) else { return vec![] };
+    let mut out: Vec<String> = vec![];
+    for p in props.iter().filter(|p| keys.iter().any(|k| p.key.eq_ignore_ascii_case(k))) {
+        for v in &p.values {
+            let parts: Vec<&str> = if p.list { vec![v.as_str()] } else { v.split(',').collect() };
+            for part in parts.into_iter().map(str::trim).filter(|v| !v.is_empty() && *v != "null") {
+                if !out.iter().any(|o| o == part) {
+                    out.push(part.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
 fn unquote(s: &str) -> String {
     let s = s.trim();
     for q in ['"', '\''] {
@@ -342,13 +476,28 @@ mod tests {
         };
         let p = |s: &str| preprocess_with(s, &resolve);
         assert_eq!(p("a ![[photo.png]] b"), "a ![photo.png](<file:///v/img/photo.png>) b");
-        assert_eq!(p("![[photo.png|300]]"), "![photo.png](<file:///v/img/photo.png>)");
         assert_eq!(p("![légende](img/photo.png)"), "![légende](<file:///v/img/photo.png>)");
         assert_eq!(p("![x](https://exemple.fr/a.png)"), "![x](https://exemple.fr/a.png)");
         assert_eq!(p("![[croquis.mnemo-board]]"), "[🖊 croquis.mnemo-board](<mnemo:board/Dessins/croquis.mnemo-board>)");
-        // fichier introuvable : lien vers une note, comme avant
-        assert_eq!(p("![[absent.png]]"), "[absent.png](<mnemo:note/absent.png>)");
+        // pièce jointe introuvable : jamais un lien vers une note à créer
+        assert_eq!(p("![[absent.png]]"), "~~absent.png~~ *(introuvable)*");
+        assert_eq!(p("[[absent.pdf]]"), "~~absent.pdf~~ *(introuvable)*");
+        assert_eq!(p("![[Autre note]]"), "[Autre note](<mnemo:note/Autre note>)");
+        // largeur à la manière d'Obsidian
+        assert_eq!(p("![[photo.png|300]]"), "![photo.png](<file:///v/img/photo.png#mnemo-w=300>)");
+        assert_eq!(p("![[photo.png|300x200]]"), "![photo.png](<file:///v/img/photo.png#mnemo-w=300>)");
+        assert_eq!(p("![légende|250](img/photo.png)"), "![légende](<file:///v/img/photo.png#mnemo-w=250>)");
+        assert!(is_attachment("Assets/schéma.PNG") && !is_attachment("v1.2") && !is_attachment(".png"));
         assert!(is_image("A/b.JPG") && !is_image("note.md"));
+    }
+
+    #[test]
+    fn markdown_note_links() {
+        let notes = |raw: &str| (raw.ends_with(".md")).then(|| format!("Dossier/{}", raw.trim_end_matches(".md")));
+        let p = |s: &str| preprocess_links(s, &|_| None, &notes);
+        assert_eq!(p("voir [la note](Note.md) !"), "voir [la note](<mnemo:note/Dossier/Note>) !");
+        assert_eq!(p("[site](https://x.fr)"), "[site](https://x.fr)");
+        assert_eq!(p("`[x](Note.md)`"), "`[x](Note.md)`");
     }
 
     #[test]
@@ -401,6 +550,14 @@ mod tests {
         assert!(frontmatter("# Pas de frontmatter\n").is_none());
         assert!(frontmatter("---\nnon fermé\n").is_none());
         assert!(frontmatter("---\n---\ntexte").is_some_and(|(p, b)| p.is_empty() && b == 8));
+    }
+
+    #[test]
+    fn frontmatter_lists() {
+        let src = "---\ntags: [moc, \"#algo\"]\naliases: Index, Sommaire\nTag: x\n---\n";
+        assert_eq!(frontmatter_values(src, &["tags", "tag"]), ["moc", "#algo", "x"]);
+        assert_eq!(frontmatter_values(src, &["aliases"]), ["Index", "Sommaire"]);
+        assert!(frontmatter_values("pas de frontmatter", &["tags"]).is_empty());
     }
 
     #[test]

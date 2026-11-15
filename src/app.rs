@@ -58,6 +58,8 @@ pub struct MnemoApp {
     search_results: Vec<SearchHit>,
     tags: Vec<(String, i64)>,
     backlinks: Vec<Backlink>,
+    /// mentions non liées de la note ouverte (volet des rétroliens)
+    unlinked: Vec<Backlink>,
 
     md_cache: CommonMarkCache,
     content_gen: u64,
@@ -189,6 +191,7 @@ impl MnemoApp {
             search_results: vec![],
             tags: vec![],
             backlinks: vec![],
+            unlinked: vec![],
             md_cache: CommonMarkCache::default(),
             content_gen: 0,
             preview_gen: u64::MAX,
