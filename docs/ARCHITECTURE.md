@@ -51,6 +51,7 @@ Commencez par lire [Les trois threads](#les-trois-threads), le reste en découle
 | `github.rs` | client REST GitHub bloquant (appelé via `spawn_blocking`) |
 | `merge.rs` | fusion à 3 voies et diff unifié (testés) |
 | `markdown.rs` | transforme `[[wikilinks]]`, liens Markdown internes et `#tags` en liens `mnemo:` cliquables ; images, `==surligné==`, formules, blocs Mermaid ; frontmatter (lecture et écriture d'une propriété) |
+| `tts.rs` | lecture à voix haute par la synthèse vocale du système (spd-say / espeak-ng, `say`, System.Speech), texte lisible d'une note |
 | `math.rs` | formules LaTeX (`$…$`, `$$…$$`) en texte mathématique Unicode |
 | `plugins.rs` | hôte de plugins Rhai (voir [plugins.md](plugins.md)) |
 | `iconize.rs` | jeux d'icônes du plugin Iconize (`.obsidian/icons`, dossiers de SVG ou `.zip`) |
@@ -75,6 +76,7 @@ Chaque sous-module ajoute des méthodes à `MnemoApp` dans son propre `impl Mnem
 | `notes.rs` | ouverture / onglets / historique de navigation, sauvegarde automatique |
 | `layout.rs` | écran de connexion, barre d'onglets, en-tête de vue, indicateur de synchronisation, notifications |
 | `panes.rs` | volets des panneaux latéraux déplaçables d'un panneau à l'autre (ordre gardé dans la configuration), graphe local en bas à gauche |
+| `speech.rs` | commande « Lire à voix haute » (sélection ou note entière) |
 | `sidebar.rs` | ruban, explorateur (arbre de dossiers, glisser-déposer), panneau de droite |
 | `editor.rs` | éditeur, titre intégré, autocomplétion `[[`, aperçu, volet Propriétés modifiable, rendu des diagrammes Mermaid (cache) |
 | `commands.rs` | `CoreCmd` (palette Ctrl+P), raccourcis, `UiAction`, actions des plugins |

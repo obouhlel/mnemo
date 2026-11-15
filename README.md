@@ -33,6 +33,11 @@ hors connexion. Un seul binaire pour Windows, macOS et Linux.
 - Interface calquée sur le thème par défaut d'Obsidian : ruban, explorateur avec chevrons et guides, onglets avec historique
   (← →), fil d'Ariane, titre intégré éditable (renomme la note), colonne de lecture de 700 px ; aide, paramètres et état de la
   synchronisation en bas du ruban
+- **Volets déplaçables** comme dans Obsidian : glissez un onglet des panneaux latéraux (Fichiers, Recherche, Tags,
+  Signets, Rétroliens, Tickets, panneaux des plugins) vers l'autre panneau ; **graphe local** de la note en bas à gauche
+- **Lecture à voix haute** (bouton haut-parleur au-dessus de la note, Ctrl+Shift+S) : la sélection ou toute la note, avec la
+  voix du système (speech-dispatcher ou espeak-ng sous Linux, `say` sous macOS, la voix de Windows) ; elle continue pendant
+  qu'on travaille sur autre chose
 - **Live preview** dans l'éditeur : la syntaxe markdown (`**`, `##`, `[[ ]]`…) n'apparaît que sur la ligne du curseur ;
   puces, cases à cocher cliquables, citations et blocs de code dessinés ; Ctrl+clic sur un lien pour l'ouvrir
 
@@ -212,6 +217,7 @@ Le détail de chaque module est dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md
 | Ctrl+N | Nouvelle note |
 | Ctrl+E | Basculer édition / lecture |
 | Ctrl+S | Enregistrer maintenant |
+| Ctrl+Shift+S | Lire à voix haute / arrêter |
 | Ctrl+Shift+F | Recherche |
 | Ctrl+G | Graphe |
 | F2 | Renommer / déplacer |

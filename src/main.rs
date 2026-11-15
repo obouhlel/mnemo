@@ -16,6 +16,7 @@ mod plugins;
 mod sketch;
 #[cfg(test)]
 mod sync_tests;
+mod tts;
 mod ui;
 
 fn main() -> eframe::Result {

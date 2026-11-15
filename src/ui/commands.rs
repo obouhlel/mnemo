@@ -28,6 +28,7 @@ pub(super) enum CoreCmd {
     Dashboard,
     CollapseAll,
     ToggleBookmark,
+    ReadAloud,
 }
 
 pub(super) const CORE_COMMANDS: &[(CoreCmd, &str, &str)] = &[
@@ -51,6 +52,7 @@ pub(super) const CORE_COMMANDS: &[(CoreCmd, &str, &str)] = &[
     (CoreCmd::CloseTab, "Fermer l'onglet", "Ctrl+W"),
     (CoreCmd::CollapseAll, "Replier tous les dossiers", ""),
     (CoreCmd::ToggleBookmark, "Ajouter la note aux signets / l'en retirer", ""),
+    (CoreCmd::ReadAloud, "Lire la note à voix haute (sélection, sinon toute la note) / arrêter", "Ctrl+Shift+S"),
     (CoreCmd::ToggleLeft, "Afficher / masquer l'explorateur", "Ctrl+Shift+L"),
     (CoreCmd::ToggleRight, "Afficher / masquer le panneau de droite", "Ctrl+Shift+R"),
 ];
@@ -242,6 +244,7 @@ impl MnemoApp {
             CoreCmd::Dashboard => self.open_dashboard(None),
             CoreCmd::CollapseAll => self.expanded.clear(),
             CoreCmd::ToggleBookmark => self.toggle_bookmark(now),
+            CoreCmd::ReadAloud => self.read_aloud(ctx, now),
             CoreCmd::ToggleLeft => {
                 self.cfg.show_left = !self.left_visible(ctx);
                 self.cfg.save();
@@ -278,6 +281,8 @@ impl MnemoApp {
             (KeyboardShortcut::new(cmd | Modifiers::SHIFT, Key::F), CoreCmd::Search),
             (KeyboardShortcut::new(cmd, Key::G), CoreCmd::Graph),
             (KeyboardShortcut::new(cmd, Key::E), CoreCmd::ToggleMode),
+            // avant Ctrl+S : egui compare sans tenir compte d'un Maj en plus
+            (KeyboardShortcut::new(cmd | Modifiers::SHIFT, Key::S), CoreCmd::ReadAloud),
             (KeyboardShortcut::new(cmd, Key::S), CoreCmd::Save),
             (KeyboardShortcut::new(cmd, Key::Comma), CoreCmd::Settings),
             (KeyboardShortcut::new(Modifiers::NONE, Key::F2), CoreCmd::RenameCurrent),

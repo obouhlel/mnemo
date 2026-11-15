@@ -70,6 +70,8 @@ pub struct Config {
     /// Ruban d'icônes à gauche (tableau de bord, graphe, whiteboard…), affiché même si le coffre Obsidian le
     /// masque : ses boutons n'ont pas d'autre place dans Mnemo
     pub show_ribbon: bool,
+    /// vitesse de la lecture à voix haute (1.0 = normale)
+    pub tts_rate: f32,
     /// Selected CSS theme (by name) when not following appearance.json
     pub css_theme: Option<String>,
     /// Enabled CSS snippets (by name) when not following appearance.json
@@ -113,6 +115,7 @@ impl Default for Config {
             vault_dir: None,
             follow_appearance: true,
             show_ribbon: true,
+            tts_rate: 1.0,
             css_theme: None,
             css_snippets: vec![],
             github_token: None,

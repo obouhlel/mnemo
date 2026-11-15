@@ -15,6 +15,7 @@ mod notes;
 mod panes;
 mod settings;
 mod sidebar;
+mod speech;
 mod state;
 mod sync;
 pub(crate) mod theme;
@@ -105,6 +106,8 @@ pub struct MnemoApp {
     local_graph_for: Option<(Uuid, usize)>,
     graph_gen: usize,
     graph_requested: bool,
+    /// lecture à voix haute en cours (synthèse vocale du système)
+    speaker: crate::tts::Speaker,
     /// inline title editing: (note id, basename when editing started, buffer)
     title_edit: Option<(Uuid, String, String)>,
     css: CssState,
@@ -251,6 +254,7 @@ impl MnemoApp {
             local_graph_for: None,
             graph_gen: 0,
             graph_requested: false,
+            speaker: Default::default(),
             title_edit: None,
             css: CssState::default(),
             focus_search: false,

@@ -391,6 +391,20 @@ impl MnemoApp {
             self.css.layout.ribbon = ribbon;
         }
 
+        let mut rate = (self.cfg.tts_rate * 100.0).round() as i32;
+        setting_row(
+            ui,
+            "Vitesse de lecture à voix haute",
+            "Bouton haut-parleur au-dessus de la note, ou Ctrl+Shift+S. Utilise la voix du système.",
+            |ui| {
+                ui.add(egui::Slider::new(&mut rate, 50..=200).step_by(10.0).suffix(" %"));
+            },
+        );
+        if rate as f32 / 100.0 != self.cfg.tts_rate {
+            self.cfg.tts_rate = rate as f32 / 100.0;
+            self.cfg.save();
+        }
+
         // ------------------------------------------------------------------ snippets
         let snippet_dir = obsidian.clone().unwrap_or_else(crate::config::config_dir).join("snippets");
         let dirs: Vec<String> = self.css_dirs().iter().map(|d| d.display().to_string()).collect();

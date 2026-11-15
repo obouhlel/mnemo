@@ -165,6 +165,19 @@ impl MnemoApp {
                     ui.close();
                 }
             });
+            let speaking = self.speaker.speaking();
+            if speaking {
+                // l'icône repasse sur « lire » quand la voix a fini, même sans autre événement
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+            }
+            let (ic, tip) = if speaking {
+                (icon::STOP, "Arrêter la lecture (Ctrl+Shift+S)")
+            } else {
+                (icon::SPEAK, "Lire à voix haute : la sélection, sinon toute la note (Ctrl+Shift+S)")
+            };
+            if theme::icon_button_sized(ui, ic, tip, speaking, true, 16.0).clicked() {
+                self.actions.push(UiAction::Core(CoreCmd::ReadAloud));
+            }
             let reading = self.cfg.view_mode == ViewMode::Preview;
             let (ic, tip) = if reading {
                 (icon::EDITING, "Basculer en mode édition (Ctrl+E)")
