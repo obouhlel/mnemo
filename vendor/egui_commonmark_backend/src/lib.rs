@@ -60,6 +60,25 @@ pub struct MdTheme {
     /// interligne du texte, en multiple de la taille de police (`--line-height-normal`, 1.5 dans Obsidian) ;
     /// `None` : celui de la police
     pub line_height: Option<f32>,
+    /// couleurs du code par type de jeton (`--code-keyword`…, comme Obsidian) et fond des blocs de code
+    pub code_colors: Option<CodeColors>,
+    pub code_bg: Option<egui::Color32>,
+}
+
+/// Patch Mnemo : couleurs des blocs de code, variables `--code-*` d'Obsidian.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CodeColors {
+    pub normal: egui::Color32,
+    pub comment: egui::Color32,
+    pub function: egui::Color32,
+    pub important: egui::Color32,
+    pub keyword: egui::Color32,
+    pub operator: egui::Color32,
+    pub property: egui::Color32,
+    pub punctuation: egui::Color32,
+    pub string: egui::Color32,
+    pub tag: egui::Color32,
+    pub value: egui::Color32,
 }
 
 impl MdTheme {

@@ -212,7 +212,9 @@ pub fn code_block<'t>(
     // We use a `TextEdit` to make the text selectable.
     // Note that we take a `&mut` to a non-`mut` `&str`, which is
     // the how to tell `egui` that the text is not editable.
+    // Patch Mnemo : marges et fond comme les blocs de code d'Obsidian (pas de bordure)
     let output = egui::TextEdit::multiline(&mut text)
+        .margin(egui::Margin::symmetric(16, 12))
         .layouter(layouter)
         .desired_width(max_width)
         // prevent trailing lines
@@ -231,9 +233,9 @@ pub fn code_block<'t>(
         where_to_put_background,
         epaint::RectShape::new(
             frame_rect,
-            ui.style().noninteractive().corner_radius,
+            4.0,
             ui.visuals().extreme_bg_color,
-            ui.visuals().widgets.noninteractive.bg_stroke,
+            egui::Stroke::NONE,
             egui::StrokeKind::Outside,
         ),
     );

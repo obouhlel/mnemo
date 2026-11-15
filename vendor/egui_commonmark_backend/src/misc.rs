@@ -55,12 +55,80 @@ pub fn find_syntax<'a>(ps: &'a SyntaxSet, token: &str) -> Option<&'a syntect::pa
     ps.find_syntax_by_token(t).or_else(|| ps.find_syntax_by_name(token.trim()))
 }
 
-/// Patch Mnemo : thème de couleurs du code (clair ou sombre), le même en lecture et en édition.
+/// Patch Mnemo : thème de couleurs du code (clair ou sombre), le même en lecture et en édition. Avec les
+/// couleurs `--code-*` du thème Obsidian, un thème syntect est construit sur les mêmes catégories que
+/// celles d'Obsidian (Prism) ; sinon un thème syntect livré.
 #[cfg(feature = "better_syntax_highlighting")]
-pub fn code_theme(dark: bool) -> &'static syntect::highlighting::Theme {
-    static SET: std::sync::OnceLock<ThemeSet> = std::sync::OnceLock::new();
-    let ts = SET.get_or_init(ThemeSet::load_defaults);
-    &ts.themes[if dark { DEFAULT_THEME_DARK } else { DEFAULT_THEME_LIGHT }]
+pub fn code_theme(dark: bool, colors: Option<crate::CodeColors>) -> std::sync::Arc<syntect::highlighting::Theme> {
+    if let Some(c) = colors {
+        return code_theme_from(c);
+    }
+    static SET: std::sync::OnceLock<(std::sync::Arc<Theme>, std::sync::Arc<Theme>)> = std::sync::OnceLock::new();
+    let (d, l) = SET.get_or_init(|| {
+        let ts = ThemeSet::load_defaults();
+        (
+            std::sync::Arc::new(ts.themes[DEFAULT_THEME_DARK].clone()),
+            std::sync::Arc::new(ts.themes[DEFAULT_THEME_LIGHT].clone()),
+        )
+    });
+    if dark { d.clone() } else { l.clone() }
+}
+
+/// Thème syntect fait des couleurs `--code-*` (mis en cache par jeu de couleurs).
+#[cfg(feature = "better_syntax_highlighting")]
+pub fn code_theme_from(c: crate::CodeColors) -> std::sync::Arc<Theme> {
+    use std::str::FromStr;
+    use syntect::highlighting::{Color, ScopeSelectors, StyleModifier, ThemeItem, ThemeSettings};
+    static CACHE: std::sync::Mutex<Option<(crate::CodeColors, std::sync::Arc<Theme>)>> = std::sync::Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((k, t)) = cache.as_ref()
+        && *k == c
+    {
+        return t.clone();
+    }
+    let col = |c: egui::Color32| Color { r: c.r(), g: c.g(), b: c.b(), a: 255 };
+    // mêmes familles que les jetons Prism d'Obsidian
+    let rules: [(&str, egui::Color32); 10] = [
+        ("comment, punctuation.definition.comment", c.comment),
+        ("string, constant.character, string punctuation.definition.string", c.string),
+        (
+            "keyword, storage, keyword.control, variable.language.this, variable.language.self, \
+             keyword.declaration, constant.language.import-export-all",
+            c.keyword,
+        ),
+        ("keyword.operator, punctuation.accessor.arrow, storage.type.function.arrow, punctuation.separator.key-value", c.operator),
+        (
+            "entity.name.function, support.function, meta.function-call entity.name, variable.function, \
+             entity.name.class, entity.name.type, support.class, support.type, entity.other.inherited-class, \
+             meta.function-call variable.function",
+            c.function,
+        ),
+        ("constant.numeric, constant.language, constant.other, support.constant", c.value),
+        (
+            "variable.other.property, variable.other.object.property, meta.object-literal.key, \
+             support.type.property-name, entity.other.attribute-name, meta.mapping.key string",
+            c.property,
+        ),
+        ("entity.name.tag", c.tag),
+        ("string.regexp, variable.parameter.function, markup.bold, markup.heading, keyword.other.important", c.important),
+        ("punctuation, meta.brace, meta.delimiter", c.punctuation),
+    ];
+    let mut scopes = vec![];
+    // les règles plus précises d'abord dans la liste n'ont pas d'importance : syntect choisit le sélecteur
+    // le plus spécifique ; la ponctuation reste après (moins spécifique que les autres)
+    for (sel, color) in rules {
+        if let Ok(scope) = ScopeSelectors::from_str(sel) {
+            scopes.push(ThemeItem { scope, style: StyleModifier { foreground: Some(col(color)), ..Default::default() } });
+        }
+    }
+    let theme = std::sync::Arc::new(Theme {
+        name: Some("Mnemo".into()),
+        author: None,
+        settings: ThemeSettings { foreground: Some(col(c.normal)), ..Default::default() },
+        scopes,
+    });
+    *cache = Some((c, theme.clone()));
+    theme
 }
 
 pub struct CommonMarkOptions<'f> {
@@ -840,13 +908,13 @@ impl CodeBlock {
         ui: &mut Ui,
     ) {
         let curr_theme = cache.curr_theme(ui, options);
+        // Patch Mnemo : fond des blocs de code du thème CSS (`--code-background`)
+        let code_bg = crate::MdTheme::get(ui.ctx()).and_then(|t| t.code_bg);
         let style = ui.style_mut();
 
-        style.visuals.extreme_bg_color = curr_theme
-            .settings
-            .background
-            .map(syntect_color_to_egui)
-            .unwrap_or_else(|| style.visuals.extreme_bg_color);
+        style.visuals.extreme_bg_color = code_bg.unwrap_or_else(|| {
+            curr_theme.settings.background.map(syntect_color_to_egui).unwrap_or(style.visuals.extreme_bg_color)
+        });
 
         if let Some(color) = curr_theme.settings.selection_foreground {
             style.visuals.selection.bg_fill = syntect_color_to_egui(color);
@@ -865,20 +933,14 @@ impl CodeBlock {
             .unwrap_or_else(|| cache.ps.find_syntax_plain_text());
 
         let mut job = egui::text::LayoutJob::default();
-        let mut h = HighlightLines::new(syntax, cache.curr_theme(ui, options));
+        let custom = crate::MdTheme::get(ui.ctx()).and_then(|t| t.code_colors).map(code_theme_from);
+        let mut h = HighlightLines::new(syntax, custom.as_deref().unwrap_or_else(|| cache.curr_theme(ui, options)));
 
         for line in LinesWithEndings::from(text) {
             let ranges = h.highlight_line(line, &cache.ps).unwrap();
             for v in ranges {
                 let front = v.0.foreground;
-                job.append(
-                    v.1,
-                    0.0,
-                    egui::TextFormat::simple(
-                        TextStyle::Monospace.resolve(ui.style()),
-                        syntect_color_to_egui(front),
-                    ),
-                );
+                job.append(v.1, 0.0, code_format(ui, syntect_color_to_egui(front)));
             }
         }
         job
@@ -901,12 +963,16 @@ fn plain_highlighting(ui: &Ui, text: &str) -> egui::text::LayoutJob {
     job.append(
         text,
         0.0,
-        egui::TextFormat::simple(
-            TextStyle::Monospace.resolve(ui.style()),
-            ui.style().visuals.text_color(),
-        ),
+        code_format(ui, ui.style().visuals.text_color()),
     );
     job
+}
+
+/// Patch Mnemo : texte d'un bloc de code, avec l'interligne d'Obsidian (1,5).
+fn code_format(ui: &Ui, color: egui::Color32) -> egui::TextFormat {
+    let font = TextStyle::Monospace.resolve(ui.style());
+    let line_height = Some((font.size * 1.5).round());
+    egui::TextFormat { line_height, ..egui::TextFormat::simple(font, color) }
 }
 
 #[cfg(feature = "better_syntax_highlighting")]

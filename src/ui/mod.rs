@@ -354,6 +354,8 @@ impl MnemoApp {
                 icon_family: Some(theme::icon_family()),
                 icon_glyph: Some(theme::lucide),
                 line_height: Some(m.line_height),
+                code_colors: Some(theme::code_colors(&p, &m, self.cfg.dark_mode)),
+                code_bg: Some(p.code_bg),
             },
         );
     }

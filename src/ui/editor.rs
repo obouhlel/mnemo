@@ -807,7 +807,7 @@ impl MnemoApp {
                         return;
                     }
                     for (k, v) in prop.values.iter().enumerate() {
-                        let shown = if tags { format!("#{}", v.trim_start_matches('#')) } else { v.clone() };
+                        let shown = if tags { v.trim_start_matches('#').to_string() } else { v.clone() };
                         let color = if tags { m.tag_color.unwrap_or(p.link) } else { p.text };
                         let fill = if tags { p.tag_bg } else { p.hover };
                         egui::Frame::new()

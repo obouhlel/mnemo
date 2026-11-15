@@ -80,6 +80,8 @@ pub struct Metrics {
     /// fond de l'en-tête des tableaux (`--table-header-background`)
     pub table_header: Option<Color32>,
     pub tag_color: Option<Color32>,
+    /// couleurs du code par type de jeton, dans l'ordre de `CODE_VARS` (`None` : couleur d'Obsidian)
+    pub code: [Option<Color32>; 10],
     pub selection: Option<Color32>,
 }
 
@@ -99,6 +101,7 @@ impl Default for Metrics {
             table_border: None,
             table_header: None,
             tag_color: None,
+            code: [None; 10],
             selection: None,
         }
     }
@@ -750,8 +753,9 @@ pub fn markdown_job(
     let faint = TextFormat { color: p.faint, ..base.clone() };
     let mut fence = false;
     // coloration du bloc de code en cours (langage de la barrière d'ouverture), comme en lecture
-    let mut code_hl: Option<syntect::easy::HighlightLines> = None;
     let dark = p.bg.r() < 128;
+    let code_theme = egui_commonmark::code_theme(dark, Some(code_colors(p, m, dark)));
+    let mut code_hl: Option<syntect::easy::HighlightLines> = None;
     for (line_no, line) in text.split_inclusive('\n').enumerate() {
         let reveal = active.is_some_and(|(a, b)| line_no >= a && line_no <= b);
         // ligne qui n'intègre qu'une image : texte invisible, hauteur de l'image (dessinée par l'éditeur)
@@ -782,8 +786,8 @@ pub fn markdown_job(
             if fence {
                 let lang = t.trim_start_matches(['`', '~']).split_whitespace().next().unwrap_or("");
                 let ps = egui_commonmark::syntax_set();
-                code_hl = egui_commonmark::find_syntax(ps, lang)
-                    .map(|s| syntect::easy::HighlightLines::new(s, egui_commonmark::code_theme(dark)));
+                code_hl =
+                    egui_commonmark::find_syntax(ps, lang).map(|s| syntect::easy::HighlightLines::new(s, &code_theme));
             }
             let c = if reveal { p.faint } else { Color32::TRANSPARENT };
             job.append(line, 0.0, TextFormat { color: c, ..code_line });
@@ -1138,6 +1142,46 @@ pub fn pointing_hand_on_clickables(ctx: &egui::Context) {
     let r = hit.interact_rect;
     if hit.enabled && hit.sense.senses_click() && r.width() * r.height() < 120_000.0 && r.height() < 200.0 {
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+}
+
+/// Variables CSS des couleurs du code, dans l'ordre de `Metrics::code`.
+pub const CODE_VARS: [&str; 10] = [
+    "--code-comment",
+    "--code-function",
+    "--code-important",
+    "--code-keyword",
+    "--code-operator",
+    "--code-property",
+    "--code-punctuation",
+    "--code-string",
+    "--code-tag",
+    "--code-value",
+];
+
+/// Couleurs du code (lecture et éditeur) : celles du thème CSS, sinon celles du thème par défaut d'Obsidian.
+pub fn code_colors(p: &Palette, m: &Metrics, dark: bool) -> egui_commonmark::CodeColors {
+    let hex = |h: u32| Color32::from_rgb((h >> 16) as u8, (h >> 8) as u8, h as u8);
+    // rouge, orange, jaune, vert, cyan, violet, rose d'Obsidian
+    let [red, orange, yellow, green, cyan, purple, pink] = if dark {
+        [0xfb464c, 0xe9973f, 0xe0de71, 0x44cf6e, 0x53dfdd, 0xa882ff, 0xfa99cd].map(hex)
+    } else {
+        [0xe93147, 0xec7500, 0xe0ac00, 0x08b94e, 0x00bfbc, 0x7852ee, 0xd53984].map(hex)
+    };
+    let defaults = [p.faint, yellow, orange, pink, red, cyan, p.muted, green, red, purple];
+    let c = |i: usize| m.code[i].unwrap_or(defaults[i]);
+    egui_commonmark::CodeColors {
+        normal: p.code_text,
+        comment: c(0),
+        function: c(1),
+        important: c(2),
+        keyword: c(3),
+        operator: c(4),
+        property: c(5),
+        punctuation: c(6),
+        string: c(7),
+        tag: c(8),
+        value: c(9),
     }
 }
 

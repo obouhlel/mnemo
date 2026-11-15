@@ -79,7 +79,7 @@ pub use egui_commonmark_backend::RenderMathFn;
 pub use egui_commonmark_backend::alerts::{Alert, AlertBundle};
 pub use egui_commonmark_backend::misc::CommonMarkCache;
 // Patch Mnemo : thème du mode lecture posé par l'application
-pub use egui_commonmark_backend::MdTheme;
+pub use egui_commonmark_backend::{CodeColors, MdTheme};
 #[cfg(feature = "regex")]
 pub use egui_commonmark_backend::misc::SearchOptions;
 

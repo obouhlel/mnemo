@@ -834,6 +834,16 @@ fn defaults(dark: bool) -> Vec<(&'static str, &'static str)> {
         ("--text-faint", "var(--color-base-50)"),
         ("--code-background", "var(--background-primary-alt)"),
         ("--code-normal", "var(--text-normal)"),
+        ("--code-comment", "var(--text-faint)"),
+        ("--code-function", "var(--color-yellow)"),
+        ("--code-important", "var(--color-orange)"),
+        ("--code-keyword", "var(--color-pink)"),
+        ("--code-operator", "var(--color-red)"),
+        ("--code-property", "var(--color-cyan)"),
+        ("--code-punctuation", "var(--text-muted)"),
+        ("--code-string", "var(--color-green)"),
+        ("--code-tag", "var(--color-red)"),
+        ("--code-value", "var(--color-purple)"),
         ("--tag-background", "hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.1)"),
         ("--tag-color", "var(--text-accent)"),
         ("--checkbox-color", "var(--interactive-accent)"),
@@ -856,6 +866,14 @@ fn defaults(dark: bool) -> Vec<(&'static str, &'static str)> {
             ("--color-base-70", "#b3b3b3"),
             ("--color-base-100", "#dadada"),
             ("--text-accent", "hsl(var(--accent-h), var(--accent-s), calc(var(--accent-l) + 2.5%))"),
+            ("--color-red", "#fb464c"),
+            ("--color-orange", "#e9973f"),
+            ("--color-yellow", "#e0de71"),
+            ("--color-green", "#44cf6e"),
+            ("--color-cyan", "#53dfdd"),
+            ("--color-blue", "#027aff"),
+            ("--color-purple", "#a882ff"),
+            ("--color-pink", "#fa99cd"),
         ]);
     } else {
         v.extend([
@@ -868,6 +886,14 @@ fn defaults(dark: bool) -> Vec<(&'static str, &'static str)> {
             ("--color-base-70", "#5c5c5c"),
             ("--color-base-100", "#222222"),
             ("--text-accent", "hsl(var(--accent-h), var(--accent-s), calc(var(--accent-l) - 3.8%))"),
+            ("--color-red", "#e93147"),
+            ("--color-orange", "#ec7500"),
+            ("--color-yellow", "#e0ac00"),
+            ("--color-green", "#08b94e"),
+            ("--color-cyan", "#00bfbc"),
+            ("--color-blue", "#086ddd"),
+            ("--color-purple", "#7852ee"),
+            ("--color-pink", "#d53984"),
         ]);
     }
     v
@@ -999,6 +1025,9 @@ pub fn apply(parsed: &Parsed, extra: &[(String, String)], dark: bool, base: Pale
     m.table_border = opt_color("--table-border-color");
     m.table_header = opt_color("--table-header-background");
     m.tag_color = opt_color("--tag-color");
+    for (i, n) in crate::ui::theme::CODE_VARS.iter().enumerate() {
+        m.code[i] = get(n).and_then(|v| parse_color(&v));
+    }
     m.selection = opt_color("--text-selection");
     let mut used: Vec<String> = user.into_iter().collect();
     used.sort();
