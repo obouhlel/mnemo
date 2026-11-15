@@ -145,6 +145,11 @@ impl MnemoApp {
                     self.actions.push(UiAction::RenameNote(id, path.clone()));
                     ui.close();
                 }
+                let label = if self.open_is_bookmarked() { "Retirer des signets" } else { "Ajouter aux signets" };
+                if ui.button(label).clicked() {
+                    self.actions.push(UiAction::Core(CoreCmd::ToggleBookmark));
+                    ui.close();
+                }
                 if ui.button("Copier le lien [[…]]").clicked() {
                     ui.ctx().copy_text(format!("[[{}]]", basename(&path)));
                     ui.close();

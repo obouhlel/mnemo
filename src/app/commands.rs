@@ -27,6 +27,7 @@ pub(super) enum CoreCmd {
     CloseTab,
     Dashboard,
     CollapseAll,
+    ToggleBookmark,
 }
 
 pub(super) const CORE_COMMANDS: &[(CoreCmd, &str, &str)] = &[
@@ -49,6 +50,7 @@ pub(super) const CORE_COMMANDS: &[(CoreCmd, &str, &str)] = &[
     (CoreCmd::NewTab, "Nouvel onglet", "Ctrl+T"),
     (CoreCmd::CloseTab, "Fermer l'onglet", "Ctrl+W"),
     (CoreCmd::CollapseAll, "Replier tous les dossiers", ""),
+    (CoreCmd::ToggleBookmark, "Ajouter la note aux signets / l'en retirer", ""),
     (CoreCmd::ToggleLeft, "Afficher / masquer l'explorateur", "Ctrl+Shift+L"),
     (CoreCmd::ToggleRight, "Afficher / masquer le panneau de droite", "Ctrl+Shift+R"),
 ];
@@ -233,6 +235,7 @@ impl MnemoApp {
             CoreCmd::CloseTab => self.close_tab(self.active_tab),
             CoreCmd::Dashboard => self.open_dashboard(None),
             CoreCmd::CollapseAll => self.expanded.clear(),
+            CoreCmd::ToggleBookmark => self.toggle_bookmark(now),
             CoreCmd::ToggleLeft => {
                 self.cfg.show_left = !self.left_visible(ctx);
                 self.cfg.save();

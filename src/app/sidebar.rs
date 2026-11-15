@@ -279,6 +279,7 @@ impl MnemoApp {
                     (LeftTab::Files, icon::FILES_TAB, "Fichiers"),
                     (LeftTab::Search, icon::SEARCH, "Rechercher"),
                     (LeftTab::Tags, icon::TAG, "Tags"),
+                    (LeftTab::Bookmarks, icon::BOOKMARK, "Signets"),
                 ] {
                     if theme::icon_button_sized(ui, ic, tip, self.left_tab == tab, true, 16.0).clicked() {
                         self.left_tab = tab;
@@ -475,6 +476,18 @@ impl MnemoApp {
                                         });
                                     ui.add_space(6.0);
                                 }
+                            },
+                        );
+                    });
+                }
+                LeftTab::Bookmarks => {
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        egui::Frame::new().inner_margin(egui::Margin::symmetric(SIDE_PAD as i8 - 2, 6)).show(
+                            ui,
+                            |ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                let ctx = ui.ctx().clone();
+                                self.bookmarks_panel(ui, &ctx, now);
                             },
                         );
                     });

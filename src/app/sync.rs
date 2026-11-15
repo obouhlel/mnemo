@@ -222,6 +222,7 @@ impl MnemoApp {
                 }
                 Msg::Graph(g) => self.graph.set_data(g),
                 Msg::Plugins(states) => {
+                    self.adopt_core_plugins(&states);
                     self.plugins.apply_states(states);
                     self.plugin_changed();
                 }

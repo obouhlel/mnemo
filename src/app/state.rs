@@ -19,6 +19,7 @@ pub(super) enum LeftTab {
     Files,
     Search,
     Tags,
+    Bookmarks,
 }
 
 #[derive(PartialEq, Clone, Copy)]

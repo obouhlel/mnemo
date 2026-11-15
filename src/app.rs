@@ -1,5 +1,6 @@
 mod appearance;
 mod attachments;
+mod bookmarks;
 mod commands;
 mod conflict;
 mod dashboard;
@@ -118,6 +119,10 @@ pub struct MnemoApp {
     sketch_cache: HashMap<String, (Option<std::time::SystemTime>, crate::sketch::Sketch)>,
     /// image ouverte depuis l'explorateur
     image_view: Option<String>,
+    /// signets lus sur le disque : (fichier, date de modification, contenu)
+    bookmarks: Option<(std::path::PathBuf, Option<std::time::SystemTime>, serde_json::Value)>,
+    /// coffre dont les plugins cœur ont déjà été repris (`core-plugins.json`)
+    core_plugins_checked: Option<std::path::PathBuf>,
     /// diagrammes Mermaid déjà rendus : empreinte du bloc → adresse de l'image (`None` : non pris en charge)
     diagrams: std::collections::HashMap<u64, Option<String>>,
     /// types des propriétés (`.obsidian/types.json`) : (dossier lu, propriété → type)
@@ -242,6 +247,8 @@ impl MnemoApp {
             icon_pick: None,
             files: vec![],
             image_view: None,
+            bookmarks: None,
+            core_plugins_checked: None,
             diagrams: Default::default(),
             prop_types: None,
             new_prop: None,
