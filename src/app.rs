@@ -118,6 +118,8 @@ pub struct MnemoApp {
     sketch_cache: HashMap<String, (Option<std::time::SystemTime>, crate::sketch::Sketch)>,
     /// image ouverte depuis l'explorateur
     image_view: Option<String>,
+    /// diagrammes Mermaid déjà rendus : empreinte du bloc → adresse de l'image (`None` : non pris en charge)
+    diagrams: std::collections::HashMap<u64, Option<String>>,
     /// types des propriétés (`.obsidian/types.json`) : (dossier lu, propriété → type)
     prop_types: Option<(Option<std::path::PathBuf>, std::collections::HashMap<String, String>)>,
     /// nom de la propriété en cours d'ajout dans le volet « Propriétés »
@@ -240,6 +242,7 @@ impl MnemoApp {
             icon_pick: None,
             files: vec![],
             image_view: None,
+            diagrams: Default::default(),
             prop_types: None,
             new_prop: None,
             boards: HashMap::new(),
@@ -297,6 +300,8 @@ impl MnemoApp {
             return;
         }
         self.theme_applied = Some(key);
+        // l'aperçu est refait (diagrammes Mermaid aux couleurs du nouveau thème)
+        self.preview_gen = u64::MAX;
         if self.css.fonts_installed.as_ref() != Some(&self.css.fonts) {
             let missing = theme::install_fonts(ctx, &self.css.fonts);
             for f in missing {

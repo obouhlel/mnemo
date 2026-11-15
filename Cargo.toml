@@ -17,6 +17,8 @@ egui_commonmark = { version = "0.26.0", features = ["better_syntax_highlighting"
 egui_extras = { version = "0.37", features = ["image", "file", "svg"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 futures-util = "0.3.34"
+# diagrammes Mermaid rendus en SVG, sans navigateur ni JavaScript
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 rhai = { version = "1.27.0", features = ["sync"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde = { version = "1.0.229", features = ["derive"] }

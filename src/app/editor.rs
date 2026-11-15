@@ -284,9 +284,16 @@ impl MnemoApp {
             let (id, path, content) = self.note_ctx().unwrap();
             let pre = self.plugins.preprocess(content.clone(), Some(&NoteCtx { id, path: &path, content: &content }));
             let paths: Vec<&str> = self.notes.iter().map(|n| n.path.as_str()).collect();
-            self.preview_src = markdown::preprocess_links(&pre, &|t| self.resolve_embed(t, &path), &|raw| {
-                crate::local::index::md_link_path(&paths, &path, raw)
-            });
+            let dark = ui.visuals().dark_mode;
+            let ctx = ui.ctx().clone();
+            let diagrams = std::cell::RefCell::new(std::mem::take(&mut self.diagrams));
+            self.preview_src = markdown::preprocess_full(
+                &pre,
+                &|t| self.resolve_embed(t, &path),
+                &|raw| crate::local::index::md_link_path(&paths, &path, raw),
+                &|code| mermaid_uri(&ctx, &mut diagrams.borrow_mut(), code, dark),
+            );
+            self.diagrams = diagrams.into_inner();
             self.preview_gen = self.content_gen;
         }
 
@@ -883,5 +890,59 @@ impl MnemoApp {
         let (r, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
         ui.painter().hline(r.x_range(), r.center().y, egui::Stroke::new(1.0, p.border));
         ui.add_space(10.0);
+    }
+}
+
+/// Image d'un diagramme Mermaid, rendue une seule fois par contenu et par thème (cache `diagrams`, empreinte
+/// du bloc) et confiée à egui sous une adresse `bytes://mermaid/<empreinte>.svg`. `None` si le diagramme n'est
+/// pas pris en charge : le bloc reste affiché en code.
+fn mermaid_uri(
+    ctx: &egui::Context,
+    diagrams: &mut std::collections::HashMap<u64, Option<String>>,
+    code: &str,
+    dark: bool,
+) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (code, dark).hash(&mut h);
+    let key = h.finish();
+    diagrams
+        .entry(key)
+        .or_insert_with(|| {
+            let theme = if dark { mermaid_rs_renderer::Theme::dark() } else { mermaid_rs_renderer::Theme::modern() };
+            let options = mermaid_rs_renderer::RenderOptions { theme, ..mermaid_rs_renderer::RenderOptions::default() };
+            // bibliothèque tierce : un diagramme mal formé ne doit pas faire tomber l'application
+            let code = code.to_string();
+            let svg = std::panic::catch_unwind(move || mermaid_rs_renderer::render_with_options(&code, options))
+                .ok()?
+                .ok()?;
+            let uri = format!("bytes://mermaid/{key:016x}.svg");
+            ctx.include_bytes(uri.clone(), svg.into_bytes());
+            Some(uri)
+        })
+        .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mermaid_diagrams_render() {
+        let ctx = egui::Context::default();
+        let mut cache = Default::default();
+        let uri = super::mermaid_uri(&ctx, &mut cache, "flowchart LR\n  A[Début] --> B{Choix}\n  B -->|oui| C\n", true);
+        assert!(uri.as_deref().is_some_and(|u| u.starts_with("bytes://mermaid/") && u.ends_with(".svg")));
+        // même bloc : servi par le cache
+        assert_eq!(
+            super::mermaid_uri(&ctx, &mut cache, "flowchart LR\n  A[Début] --> B{Choix}\n  B -->|oui| C\n", true),
+            uri
+        );
+        for code in [
+            "sequenceDiagram\n  A->>B: salut\n",
+            "pie title Parts\n  \"a\" : 1\n  \"b\" : 2\n",
+            "classDiagram\n  A <|-- B\n",
+        ] {
+            assert!(super::mermaid_uri(&ctx, &mut cache, code, false).is_some(), "{code}");
+        }
+        assert_eq!(super::mermaid_uri(&ctx, &mut cache, "pas du mermaid {{{", false), None);
     }
 }

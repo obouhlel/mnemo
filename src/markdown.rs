@@ -121,15 +121,99 @@ pub fn preprocess_with(src: &str, resolve: Resolver) -> String {
 /// Comme `preprocess_with`, et les liens Markdown internes (`[texte](Dossier/Note.md)`) que `notes` résout
 /// deviennent des liens `mnemo:` vers la note, au lieu d'adresses que le système ne saurait pas ouvrir.
 pub fn preprocess_links(src: &str, resolve: Resolver, notes: LinkResolver) -> String {
+    preprocess_full(src, resolve, notes, &|_| None)
+}
+
+/// Diagramme Mermaid (code du bloc) → adresse de l'image rendue ; `None` : bloc laissé en code.
+pub type DiagramResolver<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+/// Lien qui marque un texte surligné `==texte==` (rendu sans lien par le visualiseur, voir `vendor/`).
+pub const MARK_SCHEME: &str = "mnemo:mark";
+
+/// Échappe la ponctuation Markdown d'un texte à afficher tel quel.
+fn md_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii_punctuation() {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Formule LaTeX → texte Unicode en italique (voir `math::convert`) ; lignes séparées par `\\`.
+fn math_markdown(tex: &str) -> String {
+    crate::math::convert(tex)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| format!("*{}*", md_escape(l)))
+        .collect::<Vec<_>>()
+        .join("  \n")
+}
+
+/// Comme `preprocess_links`, et les blocs ```` ```mermaid ```` que `diagram` sait rendre deviennent des images ;
+/// formules `$…$` / `$$…$$` en texte mathématique, `==texte==` surligné.
+pub fn preprocess_full(src: &str, resolve: Resolver, notes: LinkResolver, diagram: DiagramResolver) -> String {
     let mut out = String::with_capacity(src.len() + 64);
     let mut fence = Fence::default();
+    // bloc Mermaid en cours : (texte d'origine, code)
+    let mut mermaid: Option<(String, String)> = None;
+    // formule $$ … $$ sur plusieurs lignes en cours : (texte d'origine, formule)
+    let mut math: Option<(String, String)> = None;
     for line in src.split_inclusive('\n') {
-        // Bloc de code (barrière, ou indenté de 4 espaces / tabulation) : laissé tel quel
-        if fence.code_line(line) || line.starts_with("    ") || line.starts_with('\t') {
+        let was_open = fence.0.is_some();
+        if fence.code_line(line) {
+            if let Some((raw, code)) = &mut mermaid {
+                raw.push_str(line);
+                if fence.0.is_none() {
+                    match diagram(code) {
+                        Some(uri) => out.push_str(&format!("![Diagramme Mermaid](<{}>)\n", encode(&uri))),
+                        None => out.push_str(raw),
+                    }
+                    mermaid = None;
+                } else {
+                    code.push_str(line);
+                }
+                continue;
+            }
+            if !was_open && line.trim_start().trim_start_matches(['`', '~']).trim().eq_ignore_ascii_case("mermaid") {
+                mermaid = Some((line.to_string(), String::new()));
+                continue;
+            }
             out.push_str(line);
             continue;
         }
+        if let Some((raw, tex)) = &mut math {
+            raw.push_str(line);
+            match line.trim_end().strip_suffix("$$") {
+                Some(last) => {
+                    tex.push_str(last);
+                    out.push_str(&format!("\n{}\n\n", math_markdown(tex)));
+                    math = None;
+                }
+                None => tex.push_str(line),
+            }
+            continue;
+        }
+        // Bloc de code indenté de 4 espaces / tabulation : laissé tel quel
+        if line.starts_with("    ") || line.starts_with('\t') {
+            out.push_str(line);
+            continue;
+        }
+        if let Some(rest) = line.trim().strip_prefix("$$") {
+            match rest.strip_suffix("$$") {
+                Some(tex) => out.push_str(&format!("\n{}\n\n", math_markdown(tex))),
+                None => math = Some((line.to_string(), format!("{rest}\n"))),
+            }
+            continue;
+        }
         transform_line(line, &mut out, resolve, notes);
+    }
+    // bloc jamais fermé : texte d'origine
+    if let Some((raw, _)) = mermaid.or(math) {
+        out.push_str(&raw);
     }
     out
 }
@@ -272,6 +356,51 @@ fn transform_line(line: &str, out: &mut String, resolve: Resolver, notes: LinkRe
                     }
                 }
                 i += 1;
+            }
+            // $formule$ (et $$formule$$ dans une ligne) : pas « 5 $ et 10 $ » (règle d'Obsidian)
+            b'$' if i == 0 || bytes[i - 1] != b'\\' => {
+                let n = if bytes.get(i + 1) == Some(&b'$') { 2 } else { 1 };
+                let body = &line[i + n..];
+                let close = if n == 2 {
+                    body.find("$$")
+                } else {
+                    body.char_indices().filter(|(k, c)| *c == '$' && *k > 0).map(|(k, _)| k).find(|&k| {
+                        !body[..k].ends_with(char::is_whitespace)
+                            && !body[..k].ends_with('\\')
+                            && !body[k + 1..].starts_with(|c: char| c.is_ascii_digit())
+                    })
+                };
+                match close {
+                    Some(k) if k > 0 && !body.starts_with(char::is_whitespace) => {
+                        out.push_str(&line[last..i]);
+                        out.push_str(&math_markdown(&body[..k]));
+                        i += n + k + n;
+                        last = i;
+                        continue;
+                    }
+                    _ => i += n,
+                }
+            }
+            // ==texte surligné==
+            b'=' if bytes.get(i + 1) == Some(&b'=')
+                && (i == 0 || bytes[i - 1] != b'=')
+                && bytes.get(i + 2).is_some_and(|c| *c != b'=' && !c.is_ascii_whitespace()) =>
+            {
+                let body = &line[i + 2..];
+                let close = body
+                    .match_indices("==")
+                    .map(|(k, _)| k)
+                    .find(|&k| !body[..k].ends_with(char::is_whitespace) && !body[k + 2..].starts_with('='));
+                match close {
+                    Some(k) if !body[..k].contains(['[', ']', '\n']) => {
+                        out.push_str(&line[last..i]);
+                        out.push_str(&format!("[{}](<{MARK_SCHEME}>)", &body[..k]));
+                        i += 2 + k + 2;
+                        last = i;
+                        continue;
+                    }
+                    _ => i += 2,
+                }
             }
             // [texte](Dossier/Note.md) : lien Markdown interne vers une note
             b'[' if (i == 0 || bytes[i - 1] != b'!') && bytes.get(i + 1) != Some(&b'[') => {
@@ -586,6 +715,23 @@ mod tests {
         assert_eq!(p("voir [la note](Note.md) !"), "voir [la note](<mnemo:note/Dossier/Note>) !");
         assert_eq!(p("[site](https://x.fr)"), "[site](https://x.fr)");
         assert_eq!(p("`[x](Note.md)`"), "`[x](Note.md)`");
+    }
+
+    #[test]
+    fn math_highlight_mermaid() {
+        assert_eq!(preprocess("a ==important== b"), "a [important](<mnemo:mark>) b");
+        assert_eq!(preprocess("titre\n===\na == b"), "titre\n===\na == b");
+        assert_eq!(preprocess("`==non==`"), "`==non==`");
+        assert_eq!(preprocess("aire $\\pi r^2$ ici"), "aire *π r²* ici");
+        assert_eq!(preprocess("5 $ et 10 $"), "5 $ et 10 $");
+        assert_eq!(preprocess("$$\nx^2\n$$\nsuite"), "\n*x²*\n\nsuite");
+        assert_eq!(preprocess("$$a_1$$\n"), "\n*a₁*\n\n");
+        let d = |code: &str| code.contains("A-->B").then(|| "bytes://mermaid/1.svg".to_string());
+        let p = |s: &str| preprocess_full(s, &|_| None, &|_| None, &d);
+        assert_eq!(p("```mermaid\ngraph LR\nA-->B\n```\nfin"), "![Diagramme Mermaid](<bytes://mermaid/1.svg>)\nfin");
+        // diagramme non pris en charge : le code reste affiché
+        assert_eq!(p("```mermaid\nautre\n```\n"), "```mermaid\nautre\n```\n");
+        assert_eq!(p("```mermaid\nA-->B\n"), "```mermaid\nA-->B\n");
     }
 
     #[test]

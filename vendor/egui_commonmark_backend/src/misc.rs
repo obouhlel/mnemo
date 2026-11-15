@@ -389,6 +389,20 @@ impl Link {
             );
         }
 
+        // Mnemo : `==texte==` arrive comme un lien `mnemo:mark` : texte surligné, pas un lien
+        if destination == "mnemo:mark" {
+            let bg = if ui.visuals().dark_mode {
+                egui::Color32::from_rgba_unmultiplied(255, 208, 0, 70)
+            } else {
+                egui::Color32::from_rgba_unmultiplied(255, 208, 0, 110)
+            };
+            for s in layout_job.sections.iter_mut() {
+                s.format.background = bg;
+            }
+            ui.label(layout_job);
+            return (false, vec![]);
+        }
+
         let response = if cache.link_hooks().contains_key(&destination) {
             let ui_link = ui.link(layout_job);
             if ui_link.clicked() || ui_link.middle_clicked() {
