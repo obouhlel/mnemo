@@ -164,10 +164,10 @@ fn md_spans(masked: &str) -> Vec<(usize, usize)> {
         }
         let mut start = close + 2;
         let rest = &masked[start..];
-        let end = if rest.starts_with('<') {
+        let end = if let Some(inner) = rest.strip_prefix('<') {
             start += 1;
-            match rest[1..].find(['>', '\n']) {
-                Some(e) if rest.as_bytes()[1 + e] == b'>' => start + e,
+            match inner.find(['>', '\n']) {
+                Some(e) if inner.as_bytes()[e] == b'>' => start + e,
                 _ => continue,
             }
         } else {
