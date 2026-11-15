@@ -495,6 +495,8 @@ impl eframe::App for MnemoApp {
                 self.actions.push(UiAction::OpenLink(markdown::decode(t)));
             } else if let Some(t) = url.strip_prefix(markdown::TAG_SCHEME) {
                 self.actions.push(UiAction::OpenTag(markdown::decode(t)));
+            } else if let Some(t) = url.strip_prefix(markdown::FILE_SCHEME) {
+                self.actions.push(UiAction::OpenFile(markdown::decode(t)));
             } else if let Some(t) = url.strip_prefix(markdown::BOARD_SCHEME) {
                 self.actions.push(UiAction::OpenFile(markdown::decode(t)));
             }

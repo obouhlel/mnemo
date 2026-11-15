@@ -4,7 +4,21 @@
 use super::*;
 use crate::markdown::{Embed, is_image};
 
+/// Diagramme Mermaid enregistré dans un fichier (`.mmd`, `.mermaid`), affiché par Mnemo.
+pub(super) fn is_diagram(rel: &str) -> bool {
+    let l = rel.to_lowercase();
+    l.ends_with(".mmd") || l.ends_with(".mermaid")
+}
+
 impl MnemoApp {
+    /// Image d'un diagramme `.mmd` (rendu Mermaid mis en cache, voir `editor::mermaid_uri`) ; `None` si le
+    /// fichier est illisible ou le diagramme non pris en charge.
+    pub(super) fn diagram_file_uri(&mut self, ctx: &egui::Context, rel: &str) -> Option<String> {
+        let code = std::fs::read_to_string(self.file_abs(rel)?).ok()?;
+        let dark = ctx.theme() == egui::Theme::Dark;
+        super::editor::mermaid_uri(ctx, &mut self.diagrams, &code, dark)
+    }
+
     /// Chemin absolu d'une pièce jointe (chemin relatif au dossier des notes).
     pub(super) fn file_abs(&self, rel: &str) -> Option<std::path::PathBuf> {
         self.cfg.vault_dir.as_ref().map(|r| r.join(rel))
@@ -175,12 +189,23 @@ impl MnemoApp {
                 });
             });
             ui.add_space(8.0);
-            if let Some(abs) = self.file_abs(&rel) {
-                ui.add(
-                    egui::Image::from_uri(file_uri(&abs))
-                        .max_size(egui::vec2(screen.width() - 160.0, screen.height() - 180.0))
-                        .fit_to_original_size(1.0),
-                );
+            let max = egui::vec2(screen.width() - 160.0, screen.height() - 180.0);
+            if is_diagram(&rel) {
+                // diagramme Mermaid : rendu par Mnemo ; non pris en charge, son code est montré
+                match self.diagram_file_uri(ui.ctx(), &rel) {
+                    Some(uri) => {
+                        ui.add(egui::Image::from_uri(uri).max_size(max).fit_to_original_size(1.0));
+                    }
+                    None => {
+                        ui.label(RichText::new("Diagramme non pris en charge : voici son code.").color(p.muted));
+                        let code = self.file_abs(&rel).and_then(|a| std::fs::read_to_string(a).ok());
+                        egui::ScrollArea::vertical().max_height(max.y).show(ui, |ui| {
+                            ui.add(egui::Label::new(RichText::new(code.unwrap_or_default()).monospace()));
+                        });
+                    }
+                }
+            } else if let Some(abs) = self.file_abs(&rel) {
+                ui.add(egui::Image::from_uri(file_uri(&abs)).max_size(max).fit_to_original_size(1.0));
             }
         });
         if resp.should_close() || close {

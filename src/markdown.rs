@@ -5,6 +5,8 @@
 pub const NOTE_SCHEME: &str = "mnemo:note/";
 pub const TAG_SCHEME: &str = "mnemo:tag/";
 pub const BOARD_SCHEME: &str = "mnemo:board/";
+/// pièce jointe ouverte dans Mnemo (visionneuse d'images, diagramme Mermaid `.mmd`)
+pub const FILE_SCHEME: &str = "mnemo:file/";
 
 /// Ce que désigne un fichier intégré `![[…]]` ou `![](…)` (résolu par l'appelant dans le dossier des notes).
 pub enum Embed {
@@ -14,6 +16,8 @@ pub enum Embed {
     Board(String),
     /// autre fichier (PDF, son…) : adresse ouverte avec l'application du système
     File(String),
+    /// fichier ouvert dans Mnemo au clic (chemin relatif) ; intégré, il est affiché comme l'image `uri`
+    Native { rel: String, uri: Option<String> },
 }
 
 /// Extensions d'images affichées dans les notes.
@@ -286,6 +290,11 @@ fn embed_markdown(target: &str, label: &str, width: Option<u32>, resolve: Resolv
         }
         Embed::Board(rel) => Some(format!("[🖊 {label}](<{BOARD_SCHEME}{}>)", encode(&rel))),
         Embed::File(uri) => Some(format!("[📎 {label}](<{}>)", encode(&uri))),
+        Embed::Native { uri: Some(uri), .. } => {
+            let w = width.map(|w| format!("#mnemo-w={w}")).unwrap_or_default();
+            Some(format!("![{label}](<{}{w}>)", encode(&uri)))
+        }
+        Embed::Native { rel, uri: None } => Some(format!("[📎 {label}](<{FILE_SCHEME}{}>)", encode(&rel))),
     }
 }
 
@@ -337,6 +346,9 @@ fn transform_line(line: &str, out: &mut String, resolve: Resolver, notes: LinkRe
                                 )),
                                 Some(Embed::Board(rel)) => {
                                     out.push_str(&format!("[🖊 {display}](<{BOARD_SCHEME}{}>)", encode(&rel)))
+                                }
+                                Some(Embed::Native { rel, .. }) => {
+                                    out.push_str(&format!("[{display}](<{FILE_SCHEME}{}>)", encode(&rel)))
                                 }
                                 None => out.push_str(&missing_file(&target)),
                             }
@@ -696,6 +708,14 @@ mod tests {
         assert_eq!(p("![légende](img/photo.png)"), "![légende](<file:///v/img/photo.png>)");
         assert_eq!(p("![x](https://exemple.fr/a.png)"), "![x](https://exemple.fr/a.png)");
         assert_eq!(p("![[croquis.mnemo-board]]"), "[🖊 croquis.mnemo-board](<mnemo:board/Dessins/croquis.mnemo-board>)");
+        // diagramme .mmd : intégré comme une image, en lien ouvert dans Mnemo (pas dans le navigateur)
+        let native = |t: &str| {
+            (t == "flow.mmd")
+                .then(|| Embed::Native { rel: "A/flow.mmd".into(), uri: Some("bytes://mermaid/1.svg".into()) })
+        };
+        let n = |s: &str| preprocess_with(s, &native);
+        assert_eq!(n("![[flow.mmd]]"), "![flow.mmd](<bytes://mermaid/1.svg>)");
+        assert_eq!(n("[[flow.mmd]]"), "[flow.mmd](<mnemo:file/A/flow.mmd>)");
         // pièce jointe introuvable : jamais un lien vers une note à créer
         assert_eq!(p("![[absent.png]]"), "~~absent.png~~ *(introuvable)*");
         assert_eq!(p("[[absent.pdf]]"), "~~absent.pdf~~ *(introuvable)*");

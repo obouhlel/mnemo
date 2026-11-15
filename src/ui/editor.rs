@@ -122,7 +122,15 @@ impl MnemoApp {
                     out.insert(no, (format!("board:{rel}"), egui::vec2(max_w.min(640.0), h)));
                     continue;
                 }
-                Some(markdown::Embed::File(_)) | None => continue,
+                // diagramme `.mmd` : rendu par Mnemo, affiché comme une image
+                Some(markdown::Embed::File(_)) if super::attachments::is_diagram(&target) => {
+                    let Some(rel) = self.find_file(&target, &path) else { continue };
+                    match self.diagram_file_uri(ui.ctx(), &rel) {
+                        Some(uri) => uri,
+                        None => continue,
+                    }
+                }
+                Some(markdown::Embed::File(_) | markdown::Embed::Native { .. }) | None => continue,
             };
             let placeholder = egui::vec2(max_w.min(400.0), 160.0);
             let size = match ui.ctx().try_load_texture(&uri, egui::TextureOptions::default(), egui::SizeHint::default())
@@ -289,7 +297,16 @@ impl MnemoApp {
             let diagrams = std::cell::RefCell::new(std::mem::take(&mut self.diagrams));
             self.preview_src = markdown::preprocess_full(
                 &pre,
-                &|t| self.resolve_embed(t, &path),
+                &|t| match self.resolve_embed(t, &path) {
+                    // diagramme `.mmd` : affiché comme une image ; en lien, ouvert dans Mnemo
+                    Some(markdown::Embed::File(_)) if super::attachments::is_diagram(t) => {
+                        let rel = self.find_file(t, &path)?;
+                        let code = self.file_abs(&rel).and_then(|a| std::fs::read_to_string(a).ok());
+                        let uri = code.and_then(|c| mermaid_uri(&ctx, &mut diagrams.borrow_mut(), &c, dark));
+                        Some(markdown::Embed::Native { rel, uri })
+                    }
+                    other => other,
+                },
                 &|raw| crate::local::index::md_link_path(&paths, &path, raw),
                 &|code| mermaid_uri(&ctx, &mut diagrams.borrow_mut(), code, dark),
             );
@@ -896,7 +913,7 @@ impl MnemoApp {
 /// Image d'un diagramme Mermaid, rendue une seule fois par contenu et par thème (cache `diagrams`, empreinte
 /// du bloc) et confiée à egui sous une adresse `bytes://mermaid/<empreinte>.svg`. `None` si le diagramme n'est
 /// pas pris en charge : le bloc reste affiché en code.
-fn mermaid_uri(
+pub(super) fn mermaid_uri(
     ctx: &egui::Context,
     diagrams: &mut std::collections::HashMap<u64, Option<String>>,
     code: &str,

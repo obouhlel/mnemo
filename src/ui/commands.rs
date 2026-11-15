@@ -143,7 +143,7 @@ impl MnemoApp {
                 UiAction::OpenFile(rel) => {
                     if rel.to_lowercase().ends_with(".mnemo-board") {
                         self.open_whiteboard(&rel);
-                    } else if crate::markdown::is_image(&rel) {
+                    } else if crate::markdown::is_image(&rel) || attachments::is_diagram(&rel) {
                         self.image_view = Some(rel);
                     } else if let Some(abs) = self.file_abs(&rel) {
                         ctx.open_url(egui::OpenUrl::new_tab(attachments::file_uri(&abs)));
